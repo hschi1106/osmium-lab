@@ -14,7 +14,7 @@ status_values:
 status_meaning:
   not_started: 尚未產生可 review 的實質內容或證據
   in_progress: 已開始但尚未達到該階段完成條件
-  partial: 僅完成部分里程碑或部分 market／format 的範圍
+  partial: 僅完成該階段部分文件、部分里程碑或部分 market／format 的範圍
   complete: 已完成目前需求所定義的該階段範圍
   blocked: 已知外部條件阻止繼續，且 blocker 已記錄
 
@@ -42,6 +42,70 @@ document_sets:
     plan: docs/verification/plan.md
     acceptance: docs/verification/acceptance.md
     performance: docs/verification/performance.md
+  architecture:
+    overview: docs/architecture/overview.md
+    data_flow: docs/architecture/data-flow.md
+    decisions:
+      - docs/architecture/decisions/0001-match-time-ordering.md
+      - docs/architecture/decisions/0002-snapshot-market-state.md
+
+architecture_trace:
+  - path: docs/architecture/overview.md
+    requirements:
+      - DATA-01
+      - DATA-02
+      - DATA-03
+      - DATA-04
+      - DATA-05
+      - REPLAY-01
+      - REPLAY-02
+      - REPLAY-03
+      - REPLAY-04
+      - REPLAY-05
+      - REPLAY-06
+      - STRAT-01
+      - SIM-01
+      - SIM-02
+      - OPS-01
+      - OPS-02
+      - NFR-01
+      - NFR-02
+      - NFR-03
+  - path: docs/architecture/data-flow.md
+    requirements:
+      - DATA-01
+      - DATA-02
+      - DATA-03
+      - DATA-04
+      - DATA-05
+      - REPLAY-01
+      - REPLAY-02
+      - REPLAY-03
+      - REPLAY-04
+      - REPLAY-05
+      - REPLAY-06
+      - STRAT-01
+      - SIM-01
+      - SIM-02
+      - OPS-01
+      - OPS-02
+      - NFR-01
+      - NFR-02
+      - NFR-03
+  - path: docs/architecture/decisions/0001-match-time-ordering.md
+    requirements:
+      - REPLAY-02
+      - REPLAY-04
+      - REPLAY-05
+      - NFR-01
+      - NFR-03
+  - path: docs/architecture/decisions/0002-snapshot-market-state.md
+    requirements:
+      - REPLAY-01
+      - REPLAY-03
+      - REPLAY-04
+      - STRAT-01
+      - SIM-01
 
 requirements:
   - id: DATA-01
@@ -75,7 +139,7 @@ requirements:
     implementation_paths: []
     lifecycle:
       specification: complete
-      design: not_started
+      design: partial
       implementation: not_started
       verification: not_started
 
@@ -110,7 +174,7 @@ requirements:
     implementation_paths: []
     lifecycle:
       specification: complete
-      design: not_started
+      design: partial
       implementation: not_started
       verification: not_started
 
@@ -142,7 +206,7 @@ requirements:
     implementation_paths: []
     lifecycle:
       specification: complete
-      design: not_started
+      design: partial
       implementation: not_started
       verification: not_started
 
@@ -175,7 +239,7 @@ requirements:
     implementation_paths: []
     lifecycle:
       specification: complete
-      design: not_started
+      design: partial
       implementation: not_started
       verification: not_started
 
@@ -213,7 +277,7 @@ requirements:
     implementation_paths: []
     lifecycle:
       specification: complete
-      design: not_started
+      design: partial
       implementation: not_started
       verification: not_started
 
@@ -256,7 +320,7 @@ requirements:
     implementation_paths: []
     lifecycle:
       specification: complete
-      design: not_started
+      design: partial
       implementation: not_started
       verification: not_started
 
@@ -292,7 +356,7 @@ requirements:
     implementation_paths: []
     lifecycle:
       specification: complete
-      design: not_started
+      design: partial
       implementation: not_started
       verification: not_started
 
@@ -330,7 +394,7 @@ requirements:
     implementation_paths: []
     lifecycle:
       specification: complete
-      design: not_started
+      design: partial
       implementation: not_started
       verification: not_started
 
@@ -369,7 +433,7 @@ requirements:
     implementation_paths: []
     lifecycle:
       specification: complete
-      design: not_started
+      design: partial
       implementation: not_started
       verification: not_started
 
@@ -406,7 +470,7 @@ requirements:
     implementation_paths: []
     lifecycle:
       specification: complete
-      design: not_started
+      design: partial
       implementation: not_started
       verification: not_started
 
@@ -446,7 +510,7 @@ requirements:
     implementation_paths: []
     lifecycle:
       specification: complete
-      design: not_started
+      design: partial
       implementation: not_started
       verification: not_started
 
@@ -485,7 +549,7 @@ requirements:
     implementation_paths: []
     lifecycle:
       specification: complete
-      design: not_started
+      design: partial
       implementation: not_started
       verification: not_started
 
@@ -517,7 +581,7 @@ requirements:
     implementation_paths: []
     lifecycle:
       specification: complete
-      design: not_started
+      design: partial
       implementation: not_started
       verification: not_started
 
@@ -549,7 +613,7 @@ requirements:
     implementation_paths: []
     lifecycle:
       specification: complete
-      design: not_started
+      design: partial
       implementation: not_started
       verification: not_started
 
@@ -582,7 +646,7 @@ requirements:
     implementation_paths: []
     lifecycle:
       specification: complete
-      design: not_started
+      design: partial
       implementation: not_started
       verification: not_started
 
@@ -621,7 +685,7 @@ requirements:
     implementation_paths: []
     lifecycle:
       specification: complete
-      design: not_started
+      design: partial
       implementation: not_started
       verification: not_started
 
@@ -662,7 +726,7 @@ requirements:
     implementation_paths: []
     lifecycle:
       specification: complete
-      design: not_started
+      design: partial
       implementation: not_started
       verification: not_started
 
@@ -694,7 +758,7 @@ requirements:
     implementation_paths: []
     lifecycle:
       specification: complete
-      design: not_started
+      design: partial
       implementation: not_started
       verification: not_started
 
@@ -732,6 +796,6 @@ requirements:
     implementation_paths: []
     lifecycle:
       specification: complete
-      design: not_started
+      design: partial
       implementation: not_started
       verification: not_started
