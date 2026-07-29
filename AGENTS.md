@@ -1,12 +1,16 @@
 # Agent Instructions
 
-This repository is `osmium-lab`, a Rust market replay and backtesting platform. The project specification is [spec.md](spec.md). Treat that file as the source of truth for product scope, architecture, terminology, and delivery priorities.
+This repository is `osmium-lab`, a Rust market replay and backtesting platform. The product requirements are [docs/product-requirements.md](docs/product-requirements.md). Treat that file as the source of truth for product scope, architecture, terminology, and delivery priorities.
 
 ## Start Here
 
-Before making project changes, read `spec.md` and align the work with it. If a requested change appears to conflict with the spec, call out the conflict before editing code.
+Before making project changes, read `docs/product-requirements.md` and align the work with it. If a requested change appears to conflict with the product requirements, call out the conflict before editing code.
 
 Use the existing workspace structure and Rust conventions. Keep changes scoped to the crate or module that owns the behavior being changed.
+
+## Documentation Language
+
+Write and maintain project documentation in Traditional Chinese. Keep code identifiers, API field names, commands, and established technical terms in English when that is clearer.
 
 ## Change Scope
 
@@ -24,12 +28,13 @@ Avoid broad rewrites, speculative abstractions, large file moves, and unrelated 
 
 ## Spec Alignment
 
-Preserve the main architecture described in `spec.md`:
+Preserve the main architecture described in `docs/product-requirements.md`:
 
-- Permanent raw archive is the canonical source.
-- Derived replay datasets are rebuildable artifacts.
+- Verified local source data is reusable across backtests.
+- Derived replay caches are rebuildable artifacts.
 - Teralion wire format and domain events must stay separated.
-- Market replay ordering is based primarily on `match_time`, with deterministic tie-breaking.
+- `match_time` is the only replay time, with deterministic tie-breaking.
+- Market state is based on trades and complete five-level snapshots, without reconstructing queue position.
 - Strategies read market state but do not mutate it.
 - The replayer should open only the streams required by the strategy universe.
 
