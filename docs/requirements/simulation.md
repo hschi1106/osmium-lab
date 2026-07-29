@@ -373,14 +373,13 @@ unrealized P&L 必須使用 execution plan 允許且在計算時已可觀察的 
 
 marking policy 必須明確定義：
 
-- 使用 trade、mid、bid／ask、settlement 或其他來源。
+- 使用 trade、mid、bid／ask 或其他明確設定的可觀察來源。
 - 缺少 mark 時的 unavailable／fallback 行為。
 - 計算時點。
 - price、multiplier 及 rounding。
 
 盤中策略 feedback 不得使用未來 mark。final summary 可以使用 replay 結束時已
-合法觀察的最後 mark；若使用盤後 settlement，該資料必須有合法 timing 與明確
-policy，不得任意插入盤中 timeline。
+合法觀察的最後 mark，不得為了補齊結果插入 replay timeline 之外的盤後統計。
 
 ### SIM-02.7 Accounting traceability
 

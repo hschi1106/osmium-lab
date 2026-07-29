@@ -2,6 +2,7 @@
 
 - 狀態：Accepted
 - 決策日期：2026-07-29
+- 最後修訂：2026-07-30（移除第一版不使用的通用統計事件）
 - 適用版本：`OrderingRuleV1`
 - 主要需求：`REPLAY-02`、`REPLAY-04`、`NFR-01`、`NFR-03`
 
@@ -111,8 +112,10 @@ source format 排序同樣不代表來源封包優先權。
 | `QuoteSnapshot` | 10 |
 | `BookSnapshot` | 20 |
 | `TradeBatch` | 30 |
-| `MarketStat` | 40 |
 | `MarketStatus` | 50 |
+
+rank 40 在第一版刻意不使用；TAIFEX `close`／`stats` source records 不進入 domain
+event timeline。
 
 rank 保留間隔以便未來新增事件，但新增 kind 仍必須 review 並更新 event schema；
 不能只插入數字後宣稱完全相容。

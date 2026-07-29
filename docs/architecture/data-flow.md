@@ -214,6 +214,10 @@ source partition
 unknown format 沒有 generic fallback。default mode 停止；degraded mode 可以記錄並
 略過已隔離內容，但不得猜測 event。
 
+Teralion `close`／`stats` 是第一版已知但刻意排除的 source kinds，不等同 unknown
+format。若來源 partition 已包含它們，cache builder 記錄略過數量但不產生 event；
+新的 backtest data plan 不需要為它們下載或建立 cache。
+
 ### 6.2 Cache lineage
 
 每個 cache partition 建立 lineage：
@@ -398,8 +402,7 @@ accepted event
 
 - `QuoteSnapshot`：完整取代 book；同一 event 的 trade、volume、flags 一起套用。
 - `BookSnapshot`：完整取代 book。
-- `TradeBatch`：保存 batch 並更新明確提供的累計／stats。
-- `MarketStat`：只更新具有合法 timing 的統計。
+- `TradeBatch`：保存 batch 並更新明確提供的累計量。
 - `MarketStatus`：只更新已確認語意的 status／flags。
 
 optional field 的 absent／clear／unknown／unchanged 語意由 normalizer 明確表達，不能

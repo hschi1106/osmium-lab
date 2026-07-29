@@ -2,13 +2,15 @@
 
 - 狀態：Accepted
 - 決策日期：2026-07-29
+- 最後修訂：2026-07-30（移除第一版不使用的統計狀態）
 - 適用版本：`MarketStateSemanticsV1`
 - 主要需求：`REPLAY-01`、`REPLAY-03`、`REPLAY-04`、`STRAT-01`
 
 ## 1. Context
 
-Teralion 歷史資料提供 trade、trade batch、完整最佳五檔 snapshot、累計量、stats
-及 flags，但不是逐筆委託資料。
+Teralion 歷史資料提供 trade、trade batch、完整最佳五檔 snapshot、累計量及
+flags，但不是逐筆委託資料。TAIFEX 另有 `close`／`stats` source records；第一版
+backtest 不使用它們，因此不把它們正規化為 event 或保存進 MarketState。
 
 系統無法從這些資料可靠得知：
 
@@ -36,7 +38,6 @@ MarketStateV1 {
     book_snapshot
     recent_trade_or_batch
     cumulative_volume
-    market_stats
     raw_flags_and_known_status
     last_match_time
     state_version
@@ -62,7 +63,6 @@ MarketState 以可區分 market 與 symbol 的 domain `InstrumentId` 為 identit
 - `book_snapshot` unavailable。
 - recent trade／batch unavailable。
 - cumulative volume unavailable。
-- stats unavailable。
 - flags／status unavailable。
 - `last_match_time` unavailable。
 - `state_version = 0`。
@@ -130,7 +130,7 @@ derived view：
 一次 `BookSnapshot`：
 
 - 完整取代 book。
-- 更新同一 event 中明確提供且 schema 支援的 stats／flags。
+- 更新同一 event 中明確提供且 schema 支援的 flags。
 - 不從 book difference 產生 synthetic trades。
 
 ### 4.3 `TradeBatch`
@@ -139,21 +139,12 @@ derived view：
 
 - 保存完整 batch 作為 recent trade observation。
 - 可以提供由 batch 直接取得的 recent individual trade view；若順序由來源確認。
-- 更新 event 明確提供的 cumulative volume／stats。
+- 更新 event 明確提供的 cumulative volume。
 - 不修改 book；除非同一原子 event schema 本身包含完整 book。
 
 batch 內多筆成交仍只造成一次 MarketState transition。
 
-### 4.4 `MarketStat`
-
-只有具有合法 `match_time` 的 stat event 可以更新 timeline state。
-
-- event 明確提供的 stat 更新對應欄位。
-- 未提供的 stat 不以日終值補齊。
-- 無合法 `match_time` 的 settlement／open interest 等資料只能作為 reference 或
-  result attachment，不進入盤中 reducer。
-
-### 4.5 `MarketStatus`
+### 4.4 `MarketStatus`
 
 只有 interface mapping 明確確認的 status 語意可以更新 known status。
 
