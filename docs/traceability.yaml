@@ -1,1 +1,737 @@
+schema_version: 1
 
+source_of_truth:
+  path: docs/product-requirements.md
+  description: osmium-lab 產品範圍、術語、優先順序與高階驗收基準
+
+status_values:
+  - not_started
+  - in_progress
+  - partial
+  - complete
+  - blocked
+
+status_meaning:
+  not_started: 尚未產生可 review 的實質內容或證據
+  in_progress: 已開始但尚未達到該階段完成條件
+  partial: 僅完成部分里程碑或部分 market／format 的範圍
+  complete: 已完成目前需求所定義的該階段範圍
+  blocked: 已知外部條件阻止繼續，且 blocker 已記錄
+
+field_meaning:
+  planned_milestones: 預定交付範圍，不代表目前已實作
+  planned_design_documents: 預定承接需求的下游文件，不代表目前已有內容
+  planned_verification: 預定驗證方法與規格文件，不代表測試已執行
+  supporting_documents: 已存在的需求或增量規格，只提供追蹤 context
+  verification_evidence: 已實際執行且可檢查的 test report、checksum 或 benchmark
+  implementation_paths: 已確認承接需求的實作路徑
+
+document_sets:
+  requirements:
+    - docs/requirements/data.md
+    - docs/requirements/replay.md
+    - docs/requirements/strategy.md
+    - docs/requirements/simulation.md
+    - docs/requirements/operations.md
+  increments:
+    M1: docs/increments/M1-twse-replay.md
+    M2: docs/increments/M2-offline-backtest.md
+    M3: docs/increments/M3-taifex.md
+    M4: docs/increments/M4-market-expansion.md
+  verification:
+    plan: docs/verification/plan.md
+    acceptance: docs/verification/acceptance.md
+    performance: docs/verification/performance.md
+
+requirements:
+  - id: DATA-01
+    title: 資料取得
+    product_section: "7 / DATA-01"
+    specification: docs/requirements/data.md
+    planned_milestones:
+      - milestone: M2
+        role: initial_delivery
+        scope: 以 TWSE 2330 驗證 coverage、ticks、每日商品資料及完整 cursor 下載
+      - milestone: M3
+        role: extension
+        scope: 擴充 TAIFEX futures 與跨日 trading date 的取得
+      - milestone: M4
+        role: extension
+        scope: 擴充 TPEx、權證與選擇權
+    planned_design_documents:
+      - docs/interfaces/teralion.md
+      - docs/design/data-sync.md
+      - docs/operations/cli.md
+    planned_verification:
+      methods:
+        - Teralion API integration test
+        - cursor pagination and interruption recovery test
+        - second-run reuse acceptance test
+      documents:
+        - docs/verification/plan.md
+        - docs/verification/acceptance.md
+    supporting_documents: []
+    verification_evidence: []
+    implementation_paths: []
+    lifecycle:
+      specification: complete
+      design: not_started
+      implementation: not_started
+      verification: not_started
+
+  - id: DATA-02
+    title: 本地來源資料
+    product_section: "7 / DATA-02"
+    specification: docs/requirements/data.md
+    planned_milestones:
+      - milestone: M2
+        role: initial_delivery
+        scope: 保存、驗證並離線重用 TWSE 2330 單日來源資料
+      - milestone: M3
+        role: extension
+        scope: 支援 TAIFEX 跨日 partition
+      - milestone: M4
+        role: extension
+        scope: 擴充其他 market 與商品種類
+    planned_design_documents:
+      - docs/design/data-sync.md
+      - docs/operations/local-data.md
+      - docs/operations/cli.md
+    planned_verification:
+      methods:
+        - atomic publish integration test
+        - immutable completed-source test
+        - offline replay acceptance test
+      documents:
+        - docs/verification/plan.md
+        - docs/verification/acceptance.md
+    supporting_documents: []
+    verification_evidence: []
+    implementation_paths: []
+    lifecycle:
+      specification: complete
+      design: not_started
+      implementation: not_started
+      verification: not_started
+
+  - id: DATA-03
+    title: 資料完整性
+    product_section: "7 / DATA-03"
+    specification: docs/requirements/data.md
+    planned_milestones:
+      - milestone: M2
+        role: initial_delivery
+        scope: 驗證五種完整性狀態、預設拒絕與明確 degraded run
+      - milestone: M3
+        role: extension
+        scope: 驗證多商品與跨日 partition 的完整性
+    planned_design_documents:
+      - docs/design/data-sync.md
+      - docs/operations/local-data.md
+      - docs/operations/cli.md
+    planned_verification:
+      methods:
+        - completeness state transition test
+        - checksum and corruption negative test
+        - degraded-run acceptance test
+      documents:
+        - docs/verification/plan.md
+        - docs/verification/acceptance.md
+    supporting_documents: []
+    verification_evidence: []
+    implementation_paths: []
+    lifecycle:
+      specification: complete
+      design: not_started
+      implementation: not_started
+      verification: not_started
+
+  - id: DATA-04
+    title: 回播快取
+    product_section: "7 / DATA-04"
+    specification: docs/requirements/data.md
+    planned_milestones:
+      - milestone: M2
+        role: initial_delivery
+        scope: 由 2330 本地來源資料建立、重用、失效及離線重建快取
+      - milestone: M3
+        role: extension
+        scope: 支援 TAIFEX 與多商品 stream cache
+    planned_design_documents:
+      - docs/design/data-sync.md
+      - docs/design/replay-engine.md
+      - docs/operations/local-data.md
+    planned_verification:
+      methods:
+        - cache invalidation integration test
+        - offline rebuild test
+        - symbol and trading-date selective-open test
+      documents:
+        - docs/verification/plan.md
+        - docs/verification/acceptance.md
+        - docs/verification/performance.md
+    supporting_documents: []
+    verification_evidence: []
+    implementation_paths: []
+    lifecycle:
+      specification: complete
+      design: not_started
+      implementation: not_started
+      verification: not_started
+
+  - id: DATA-05
+    title: 商品資料
+    product_section: "7 / DATA-05"
+    specification: docs/requirements/data.md
+    planned_milestones:
+      - milestone: M2
+        role: initial_delivery
+        scope: 保存 TWSE 基本商品識別與 metadata provenance
+      - milestone: M3
+        role: extension
+        scope: 驗證 TAIFEX trading date、multiplier 缺漏與明確補值
+      - milestone: M4
+        role: extension
+        scope: 擴充權證及選擇權的到期日、履約價與買賣權別
+    planned_design_documents:
+      - docs/interfaces/teralion.md
+      - docs/interfaces/twse.md
+      - docs/interfaces/taifex.md
+      - docs/interfaces/tpex.md
+      - docs/design/data-sync.md
+      - docs/design/market-types.md
+    planned_verification:
+      methods:
+        - instrument metadata fixture test
+        - multiplier provenance test
+        - TAIFEX trading-date boundary test
+      documents:
+        - docs/verification/plan.md
+        - docs/verification/acceptance.md
+    supporting_documents: []
+    verification_evidence: []
+    implementation_paths: []
+    lifecycle:
+      specification: complete
+      design: not_started
+      implementation: not_started
+      verification: not_started
+
+  - id: REPLAY-01
+    title: 標準事件
+    product_section: "8 / REPLAY-01"
+    specification: docs/requirements/replay.md
+    planned_milestones:
+      - milestone: M1
+        role: initial_delivery
+        scope: 以 TWSE 2330 fixture 驗證 QuoteSnapshot 與 wire/domain 分離
+      - milestone: M3
+        role: extension
+        scope: 加入 TAIFEX TradeBatch 與 BookSnapshot
+      - milestone: M4
+        role: extension
+        scope: 加入 TPEx、權證與選擇權 mappings
+    planned_design_documents:
+      - docs/design/market-types.md
+      - docs/design/replay-engine.md
+      - docs/interfaces/twse.md
+      - docs/interfaces/taifex.md
+      - docs/interfaces/tpex.md
+    planned_verification:
+      methods:
+        - source fixture normalization test
+        - event atomicity golden test
+        - unknown-format negative test
+      documents:
+        - docs/verification/plan.md
+        - docs/verification/acceptance.md
+      m1_acceptance:
+        - M1-AC-01
+        - M1-AC-02
+        - M1-AC-08
+        - M1-AC-09
+    supporting_documents:
+      - docs/increments/M1-twse-replay.md
+    verification_evidence: []
+    implementation_paths: []
+    lifecycle:
+      specification: complete
+      design: not_started
+      implementation: not_started
+      verification: not_started
+
+  - id: REPLAY-02
+    title: 事件排序
+    product_section: "8 / REPLAY-02"
+    specification: docs/requirements/replay.md
+    planned_milestones:
+      - milestone: M1
+        role: initial_delivery
+        scope: 驗證單商品 match_time 與 deterministic tie-break
+      - milestone: M3
+        role: extension
+        scope: 驗證 TWSE 與 TAIFEX 多商品 deterministic merge
+    planned_design_documents:
+      - docs/architecture/decisions/0001-match-time-ordering.md
+      - docs/design/market-types.md
+      - docs/design/replay-engine.md
+    planned_verification:
+      methods:
+        - shuffled-input ordering test
+        - same-match-time tie-break test
+        - multi-stream property test
+      documents:
+        - docs/verification/plan.md
+        - docs/verification/acceptance.md
+      m1_acceptance:
+        - M1-AC-03
+        - M1-AC-04
+    supporting_documents:
+      - docs/increments/M1-twse-replay.md
+    verification_evidence: []
+    implementation_paths: []
+    lifecycle:
+      specification: complete
+      design: not_started
+      implementation: not_started
+      verification: not_started
+
+  - id: REPLAY-03
+    title: 市場狀態
+    product_section: "8 / REPLAY-03"
+    specification: docs/requirements/replay.md
+    planned_milestones:
+      - milestone: M1
+        role: initial_delivery
+        scope: 驗證 TWSE QuoteSnapshot 完整取代與 state version
+      - milestone: M3
+        role: extension
+        scope: 擴充 TradeBatch、BookSnapshot 與多商品狀態
+    planned_design_documents:
+      - docs/architecture/decisions/0002-snapshot-market-state.md
+      - docs/design/market-types.md
+      - docs/design/market-state.md
+    planned_verification:
+      methods:
+        - reducer unit test
+        - atomic state transition test
+        - final-state checksum golden test
+      documents:
+        - docs/verification/plan.md
+        - docs/verification/acceptance.md
+      m1_acceptance:
+        - M1-AC-02
+        - M1-AC-05
+        - M1-AC-06
+        - M1-AC-09
+    supporting_documents:
+      - docs/increments/M1-twse-replay.md
+    verification_evidence: []
+    implementation_paths: []
+    lifecycle:
+      specification: complete
+      design: not_started
+      implementation: not_started
+      verification: not_started
+
+  - id: REPLAY-04
+    title: 事件處理順序與無前視
+    product_section: "8 / REPLAY-04"
+    specification: docs/requirements/replay.md
+    planned_milestones:
+      - milestone: M1
+        role: initial_delivery
+        scope: 驗證 clock、state update 與 ExampleStrategy callback 順序
+      - milestone: M2
+        role: extension
+        scope: 驗證 order intent 不在 origin event 成交
+      - milestone: M3
+        role: extension
+        scope: 驗證多商品 callback 順序
+    planned_design_documents:
+      - docs/design/replay-engine.md
+      - docs/design/market-state.md
+      - docs/design/strategy-api.md
+      - docs/design/execution-sim.md
+    planned_verification:
+      methods:
+        - callback-order integration test
+        - no-lookahead system test
+        - order eligibility test
+      documents:
+        - docs/verification/plan.md
+        - docs/verification/acceptance.md
+      m1_acceptance:
+        - M1-AC-06
+    supporting_documents:
+      - docs/increments/M1-twse-replay.md
+    verification_evidence: []
+    implementation_paths: []
+    lifecycle:
+      specification: complete
+      design: not_started
+      implementation: not_started
+      verification: not_started
+
+  - id: REPLAY-05
+    title: 多商品與資源使用
+    product_section: "8 / REPLAY-05"
+    specification: docs/requirements/replay.md
+    planned_milestones:
+      - milestone: M1
+        role: baseline
+        scope: 驗證只使用 TWSE 2330 單一 stream
+      - milestone: M2
+        role: extension
+        scope: 驗證 cache-backed selective stream open
+      - milestone: M3
+        role: initial_multi_symbol_delivery
+        scope: 驗證 2330 與 futures streaming merge
+    planned_design_documents:
+      - docs/architecture/data-flow.md
+      - docs/design/replay-engine.md
+      - docs/design/data-sync.md
+    planned_verification:
+      methods:
+        - selective-open integration test
+        - bounded-memory test
+        - multi-stream merge test
+      documents:
+        - docs/verification/plan.md
+        - docs/verification/acceptance.md
+        - docs/verification/performance.md
+    supporting_documents:
+      - docs/increments/M1-twse-replay.md
+    verification_evidence: []
+    implementation_paths: []
+    lifecycle:
+      specification: complete
+      design: not_started
+      implementation: not_started
+      verification: not_started
+
+  - id: REPLAY-06
+    title: 錯誤、warning 與降級執行
+    product_section: "8 / REPLAY-06"
+    specification: docs/requirements/replay.md
+    planned_milestones:
+      - milestone: M1
+        role: initial_delivery
+        scope: 驗證 invalid time、unknown format 與 unknown flags
+      - milestone: M2
+        role: extension
+        scope: 驗證完整性錯誤、checksum 與 explicit degraded mode
+      - milestone: M3
+        role: extension
+        scope: 擴充 TAIFEX format 與跨 stream error context
+    planned_design_documents:
+      - docs/design/replay-engine.md
+      - docs/design/data-sync.md
+      - docs/operations/cli.md
+    planned_verification:
+      methods:
+        - invalid-event negative test
+        - warning determinism test
+        - degraded-mode integration test
+      documents:
+        - docs/verification/plan.md
+        - docs/verification/acceptance.md
+      m1_acceptance:
+        - M1-AC-07
+        - M1-AC-08
+        - M1-AC-09
+    supporting_documents:
+      - docs/increments/M1-twse-replay.md
+    verification_evidence: []
+    implementation_paths: []
+    lifecycle:
+      specification: complete
+      design: not_started
+      implementation: not_started
+      verification: not_started
+
+  - id: STRAT-01
+    title: 策略能力與邊界
+    product_section: "9 / STRAT-01"
+    specification: docs/requirements/strategy.md
+    planned_milestones:
+      - milestone: M1
+        role: initial_delivery
+        scope: ExampleStrategy、explicit universe、唯讀狀態與 deterministic output
+      - milestone: M2
+        role: extension
+        scope: order intent 與 simulated order／fill feedback
+      - milestone: M3
+        role: extension
+        scope: 多商品狀態 view
+    planned_design_documents:
+      - docs/design/strategy-api.md
+      - docs/design/replay-engine.md
+      - docs/design/market-state.md
+      - docs/design/execution-sim.md
+    planned_verification:
+      methods:
+        - API boundary or compile-fail test
+        - callback integration test
+        - deterministic output test
+      documents:
+        - docs/verification/plan.md
+        - docs/verification/acceptance.md
+      m1_acceptance:
+        - M1-AC-06
+    supporting_documents:
+      - docs/increments/M1-twse-replay.md
+    verification_evidence: []
+    implementation_paths: []
+    lifecycle:
+      specification: complete
+      design: not_started
+      implementation: not_started
+      verification: not_started
+
+  - id: SIM-01
+    title: 基礎成交模型
+    product_section: "9 / SIM-01"
+    specification: docs/requirements/simulation.md
+    planned_milestones:
+      - milestone: M2
+        role: initial_delivery
+        scope: TWSE 2330 market／limit、slippage、部分成交與費稅
+      - milestone: M3
+        role: extension
+        scope: TAIFEX TradeBatch／BookSnapshot 與 multiplier
+    planned_design_documents:
+      - docs/design/execution-sim.md
+      - docs/design/strategy-api.md
+      - docs/design/market-state.md
+    planned_verification:
+      methods:
+        - fill-model unit test
+        - no-origin-event-fill test
+        - volume-allocation and partial-fill test
+      documents:
+        - docs/verification/plan.md
+        - docs/verification/acceptance.md
+    supporting_documents: []
+    verification_evidence: []
+    implementation_paths: []
+    lifecycle:
+      specification: complete
+      design: not_started
+      implementation: not_started
+      verification: not_started
+
+  - id: SIM-02
+    title: 帳務與損益
+    product_section: "9 / SIM-02"
+    specification: docs/requirements/simulation.md
+    planned_milestones:
+      - milestone: M2
+        role: initial_delivery
+        scope: TWSE order、fill、cash、position、費稅與基本 P&L
+      - milestone: M3
+        role: extension
+        scope: TAIFEX multiplier 與 futures accounting
+    planned_design_documents:
+      - docs/design/execution-sim.md
+      - docs/design/market-types.md
+      - docs/operations/cli.md
+    planned_verification:
+      methods:
+        - ledger unit test
+        - cash and position reconciliation test
+        - P&L golden test
+      documents:
+        - docs/verification/plan.md
+        - docs/verification/acceptance.md
+    supporting_documents: []
+    verification_evidence: []
+    implementation_paths: []
+    lifecycle:
+      specification: complete
+      design: not_started
+      implementation: not_started
+      verification: not_started
+
+  - id: OPS-01
+    title: 操作流程
+    product_section: "10 / OPS-01"
+    specification: docs/requirements/operations.md
+    planned_milestones:
+      - milestone: M2
+        role: initial_delivery
+        scope: 以 2330 完成 plan、sync、verify、backtest 與 inspect
+      - milestone: M3
+        role: extension
+        scope: 多商品與 TAIFEX workflow
+    planned_design_documents:
+      - docs/operations/cli.md
+      - docs/operations/local-data.md
+      - docs/design/data-sync.md
+      - docs/design/replay-engine.md
+    planned_verification:
+      methods:
+        - end-to-end CLI acceptance test
+        - offline backtest test
+        - exit-status and error-context test
+      documents:
+        - docs/verification/plan.md
+        - docs/verification/acceptance.md
+    supporting_documents: []
+    verification_evidence: []
+    implementation_paths: []
+    lifecycle:
+      specification: complete
+      design: not_started
+      implementation: not_started
+      verification: not_started
+
+  - id: OPS-02
+    title: 執行結果
+    product_section: "10 / OPS-02"
+    specification: docs/requirements/operations.md
+    planned_milestones:
+      - milestone: M1
+        role: baseline
+        scope: event／state checksum 與 deterministic strategy output
+      - milestone: M2
+        role: initial_delivery
+        scope: 完整 run manifest、order、fill、position 與 P&L
+      - milestone: M3
+        role: extension
+        scope: 多商品與 TAIFEX provenance
+    planned_design_documents:
+      - docs/operations/cli.md
+      - docs/design/replay-engine.md
+      - docs/design/execution-sim.md
+    planned_verification:
+      methods:
+        - manifest schema test
+        - result checksum golden test
+        - failed and degraded result test
+      documents:
+        - docs/verification/plan.md
+        - docs/verification/acceptance.md
+      m1_acceptance:
+        - M1-AC-03
+        - M1-AC-10
+    supporting_documents:
+      - docs/increments/M1-twse-replay.md
+    verification_evidence: []
+    implementation_paths: []
+    lifecycle:
+      specification: complete
+      design: not_started
+      implementation: not_started
+      verification: not_started
+
+  - id: NFR-01
+    title: 可重現
+    product_section: "10 / NFR-01"
+    specification: docs/requirements/operations.md
+    planned_milestones:
+      - milestone: M1
+        role: baseline
+        scope: event、state 與 ExampleStrategy checksum
+      - milestone: M2
+        role: initial_delivery
+        scope: 完整 fill、帳務與 result reproducibility
+      - milestone: M3
+        role: extension
+        scope: 多商品與效能最佳化結果不變
+    planned_design_documents:
+      - docs/architecture/decisions/0001-match-time-ordering.md
+      - docs/design/replay-engine.md
+      - docs/design/execution-sim.md
+      - docs/operations/cli.md
+    planned_verification:
+      methods:
+        - repeated-run golden test
+        - cache-hit versus rebuild comparison
+        - worker-count invariance test
+      documents:
+        - docs/verification/plan.md
+        - docs/verification/acceptance.md
+        - docs/verification/performance.md
+      m1_acceptance:
+        - M1-AC-03
+        - M1-AC-10
+    supporting_documents:
+      - docs/increments/M1-twse-replay.md
+    verification_evidence: []
+    implementation_paths: []
+    lifecycle:
+      specification: complete
+      design: not_started
+      implementation: not_started
+      verification: not_started
+
+  - id: NFR-02
+    title: 效能
+    product_section: "10 / NFR-02"
+    specification: docs/requirements/operations.md
+    planned_milestones:
+      - milestone: M2
+        role: baseline
+        scope: 建立 2330 sync、cache 與 replay benchmark
+      - milestone: M3
+        role: initial_threshold
+        scope: 加入 TAIFEX futures 與多商品 dataset 後制定首版門檻
+    planned_design_documents:
+      - docs/architecture/data-flow.md
+      - docs/design/data-sync.md
+      - docs/design/replay-engine.md
+    planned_verification:
+      methods:
+        - source reuse integration test
+        - cache-hit benchmark
+        - throughput and peak-memory benchmark
+      documents:
+        - docs/verification/plan.md
+        - docs/verification/performance.md
+    supporting_documents: []
+    verification_evidence: []
+    implementation_paths: []
+    lifecycle:
+      specification: complete
+      design: not_started
+      implementation: not_started
+      verification: not_started
+
+  - id: NFR-03
+    title: 安全與版本
+    product_section: "10 / NFR-03"
+    specification: docs/requirements/operations.md
+    planned_milestones:
+      - milestone: M1
+        role: baseline
+        scope: fixture 不含 secret，event 與 ordering identity 可記錄
+      - milestone: M2
+        role: initial_delivery
+        scope: credential redaction、offline run 與 cache／model compatibility
+      - milestone: M3
+        role: extension
+        scope: TAIFEX mapping、multiplier 與多商品版本 provenance
+    planned_design_documents:
+      - docs/design/data-sync.md
+      - docs/design/replay-engine.md
+      - docs/design/execution-sim.md
+      - docs/operations/cli.md
+      - docs/operations/local-data.md
+    planned_verification:
+      methods:
+        - repository and artifact secret scan
+        - offline no-credential test
+        - version compatibility and cache-rebuild test
+      documents:
+        - docs/verification/plan.md
+        - docs/verification/acceptance.md
+    supporting_documents:
+      - docs/increments/M1-twse-replay.md
+    verification_evidence: []
+    implementation_paths: []
+    lifecycle:
+      specification: complete
+      design: not_started
+      implementation: not_started
+      verification: not_started
