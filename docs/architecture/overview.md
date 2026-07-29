@@ -197,6 +197,8 @@ Repository 不解讀 domain event 語意，也不維護 MarketState。
 - 驗證來源欄位及 `match_time`。
 - 把 wire payload 轉成少量 versioned domain events。
 - 保存 unknown raw values 並產生 warning。
+- 辨識第一版刻意排除的 `close`／`stats` source kinds，保留可檢查的略過摘要但不建立
+  domain event。
 - 使用真實 source fixtures 固定 mapping。
 
 Registry 不提供 unknown format fallback，不從 snapshot 反推逐筆委託。
@@ -232,7 +234,7 @@ Replay Engine 不呼叫 Teralion、不解讀 wire payload，也不決定 fill pr
 - 為 universe 內每個商品保存獨立狀態。
 - 原子套用 accepted domain event。
 - 完整取代 book snapshot。
-- 保存最近 trade／batch、累計量、stats、flags、`last_match_time` 及 state version。
+- 保存最近 trade／batch、累計量、flags、`last_match_time` 及 state version。
 - 向 strategy 暴露唯讀 view。
 
 Reducer 不知道下一事件，不接受 strategy mutation，也不重建 queue。

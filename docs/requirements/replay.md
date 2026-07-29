@@ -108,7 +108,6 @@ event schema 必須具有明確版本。版本不相容時，系統必須拒絕�
 | `QuoteSnapshot` | 完整最佳五檔，以及同一 source tick 中可用的成交、累計量與 flags |
 | `BookSnapshot` | 完整最佳五檔，以及可由同一 snapshot 直接取得的一檔 |
 | `TradeBatch` | 同一 source tick 中的一筆或多筆成交，以及可用的累計資訊 |
-| `MarketStat` | 具有有效 `match_time` 的盤中高低價、結算價、未平倉量或其他統計 |
 | `MarketStatus` | 來源可明確辨識且具有有效 `match_time` 的市場狀態 |
 
 不屬於此集合的來源資料不得臨時建立未版本化 event kind。新增 event kind 必須先
@@ -122,11 +121,19 @@ normalizer 必須遵守：
 - 保留 market、symbol、format 與 `match_time` 的來源身分。
 - 不從五檔 snapshot 反推逐筆委託、取消、queue position 或 hidden liquidity。
 - 不由低粒度資料產生來源不存在的高粒度資料。
-- 不將沒有有效 `match_time` 的統計任意放入盤中 timeline。
 - 未知欄位或 flags 保留原值，且不得被靜默解讀。
 
 各 market／format 的欄位 mapping 必須由保存的 fixture 建立固定測試。相同 mapping
 的輸入在相同 schema version 下必須產生相同 canonical event。
+
+Teralion 的 TAIFEX `close`／`stats` 及 Feed Archive session-stat 記錄不屬於第一版
+domain event 集合：
+
+- normalizer 不為其產生 timeline event。
+- replay cache 與 replayer 不需要開啟這些記錄。
+- 已存在的 raw source payload 可以保留，以便未來需求重新評估。
+- 未來若需要 settlement、open interest 或 order counters，必須先定義具體用途及
+  timing semantics，不得重新加入模糊的通用統計事件。
 
 ### REPLAY-01.4 Event atomicity
 
@@ -251,7 +258,6 @@ M1 由 `M1-AC-03` 及 `M1-AC-04` 提供單商品證據；多商品證據在 M3 �
 - 最新完整五檔 snapshot
 - 最近成交或成交 batch
 - 累計成交量
-- 盤中高低價及可定時統計
 - 最新 flags
 - 最後 `match_time`
 - state version
@@ -306,7 +312,7 @@ M1 由 `M1-AC-03` 及 `M1-AC-04` 提供單商品證據；多商品證據在 M3 �
 
 - 第一個事件前的 unavailable state 測試。
 - 完整五檔取代舊 snapshot 的 reducer test。
-- 成交、累計量、統計及 flags 的更新測試。
+- 成交、累計量及 flags 的更新測試。
 - 每個 accepted event 只造成一次 atomic version transition 的測試。
 - reducer 失敗不留下部分狀態的測試。
 - unknown value 保留且不被推論的測試。
@@ -518,6 +524,8 @@ M1 由 `M1-AC-07`、`M1-AC-08` 及 `M1-AC-09` 提供不含 degraded mode 的證�
 7. 效能或並行最佳化不改變事件、狀態或策略輸出。
 8. unknown、invalid 與 degraded data 不得被靜默當成完整已知資料。
 9. derived replay cache 可以失效並重建；已驗證來源資料不因 cache 失效而重新下載。
+10. 第一版已知但排除的 `close`／`stats` source records 不進入 event timeline 或
+    MarketState。
 
 ## 11. 驗證與追溯摘要
 

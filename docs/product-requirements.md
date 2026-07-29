@@ -39,17 +39,21 @@
 目前樣本顯示：
 
 - TWSE／TPEx quote 提供最佳五檔快照、可選成交、累計量、盤中價格與狀態 flags。
-- TAIFEX tick 提供成交或成交批次、盤中高低價、完整五檔快照與部分統計資料。
+- TAIFEX tick 提供成交或成交批次、完整五檔快照，以及 TAIFEX-specific
+  `close`／`stats` 記錄。
 - 同一商品會出現不同 `format`，其欄位與語意可能不同。
 - 商品資料可提供 symbol、市場、種類、到期日等資訊，但部分欄位可能缺漏。
-- 部分統計資料沒有可用的 `match_time`。
+- Teralion Feed Archive 的 session-stat 記錄只有 `received_at` 與 `seq`，沒有可用的
+  `match_time`。
 - 資料不是逐筆委託資料，無法得知每張委託、真實排隊順位、隱藏流動性或完整撮合過程。
 
 因此：
 
-- 回播以成交、五檔快照、可辨識的統計與狀態為主。
+- 回播以成交、完整五檔快照與可辨識的狀態為主。
 - 只有具有有效 `match_time` 的資料才能進入事件時間軸。
 - 沒有 `match_time` 的資料只能作為參考資料或回測結果附件，不得在盤中時間軸任意插入。
+- 第一版不將 Teralion `close`／`stats` 記錄正規化為 domain event，也不要求為回測
+  下載或建立其 replay cache；既有來源資料可以保留 raw payload，但 replayer 忽略。
 - 系統不從五檔快照反推逐筆委託或交易所撮合過程。
 - 不完整或未知欄位保留為未知，不自行猜測。
 
@@ -224,7 +228,6 @@ TAIFEX 跨日資料必須依正確的 trading date 回播，不可單純依日�
 - `QuoteSnapshot`：最佳五檔、可選成交、累計量及 flags
 - `BookSnapshot`：完整五檔及可用的衍生一檔
 - `TradeBatch`：一筆或多筆成交及可用的累計資訊
-- `MarketStat`：盤中高低價、結算價、未平倉量或其他可定時的統計
 - `MarketStatus`：來源可明確辨識的市場狀態
 
 每個事件至少包含：
@@ -252,7 +255,6 @@ TAIFEX 跨日資料必須依正確的 trading date 回播，不可單純依日�
 - 最新五檔快照
 - 最近成交或成交批次
 - 累計成交量
-- 盤中高低價及可用統計
 - 最新 flags
 - 最後 `match_time`
 - 狀態版本
@@ -455,6 +457,7 @@ Teralion tick
 - 第一版以 explicit symbol universe 為主。
 - 市場狀態以成交與完整五檔快照為主。
 - 不重建逐筆委託簿，不模擬精確 queue position。
+- 第一版不將 Teralion `close`／`stats` 正規化為 domain event 或 MarketState。
 - 基礎成交從策略下單後的下一個可用事件開始判定。
 - 資料同步與回測分離，回測預設離線。
 - 回播只讀取策略需要的商品。
@@ -480,6 +483,7 @@ Teralion tick
 
 資料 API：
 
+- [Teralion Feed API](https://docs.teraliontech.com/feed/)
 - [Teralion Feed Archive API](https://docs.teraliontech.com/feed-archive/)
 
 台灣市場格式：

@@ -57,7 +57,7 @@ M1 完成時，專案必須能以單一明確的測試或範例入口執行下�
 - 呼叫 Teralion API、coverage 查詢、cursor 或資料下載。
 - 本地來源資料目錄、manifest、checksum 驗證或回播快取。
 - TPEx、TAIFEX、權證、選擇權或多商品合併。
-- `BookSnapshot`、`TradeBatch`、`MarketStat` 或 `MarketStatus`。
+- `BookSnapshot`、`TradeBatch` 或獨立 `MarketStatus`。
 - order、fill、slippage、fee、tax、position 或 P&L。
 - 動態 strategy loading、腳本策略或外部程序策略。
 - CLI 與使用者設定檔的最終形式。
