@@ -79,7 +79,7 @@ domain type 只表達來源 interface 已證實的內容：
 market_types_version       = 1
 event_schema_version       = 1
 canonical_event_version    = 1
-ordering_rule_version      = 1
+ordering_rule_version      = 2
 normalizer_mapping_name    = market-interface-specific name
 normalizer_mapping_version = market-interface-specific integer
 ```
@@ -627,35 +627,27 @@ TradeBatch {
 它不是 `QuoteSnapshot`，也不清除或合成 book。這解決「trade observation +
 NoBookObservation」的型別表達問題，同時維持第一版既有 event kind 集合。
 
-### 10.2 Ordering compatibility gate
+### 10.2 Intermediate/final ordering
 
-compatibility gate ID 是 `TWSE_INTERMEDIATE_ORDERING`。
+TWSE `STOCK_REALTIME` 的同 `match_time` intermediate/final pair 依
+[ADR-0005](../architecture/decisions/0005-twse-intermediate-final-ordering.md)處理。
 
-目前不能因此直接啟用完整 `STOCK_REALTIME` normalizer。2330 fixture 顯示同一
-`match_time` 可能同時有：
+`OrderingRule` version 2 在 event kind 前先比較 source phase：
 
-1. intermediate `TradeBatch`
-2. final `QuoteSnapshot`
+```text
+intermediate TradeBatch phase rank = 10
+final QuoteSnapshot phase rank     = 20
+```
 
-`OrderingRule` 先比較 event kind rank，因此 `QuoteSnapshot(10)` 會排在
-`TradeBatch(30)` 前。若直接啟用：
+因此 reducer 先保存 intermediate trade/cumulative volume，再以 final
+`QuoteSnapshot` 更新最後成交、final cumulative volume 與 complete book。
 
-- final cumulative volume 可能先被 Set，之後被較小的 intermediate cumulative
-  volume 覆蓋。
-- recent trade 可能最後停在 intermediate，而不是 final print。
-- strategy callback sequence 雖 deterministic，卻與來源明確的
-  intermediate／final 語意相反。
+mapping version 2 只接受 fixture 已證實的一筆 intermediate + 一筆 final group；
+其他 group shape 以 schema error 拒絕。不得使用 `max(cumulative_volume)`、忽略
+intermediate、複製舊 book 或 API input order 掩蓋問題。
 
-因此：
-
-- 本文件的 domain types 已定義合法 representation。
-- `TeralionTwseQuote` 仍依 interface 文件 default reject 此 shape。
-- 不得用 `max(cumulative_volume)`、忽略 intermediate、複製舊 book 或 fingerprint
-  偶然順序掩蓋問題。
-- 啟用前必須以獨立 ADR 決定 coalescing 或新的 ordering policy，更新相依版本與
-  golden fixtures。
-
-M1 使用 `STOCK_SNAPSHOT`，不受此 gate 影響。
+phase rank 可由既有 canonical event fields 純函式重建，所以
+`event_schema_version` 與 `canonical_event_version` 維持 `1`。
 
 ## 11. Validation invariants
 
@@ -873,7 +865,7 @@ market type 只表達 observation，不自行成交。
 | `InvalidObservation` | required field 使用 `NoObservation`、不合法 `Clear` |
 | `UnknownReservedValue` | raw 保存但產生 warning；是否 reject 由 requirement policy |
 | `IncompatibleVersion` | event／mapping／ordering／canonical version mismatch |
-| `UnsupportedIntermediateOrdering` | TWSE intermediate shape 尚未通過 ordering gate |
+| `UnsupportedRealtimeMatchGroup` | TWSE realtime group 缺 final、多筆 intermediate/final 或 cumulative volume 不一致 |
 
 error context 至少包含 market、symbol、trading date、source format 與可用的
 `match_time`。不得包含 API key 或完整 credential-bearing request。
@@ -905,6 +897,10 @@ error context 至少包含 market、symbol、trading date、source format 與可
 - 同 source tick 的 book／trade／volume／flags 單一 atomic event。
 - `TradeBatch` non-empty invariant。
 - trade-only intermediate 不可建構 `QuoteSnapshot`。
+- TWSE realtime `1+1` group 產生 intermediate `TradeBatch` 與 final
+  `QuoteSnapshot`。
+- source phase rank 固定 intermediate 在同 `match_time` final 前。
+- missing／multiple／volume-mismatch realtime group 整組拒絕。
 - unknown format 不能產生 event。
 - `close`／`stats` 不產生 timeline event。
 
@@ -953,7 +949,8 @@ M2 加入：
 - simulation-compatible quantity unit
 - market／limit fill evidence
 
-完整 `STOCK_REALTIME` 進入 cache 前必須先解決第 10.2 節 ordering gate。
+完整 `STOCK_REALTIME` 使用 `TeralionTwseQuote` mapping version 2 與
+`OrderingRule` version 2；未知 match-group shape 必須拒絕。
 
 ### 16.3 M3／M4
 

@@ -15,7 +15,7 @@ type definition；具體 exact price／quantity type 與 canonical encoding 由
 - [TWSE 集中市場即時交易資訊傳輸規格書 B.12.13](https://dsp.twse.com.tw/public/static/downloads/computerPlanningOperationsDepartment/TWSE%E9%9B%86%E4%B8%AD%E5%B8%82%E5%A0%B4%E5%8D%B3%E6%99%82%E4%BA%A4%E6%98%93%E8%B3%87%E8%A8%8A%E5%82%B3%E8%BC%B8%E8%A6%8F%E6%A0%BC%E6%9B%B8%28B.12.13%29%28202612%29_20260515151841.pdf)。
 - 2026-07-27 TWSE `2330` 08:55–13:35 的 77,213 筆實際 response。
 
-適用 mapping：`TeralionTwseQuote`，`mapping_version = 1`。
+適用 mapping：`TeralionTwseQuote`，`mapping_version = 2`。
 
 ## 2. 支援範圍
 
@@ -25,7 +25,7 @@ type definition；具體 exact price／quantity type 與 canonical encoding 由
 | `format` | 實測筆數 | 第一版行為 |
 | --- | ---: | --- |
 | `STOCK_SNAPSHOT` | 3,597 | M1 支援；正規化為 `QuoteSnapshot` |
-| `STOCK_REALTIME` | 70,199 | 完整 book shape 可正規化；`intermediate_print` edge case 見第 7 節 |
+| `STOCK_REALTIME` | 70,199 | 支援完整 book 與已驗證的 intermediate/final `1+1` group；見第 7 節 |
 | `INTRADAY_ODDLOT_REALTIME` | 3,417 | 已知但不支援；保存 raw、計數略過、不產生 event |
 
 第一版不支援：
@@ -253,22 +253,35 @@ TWSE B.12.13 的「揭示項目註記」進一步確認此 shape：Bit 0 為 `1`
 empty book 完全一致。因此 empty arrays 在此 case 是 `NoBookObservation`，不是
 complete empty book。
 
-`TeralionTwseQuote` 對此 shape 的決定：
+三個 exact-`match_time` groups 的實測值：
 
-- raw source 必須保存。
-- 不正規化為 `QuoteSnapshot`。
-- 不產生 synthetic book。
-- default mode 以 `unsupported_intermediate_print_shape` 停止 cache build，錯誤
-  包含 market、symbol、format、`match_time`。
-- explicit degraded mode 可以略過，但必須記錄筆數、first／last `match_time`，
-  並將 run 標記為 degraded。
+| `match_time` | Intermediate deal／cum | Final deal／cum |
+| --- | --- | --- |
+| `09:28:49.274622` | `2340 × 1`／5,616 | `2345 × 7`／5,623 |
+| `09:30:55.252155` | `2345 × 7`／6,055 | `2350 × 6`／6,061 |
+| `10:29:59.907157` | `2360 × 2`／9,339 | `2365 × 1`／9,340 |
 
-在 event schema 能同時表達「trade observation + no book observation」，且
-same-`match_time` ordering／cumulative-volume semantics 經 ADR 與 golden fixture
-固定前，不得將這 3 筆猜測映射成 `TradeBatch` 或空 book。
+`TeralionTwseQuote` mapping version 2 依
+[ADR-0005](../architecture/decisions/0005-twse-intermediate-final-ordering.md)處理：
 
-這項明確拒絕不阻止 M1 使用 `STOCK_SNAPSHOT` fixture；但使用完整
-`STOCK_REALTIME` 的 M2 cache build 前，必須先解決此 schema gap。
+1. 以 market、trading date、symbol、format、`match_time` 建立 group，不能依 API
+   page 或 input order 配對。
+2. 已驗證的 group 必須恰好包含一筆 intermediate 與一筆具有 complete book 的
+   final record。
+3. intermediate 映射為 single-element `TradeBatch`，不修改或合成 book。
+4. final 映射為 `QuoteSnapshot`。
+5. `OrderingRule` version 2 以 source phase rank 固定
+   `TradeBatch(intermediate) -> QuoteSnapshot(final)`。
+6. final cumulative volume 必須等於 intermediate cumulative volume 加 final deal
+   quantity。
+
+若 group 有 missing final、multiple intermediate、multiple final、volume mismatch
+或 invalid final book，default mode 以 `unsupported_realtime_match_group` 拒絕整個
+group。explicit degraded mode 只能略過整個 group，並記錄 group count、first／last
+`match_time` 及 degraded result；不得只略過 intermediate 後接受 final。
+
+M1 仍可只使用 `STOCK_SNAPSHOT` fixture；M2 完整 `STOCK_REALTIME` normalization
+使用 mapping version 2，不再有獨立 compatibility gate。
 
 ## 8. Flags 與 quote annotations
 
@@ -476,7 +489,8 @@ kinds        = quote
 | level price／quantity 非法 | reject，不更新 clock／state |
 | 缺少／無效 `match_time` | reject |
 | `received_at` 與 `match_time` 順序相反 | 接受兩 clock，不以差值判錯 |
-| `intermediate_print=true` + empty book | default reject；不得清 book |
+| 合法 intermediate/final `1+1` group | `TradeBatch -> QuoteSnapshot`；intermediate 不清 book |
+| missing／multiple／volume-mismatch intermediate group | reject 整個 group |
 | `INTRADAY_ODDLOT_REALTIME` | preserve raw、known skip、no event |
 | unknown format | default reject |
 | `status_flags` 4／8／16／128 | raw preserved；解碼 close／open／continuous／trial |
@@ -493,7 +507,8 @@ kinds        = quote
 - `DATA-03`：invalid／unsupported／outside-window 分類。
 - `DATA-05`：TWSE symbol／market 與 daily instrument metadata boundary。
 - `REPLAY-01`：`QuoteSnapshot` mapping、wire／domain 分離及 atomicity。
+- `REPLAY-02`：intermediate/final source phase ordering。
 - `REPLAY-03`：complete snapshot replacement、`NoObservation` 與 raw flags。
-- `REPLAY-06`：invalid fields、unknown format 及 intermediate shape rejection。
+- `REPLAY-06`：invalid fields、unknown format 及 invalid match-group rejection。
 - `NFR-01`：deterministic mapping 與 warning aggregation。
 - `NFR-03`：`TeralionTwseQuote` 的 numeric mapping version boundary。

@@ -2,9 +2,9 @@
 
 - 狀態：Accepted
 - 決策日期：2026-07-29
-- 最後修訂：2026-07-30（移除第一版 standalone status event）
+- 最後修訂：2026-07-30（加入 TWSE realtime source phase tie-break）
 - 適用契約：`OrderingRule`
-- ordering rule version：`1`
+- ordering rule version：`2`
 - 主要需求：`REPLAY-02`、`REPLAY-04`、`NFR-01`、`NFR-03`
 
 ## 1. Context
@@ -33,7 +33,7 @@ Teralion 提供的 `match_time` 是唯一可用 replay time，但相同 `match_t
 
 ## 2. Decision
 
-採用 `OrderingRule` version `1`。所有 accepted domain events 以完整
+採用 `OrderingRule` version `2`。所有 accepted domain events 以完整
 `OrderingKey` 遞增排序：
 
 ```text
@@ -42,6 +42,7 @@ OrderingKey = (
     market_rank,
     symbol,
     source_format,
+    source_phase_rank,
     event_kind_rank,
     source_sequence,
     event_fingerprint
@@ -104,7 +105,25 @@ identifier 必須：
 
 source format 排序同樣不代表來源封包優先權。
 
-### 2.5 `event_kind_rank`
+### 2.5 `source_phase_rank`
+
+一般 event 的 `source_phase_rank = 0`。
+
+TWSE `STOCK_REALTIME` 依
+[ADR-0005](0005-twse-intermediate-final-ordering.md)使用：
+
+| Source phase | Rank |
+| --- | ---: |
+| intermediate `TradeBatch` | 10 |
+| final `QuoteSnapshot` | 20 |
+
+rank 由 event 的 market、source format、event kind 與 `TradePrintKind` 純函式
+重建，不使用 `received_at`、API order 或 ingestion ordinal。
+
+這是 source-specific tie-break，不代表其他 market 的 trade 必須先於 quote。未知
+TWSE realtime shape 必須由 mapping 拒絕，不能臨時分配 rank。
+
+### 2.6 `event_kind_rank`
 
 `OrderingRule` 固定：
 
@@ -123,7 +142,7 @@ rank 保留間隔以便未來新增事件，但新增 kind 仍必須 review 並�
 同一 source tick 內的 book、trade、volume 與 flags 依 `REPLAY-01` 保持單一原子
 event，因此不能藉 event kind rank 拆開同一 tick。
 
-### 2.6 `source_sequence`
+### 2.7 `source_sequence`
 
 若 source event 具有經 interface 文件確認、會隨 payload 保存且跨重跑穩定的
 sequence／counter，將它放入 `source_sequence`：
@@ -148,7 +167,7 @@ None < Some(value)
 
 若來源沒有合法 sequence，使用 `None`，由 fingerprint 完成 tie-break。
 
-### 2.7 `event_fingerprint`
+### 2.8 `event_fingerprint`
 
 `EventFingerprint` 定義為：
 
@@ -261,7 +280,7 @@ select minimum OrderingKey
 
 執行結果與依賴排序的 replay cache 必須記錄：
 
-- `ordering_rule_version = 1`
+- `ordering_rule_version = 2`
 - `event_schema_version = 1`
 - `canonical_event_version = 1`
 - `fingerprint_algorithm = BLAKE3-256`
@@ -271,6 +290,7 @@ select minimum OrderingKey
 - key 欄位順序改變。
 - market／event kind rank 改變。
 - source sequence presence／comparison 改變。
+- source phase rank 或其 derivation 改變。
 - fingerprint algorithm 改變。
 - canonical encoding 改變而可能改變 fingerprint。
 - `MatchTime` comparison 語意改變。
@@ -340,6 +360,7 @@ select minimum OrderingKey
 
 - 同一 events 以多種 input order 產生相同 ordered canonical bytes。
 - 相同 `match_time` 跨 market、symbol、format、kind 的 golden order test。
+- TWSE realtime intermediate 必須先於同 `match_time` final quote。
 - `None`／`Some(source_sequence)` comparison test。
 - fingerprint golden vectors。
 - 不同 locale、timezone、worker count 的結果一致測試。
