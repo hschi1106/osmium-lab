@@ -15,14 +15,14 @@ type definition；具體 exact price／quantity type 與 canonical encoding 由
 - [TWSE 集中市場即時交易資訊傳輸規格書 B.12.13](https://dsp.twse.com.tw/public/static/downloads/computerPlanningOperationsDepartment/TWSE%E9%9B%86%E4%B8%AD%E5%B8%82%E5%A0%B4%E5%8D%B3%E6%99%82%E4%BA%A4%E6%98%93%E8%B3%87%E8%A8%8A%E5%82%B3%E8%BC%B8%E8%A6%8F%E6%A0%BC%E6%9B%B8%28B.12.13%29%28202612%29_20260515151841.pdf)。
 - 2026-07-27 TWSE `2330` 08:55–13:35 的 77,213 筆實際 response。
 
-適用 mapping version：`TeralionTwseQuoteV1`。
+適用 mapping：`TeralionTwseQuote`，`mapping_version = 1`。
 
 ## 2. 支援範圍
 
 第一版只處理 TWSE 普通交易的整股 quote。實際下載中同時出現的 format 依下表
 分類：
 
-| `format` | 實測筆數 | V1 行為 |
+| `format` | 實測筆數 | 第一版行為 |
 | --- | ---: | --- |
 | `STOCK_SNAPSHOT` | 3,597 | M1 支援；正規化為 `QuoteSnapshot` |
 | `STOCK_REALTIME` | 70,199 | 完整 book shape 可正規化；`intermediate_print` edge case 見第 7 節 |
@@ -109,13 +109,13 @@ adapter 不對 symbol 做數值轉換。`2330` 是 string，不得因看似數�
 
 `STOCK_SNAPSHOT` 額外實測：
 
-| Field | Wire type | V1 行為 |
+| Field | Wire type | 第一版行為 |
 | --- | --- | --- |
-| `open_price` | number | 保存在 raw source；不進 `QuoteSnapshotV1` |
-| `high_price` | number | 保存在 raw source；不進 `QuoteSnapshotV1` |
-| `low_price` | number | 保存在 raw source；不進 `QuoteSnapshotV1` |
+| `open_price` | number | 保存在 raw source；不進 `QuoteSnapshot` |
+| `high_price` | number | 保存在 raw source；不進 `QuoteSnapshot` |
+| `low_price` | number | 保存在 raw source；不進 `QuoteSnapshot` |
 
-這三個欄位在 pre-open 樣本可為 `0.0`。V1 不將 zero 猜成 absent、真實成交價或
+這三個欄位在 pre-open 樣本可為 `0.0`。第一版不將 zero 猜成 absent、真實成交價或
 策略可用的 session OHLC；若未來需要，必須以新 schema 與 fixture 定義語意。
 
 ### 5.2 Level
@@ -143,7 +143,7 @@ decoder 必須保留足以無損轉成 domain decimal／tick representation 的 
 lexeme；exact Rust representation 留給 `market-types`。
 
 Teralion 文件只稱 size 為 `quantity`。在 quantity unit 未由 source／exchange
-contract 與 fixture 固定前，V1 不自行把它改名為 shares、lots 或 contracts。
+contract 與 fixture 固定前，第一版不自行把它改名為 shares、lots 或 contracts。
 
 ### 5.3 Deal
 
@@ -192,7 +192,7 @@ shape 判斷：
 | `event_kind` | `QuoteSnapshot` |
 | `source_sequence` | absent；TWSE quote sample 沒有可用 counter |
 
-`received_at` 不進 replay clock，也不是 `OrderingRuleV1` 的 source sequence。
+`received_at` 不進 replay clock，也不是 `OrderingRule` 的 source sequence。
 source page、cursor、file line 或 ingestion ordinal 都不得補成 sequence。
 
 ### 6.2 Payload
@@ -214,12 +214,12 @@ accepted 後，一次完整取代 book、一次更新其他明確 observation，
 只增加一次。
 
 `STOCK_SNAPSHOT` 的 `open_price`、`high_price`、`low_price` 不在
-`QuoteSnapshotV1` payload，因此不影響 event fingerprint；它們仍由 source
+`QuoteSnapshot` payload，因此不影響 event fingerprint；它們仍由 source
 checksum 保護，未來加入 domain event 時必須更新 event schema／mapping version。
 
 ### 6.3 Complete book shape
 
-V1 的 complete book shape 必須同時符合：
+第一版的 complete book shape 必須同時符合：
 
 - `bids`、`asks` fields 都存在且為 arrays。
 - 每側長度為 0 至 5。
@@ -252,7 +252,7 @@ TWSE B.12.13 的「揭示項目註記」進一步確認此 shape：Bit 0 為 `1`
 empty book 完全一致。因此 empty arrays 在此 case 是 `NoBookObservation`，不是
 complete empty book。
 
-`TeralionTwseQuoteV1` 對此 shape 的決定：
+`TeralionTwseQuote` 對此 shape 的決定：
 
 - raw source 必須保存。
 - 不正規化為 `QuoteSnapshot`。
@@ -279,7 +279,7 @@ same-`match_time` ordering／cumulative-volume semantics 經 ADR 與 golden fixt
 | `limit_flags` | `0` |
 
 Teralion 將兩者描述為 quote-header flags；其整數值與 TWSE B.12.13 的
-「狀態註記」及「漲跌停註記」byte layout 一致。V1 同時保存 raw byte 與 decoded
+「狀態註記」及「漲跌停註記」byte layout 一致。第一版同時保存 raw byte 與 decoded
 annotations，避免未來規格新增 bit 時遺失來源資訊。
 
 ### 8.1 `status_flags`：狀態註記
@@ -363,7 +363,7 @@ instant_trend = limit_flags & 0x03
 - strategy session phase；盤中仍屬 `Active`。
 
 TWSE 的瞬間價格穩定措施通常暫緩該商品撮合 2 分鐘，期間繼續接受符合交易所規則
-的委託，結束後以集合競價撮合，再恢復逐筆交易。對 backtest V1：
+的委託，結束後以集合競價撮合，再恢復逐筆交易。對第一版 backtest：
 
 - `QuoteSnapshot` 仍更新可觀察的試算行情與 flags。
 - strategy callback 仍執行，且 `Active` phase 仍可送出 order intent。
@@ -493,4 +493,4 @@ kinds        = quote
 - `REPLAY-03`：complete snapshot replacement、`NoObservation` 與 raw flags。
 - `REPLAY-06`：invalid fields、unknown format 及 intermediate shape rejection。
 - `NFR-01`：deterministic mapping 與 warning aggregation。
-- `NFR-03`：`TeralionTwseQuoteV1` version boundary。
+- `NFR-03`：`TeralionTwseQuote` 的 numeric mapping version boundary。

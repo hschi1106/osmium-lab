@@ -3,7 +3,8 @@
 - 狀態：Accepted
 - 決策日期：2026-07-29
 - 最後修訂：2026-07-30（移除第一版 standalone status event）
-- 適用版本：`MarketStateSemanticsV1`
+- 適用契約：`MarketStateSemantics`
+- market-state semantics version：`1`
 - 主要需求：`REPLAY-01`、`REPLAY-03`、`REPLAY-04`、`STRAT-01`
 
 ## 1. Context
@@ -27,13 +28,13 @@ backtest 不使用它們，因此不把它們正規化為 event 或保存進 Mar
 
 ## 2. Decision
 
-每個 execution universe instrument 維護一份獨立 `MarketStateV1`。狀態只由 accepted
+每個 execution universe instrument 維護一份獨立 `MarketState`。狀態只由 accepted
 domain events 經 reducer 更新，並以完整 snapshot replacement 作為 book 語意。
 
 概念狀態：
 
 ```text
-MarketStateV1 {
+MarketState {
     instrument
     book_snapshot
     recent_trade_or_batch

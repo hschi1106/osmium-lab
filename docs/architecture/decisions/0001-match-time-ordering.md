@@ -3,7 +3,8 @@
 - 狀態：Accepted
 - 決策日期：2026-07-29
 - 最後修訂：2026-07-30（移除第一版 standalone status event）
-- 適用版本：`OrderingRuleV1`
+- 適用契約：`OrderingRule`
+- ordering rule version：`1`
 - 主要需求：`REPLAY-02`、`REPLAY-04`、`NFR-01`、`NFR-03`
 
 ## 1. Context
@@ -32,11 +33,11 @@ Teralion 提供的 `match_time` 是唯一可用 replay time，但相同 `match_t
 
 ## 2. Decision
 
-採用 `OrderingRuleV1`。所有 accepted domain events 以完整 `OrderingKeyV1` 遞增
-排序：
+採用 `OrderingRule` version `1`。所有 accepted domain events 以完整
+`OrderingKey` 遞增排序：
 
 ```text
-OrderingKeyV1 = (
+OrderingKey = (
     match_time,
     market_rank,
     symbol,
@@ -65,7 +66,7 @@ OrderingKeyV1 = (
 
 ### 2.2 `market_rank`
 
-`OrderingRuleV1` 使用固定 rank：
+`OrderingRule` 使用固定 rank：
 
 | Market | Rank |
 | --- | ---: |
@@ -105,7 +106,7 @@ source format 排序同樣不代表來源封包優先權。
 
 ### 2.5 `event_kind_rank`
 
-`OrderingRuleV1` 固定：
+`OrderingRule` 固定：
 
 | Event kind | Rank |
 | --- | ---: |
@@ -149,10 +150,10 @@ None < Some(value)
 
 ### 2.7 `event_fingerprint`
 
-`EventFingerprintV1` 定義為：
+`EventFingerprint` 定義為：
 
 ```text
-BLAKE3-256(CanonicalEventV1(event))
+BLAKE3-256(CanonicalEvent(event))
 ```
 
 比較使用 32-byte digest 的 unsigned lexicographic order。
@@ -167,12 +168,12 @@ BLAKE3-256(CanonicalEventV1(event))
 fingerprint 不是安全簽章，不驗證資料來源身分；source integrity 仍由 source
 checksum、manifest 與 provenance 負責。
 
-## 3. `CanonicalEventV1`
+## 3. `CanonicalEvent`
 
 fingerprint input 必須是 domain event 的 canonical encoding，不是 source JSON、
 cache serializer、Rust memory layout 或 debug output。
 
-`CanonicalEventV1` 遵守：
+`CanonicalEvent` 遵守：
 
 1. 開頭包含 canonical encoding version 及 event schema version。
 2. event envelope 依 schema 固定欄位順序編碼。
@@ -197,7 +198,7 @@ encoding tests 固定。
 
 ### 4.1 單 stream
 
-每個 cache／event stream 必須以與 `OrderingRuleV1` 相容的順序提供事件，或由 reader
+每個 cache／event stream 必須以與 `OrderingRule` 相容的順序提供事件，或由 reader
 在交給 merge 前建立該順序。
 
 reader 必須偵測：
@@ -211,11 +212,11 @@ reader 必須偵測：
 
 ### 4.2 多 stream merge
 
-merge 比較各 stream head 的完整 `OrderingKeyV1`，取最小值：
+merge 比較各 stream head 的完整 `OrderingKey`，取最小值：
 
 ```text
 heads = selected_streams.current_events()
-next = min_by(OrderingKeyV1, heads)
+next = min_by(OrderingKey, heads)
 emit(next)
 advance(next.stream)
 ```
@@ -226,8 +227,8 @@ stream discovery order、buffer size、I/O completion 或 worker count 不參與
 
 若兩個事件的：
 
-- 完整 OrderingKeyV1 相同，且
-- `CanonicalEventV1` bytes 相同，
+- 完整 OrderingKey 相同，且
+- `CanonicalEvent` bytes 相同，
 
 則它們是 ordering-equivalent duplicates。
 
@@ -246,7 +247,7 @@ stream discovery order、buffer size、I/O completion 或 worker count 不參與
 排序完成後，每個事件依下列順序：
 
 ```text
-select minimum OrderingKeyV1
+select minimum OrderingKey
 -> advance clock to event.match_time
 -> atomically update MarketState
 -> strategy sees current event and updated state
@@ -260,10 +261,10 @@ select minimum OrderingKeyV1
 
 執行結果與依賴排序的 replay cache 必須記錄：
 
-- `OrderingRuleV1`
-- event schema version
-- `CanonicalEventV1`
-- `EventFingerprintV1`／BLAKE3-256
+- `ordering_rule_version = 1`
+- `event_schema_version = 1`
+- `canonical_event_version = 1`
+- `fingerprint_algorithm = BLAKE3-256`
 
 下列變更需要新的 ordering rule 或明確 compatibility review：
 
