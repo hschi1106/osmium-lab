@@ -55,6 +55,7 @@ document_sets:
   verification:
     plan: docs/verification/plan.md
     acceptance: docs/verification/acceptance.md
+    fixture_provenance: docs/verification/fixture-provenance.md
     performance: docs/verification/performance.md
   architecture:
     overview: docs/architecture/overview.md
@@ -236,6 +237,61 @@ design_trace:
       - OPS-02
       - NFR-01
       - NFR-02
+      - NFR-03
+  - path: docs/design/strategy-api.md
+    status: complete
+    design_versions:
+      strategy_api: 1
+      strategy_output: 1
+    requirements:
+      - REPLAY-04
+      - REPLAY-05
+      - STRAT-01
+      - SIM-01
+      - SIM-02
+      - OPS-02
+      - NFR-01
+      - NFR-03
+
+verification_trace:
+  - path: docs/verification/plan.md
+    status: complete
+    verification_plan_version: 1
+    scope: M1
+    requirements:
+      - REPLAY-01
+      - REPLAY-02
+      - REPLAY-03
+      - REPLAY-04
+      - REPLAY-06
+      - STRAT-01
+      - OPS-02
+      - NFR-01
+      - NFR-03
+  - path: docs/verification/acceptance.md
+    status: complete
+    acceptance_contract_version: 1
+    scope: M1
+    current_overall_status: blocked
+    requirements:
+      - REPLAY-01
+      - REPLAY-02
+      - REPLAY-03
+      - REPLAY-04
+      - REPLAY-06
+      - STRAT-01
+      - OPS-02
+      - NFR-01
+      - NFR-03
+  - path: docs/verification/fixture-provenance.md
+    status: blocked
+    provenance_record_version: 1
+    scope: M1 TWSE 2330
+    blocking_gate:
+      id: TERALION_FIXTURE_REDISTRIBUTION_APPROVAL
+      status: open
+    requirements:
+      - REPLAY-01
       - NFR-03
 
 requirements:
