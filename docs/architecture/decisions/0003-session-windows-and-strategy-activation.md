@@ -3,7 +3,8 @@
 - 狀態：Accepted
 - 決策日期：2026-07-30
 - 最後修訂：2026-07-30（補充 TAIFEX 時段、WarmUp 下單及移除 standalone status event）
-- 適用版本：`SessionWindowPolicyV1`、`StrategySessionPolicyV1`
+- 適用契約：`SessionWindowPolicy`、`StrategySessionPolicy`
+- policy versions：`SessionWindowPolicy = 1`、`StrategySessionPolicy = 1`
 - 主要需求：`DATA-01`、`DATA-05`、`REPLAY-04`、`REPLAY-05`、`STRAT-01`、
   `SIM-01`、`NFR-01`
 
@@ -48,7 +49,7 @@ download window = [session open - 5 minutes, session close + 5 minutes)
 replay window   = [session open - 5 minutes, session close + 5 minutes)
 ```
 
-五分鐘 margin 是 `SessionWindowPolicyV1` 的固定 invariant：
+五分鐘 margin 是 `SessionWindowPolicy` 的固定 invariant：
 
 - 同時套用於 download 與 replay。
 - 不能由 strategy、run parameter 或 market adapter 任意縮短或放大。
@@ -348,7 +349,7 @@ Replay cache identity 至少綁定：
 
 - source checksum
 - session profile／calendar version
-- `SessionWindowPolicyV1`
+- `SessionWindowPolicy`
 - replay windows
 - event schema／normalizer／ordering versions
 

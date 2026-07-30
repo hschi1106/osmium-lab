@@ -7,11 +7,11 @@
 MarketState、strategy 與 simulation 共用同一組不依賴 Teralion wire type 的資料
 語意。
 
-本文件固定：
+本文件固定第一版契約：
 
-- `MarketTypesV1`
-- `EventSchemaV1`
-- `CanonicalEventV1`
+- market types schema version `1`
+- event schema version `1`
+- canonical event encoding version `1`
 - exact time、decimal、quantity 與 instrument identity
 - `QuoteSnapshot`、`BookSnapshot`、`TradeBatch` payload shape
 - `Set`／`Clear`／`NoObservation`／`Unknown` update semantics
@@ -42,8 +42,8 @@ type。資料流程必須是：
 ```text
 Teralion wire type
 -> market/format validator
--> MarketTypesV1
--> EventSchemaV1
+-> validated domain types
+-> DomainEvent
 -> replay cache / replayer / strategy
 ```
 
@@ -75,11 +75,12 @@ domain type 只表達來源 interface 已證實的內容：
 每個 event stream、replay cache 與 run manifest 必須能識別：
 
 ```text
-market_types_version     = MarketTypesV1
-event_schema_version     = EventSchemaV1
-canonical_event_version  = CanonicalEventV1
-ordering_rule_version    = OrderingRuleV1
-normalizer_mapping       = market-interface-specific version
+market_types_version       = 1
+event_schema_version       = 1
+canonical_event_version    = 1
+ordering_rule_version      = 1
+normalizer_mapping_name    = market-interface-specific name
+normalizer_mapping_version = market-interface-specific integer
 ```
 
 任一會改變 value semantics、event field、enum discriminant、canonical bytes 或
@@ -88,9 +89,9 @@ schema／canonical version 不得出現在同一 stream。
 
 ## 4. Primitive types
 
-### 4.1 `MarketIdV1`
+### 4.1 `MarketId`
 
-domain market 與 `OrderingRuleV1.market_rank` 使用同一固定 identity：
+domain market 與 `OrderingRule.market_rank` 使用同一固定 identity：
 
 | Market | Discriminant | Ordering rank |
 | --- | ---: | ---: |
@@ -99,11 +100,11 @@ domain market 與 `OrderingRuleV1.market_rank` 使用同一固定 identity：
 | `Taifex` | 3 | 3 |
 
 Teralion 的 `taifex_fut`／`taifex_opt` 都映射至 `Taifex`；商品種類由
-`InstrumentKindV1` 區分。unknown market 不可臨時以字串進入 event。
+`InstrumentKind` 區分。unknown market 不可臨時以字串進入 event。
 
-### 4.2 `SymbolV1`
+### 4.2 `Symbol`
 
-`SymbolV1` 是經 market interface 驗證後的 canonical UTF-8 bytes。
+`Symbol` 是經 market interface 驗證後的 canonical UTF-8 bytes。
 
 規則：
 
@@ -116,35 +117,35 @@ Teralion 的 `taifex_fut`／`taifex_opt` 都映射至 `Taifex`；商品種類由
 
 M1 的 `2330` 仍是一般合法 symbol；domain type 不把它硬編碼成唯一值。
 
-### 4.3 `InstrumentIdV1`
+### 4.3 `InstrumentId`
 
 ```text
-InstrumentIdV1 {
-    market: MarketIdV1
-    symbol: SymbolV1
+InstrumentId {
+    market: MarketId
+    symbol: Symbol
 }
 ```
 
 identity comparison 先比 market discriminant，再比 symbol canonical bytes。name、
 root、expiry、filesystem path 或 Teralion display label 都不參與 identity。
 
-### 4.4 `TradingDateV1`
+### 4.4 `TradingDate`
 
-`TradingDateV1` 表示 exchange business date，不是 tick 的 local calendar date。
+`TradingDate` 表示 exchange business date，不是 tick 的 local calendar date。
 logical value 是 Gregorian `YYYY-MM-DD`；canonical representation 是從
 1970-01-01 起算的 signed day count：
 
 ```text
-TradingDateV1 = i32 epoch_days
+TradingDate = i32 epoch_days
 ```
 
 解析必須拒絕不存在日期。TAIFEX 夜盤由 SessionPlan／calendar 指派 trading date，
 不能只從 `match_time` 的日曆日期建構。
 
-### 4.5 `MatchTimeV1`
+### 4.5 `MatchTime`
 
 ```text
-MatchTimeV1 = i64 unix_microseconds_utc
+MatchTime = i64 unix_microseconds_utc
 ```
 
 規則：
@@ -157,15 +158,15 @@ MatchTimeV1 = i64 unix_microseconds_utc
 - total order 使用 signed integer order。
 - formatted offset 不參與 equality；同一 instant 的不同合法 offset 表示相等。
 
-`received_at` 不屬於 `MatchTimeV1`，也不放入 domain event。source provenance 仍
+`received_at` 不屬於 `MatchTime`，也不放入 domain event。source provenance 仍
 保存其原始值。
 
-### 4.6 `DecimalV1`
+### 4.6 `Decimal`
 
 所有 exact decimal 使用固定 18 位小數的 signed atoms：
 
 ```text
-DecimalV1 {
+Decimal {
     atoms: i128
 }
 
@@ -186,10 +187,10 @@ wire decoder 必須從 JSON numeric lexeme 或 decimal string 直接解析，不
 canonical encoding 是 `atoms` 的 16-byte two's-complement big-endian。generic
 decimal 可以為負或 zero；具體 newtype 另加 invariant。
 
-### 4.7 `PriceV1`
+### 4.7 `Price`
 
 ```text
-PriceV1(DecimalV1)
+Price(Decimal)
 ```
 
 invariant：
@@ -200,13 +201,13 @@ invariant：
   interface 在資料可用時處理
 
 wire 中用來表示「尚無價格」的 `0` 必須在 normalizer 轉為 absence／
-`NoObservation`，不能建構 `PriceV1(0)`。
+`NoObservation`，不能建構 `Price(0)`。
 
 ### 4.8 Quantity types
 
 quantity unit 必須顯式存在：
 
-| `QuantityUnitV1` | Discriminant | 語意 |
+| `QuantityUnit` | Discriminant | 語意 |
 | --- | ---: | --- |
 | `SourceUnit` | 0 | 來源只稱 quantity，尚未證實 shares／lots／contracts |
 | `Share` | 1 | 已確認以股為單位 |
@@ -216,18 +217,18 @@ quantity unit 必須顯式存在：
 book level、single trade 與 order size 使用：
 
 ```text
-QuantityV1 {
+Quantity {
     value: u64        // 必須 > 0
-    unit: QuantityUnitV1
+    unit: QuantityUnit
 }
 ```
 
 cumulative volume 允許合法 zero：
 
 ```text
-VolumeV1 {
+Volume {
     value: u64
-    unit: QuantityUnitV1
+    unit: QuantityUnit
 }
 ```
 
@@ -242,9 +243,9 @@ VolumeV1 {
 TWSE 2330 Teralion fixture 目前仍使用 `SourceUnit`，直到 Teralion quantity 與
 TWSE message unit 的 mapping 由 fixture contract 固定。
 
-### 4.9 `SourceFormatIdV1`
+### 4.9 `SourceFormatId`
 
-`SourceFormatIdV1` 是 normalizer registry 中具版本的 canonical UTF-8 identifier，
+`SourceFormatId` 是 normalizer registry 中具版本的 canonical UTF-8 identifier，
 例如 `STOCK_SNAPSHOT`。
 
 - 必須可回溯到 source payload。
@@ -254,7 +255,7 @@ TWSE message unit 的 mapping 由 fixture contract 固定。
 
 ## 5. Instrument reference types
 
-### 5.1 `InstrumentKindV1`
+### 5.1 `InstrumentKind`
 
 | Kind | Discriminant |
 | --- | ---: |
@@ -268,7 +269,7 @@ TWSE message unit 的 mapping 由 fixture contract 固定。
 normalizer 可以猜測商品種類。M1 可以回播已由 execution plan 明確選定的 TWSE
 equity fixture，但不能因 Teralion `kind=""` 就把所有空 kind 商品泛化成 equity。
 
-### 5.2 `OptionSideV1`
+### 5.2 `OptionSide`
 
 ```text
 Call = 1
@@ -278,43 +279,43 @@ Put  = 2
 非 option 的 `call_put` 必須 unavailable。unknown source value 不得默認成 Call
 或 Put。
 
-### 5.3 `InstrumentReferenceV1`
+### 5.3 `InstrumentReference`
 
 logical schema：
 
 ```text
-InstrumentReferenceV1 {
-    instrument: InstrumentIdV1
-    trading_date: TradingDateV1
-    kind: KnownOrUnknown<InstrumentKindV1>
+InstrumentReference {
+    instrument: InstrumentId
+    trading_date: TradingDate
+    kind: KnownOrUnknown<InstrumentKind>
     root: OptionalSourceText
-    expiry: Optional<TradingDateV1>
-    strike: Optional<PriceV1>
-    option_side: Optional<OptionSideV1>
-    multiplier: SourcedOptional<DecimalV1>
+    expiry: Optional<TradingDate>
+    strike: Optional<Price>
+    option_side: Optional<OptionSide>
+    multiplier: SourcedOptional<Decimal>
     currency: SourcedOptional<CurrencyCode>
 }
 ```
 
 `Optional` 在此只表達 static／daily reference field 是否存在，不是 MarketState
-update，因此不使用第 6 節的 `ObservationV1`。`multiplier` 與 `currency` 必須保留
+update，因此不使用第 6 節的 `Observation`。`multiplier` 與 `currency` 必須保留
 Teralion、user config 或其他 reference source 的 provenance；具體 provenance
 record 由 data-sync／execution-sim design 定義。
 
-Instrument reference 不直接進 `CanonicalEventV1`；event 只包含
-`InstrumentIdV1`。cache／run manifest 另外綁定適用 metadata checksum，避免
+Instrument reference 不直接進 `CanonicalEvent`；event 只包含
+`InstrumentId`。cache／run manifest 另外綁定適用 metadata checksum，避免
 metadata 更新悄悄改變 P&L。
 
 ## 6. Observation semantics
 
-### 6.1 `ObservationV1<T>`
+### 6.1 `Observation<T>`
 
 ```text
-ObservationV1<T> {
+Observation<T> {
     NoObservation
     Set(T)
     Clear
-    Unknown(UnknownValueV1)
+    Unknown(UnknownValue)
 }
 ```
 
@@ -329,7 +330,7 @@ ObservationV1<T> {
 
 不得用 `Option<T>`、zero、empty string 或空 array替代上述語意。
 
-### 6.2 `UnknownValueV1`
+### 6.2 `UnknownValue`
 
 unknown raw value 只允許可無損 canonical encode 的 bounded scalar：
 
@@ -337,7 +338,7 @@ unknown raw value 只允許可無損 canonical encode 的 bounded scalar：
 | --- | ---: | --- |
 | `Unsigned` | 1 | `u64` |
 | `Signed` | 2 | `i64` |
-| `Decimal` | 3 | `DecimalV1` |
+| `Decimal` | 3 | `Decimal` |
 | `Text` | 4 | length-prefixed UTF-8 |
 | `Bytes` | 5 | length-prefixed bytes |
 
@@ -347,10 +348,10 @@ format、missing required object 或不合法 nested shape 必須拒絕，不得
 
 ### 6.3 Book observation
 
-`QuoteSnapshotV1` 與 `BookSnapshotV1` 的 book 一定是
-`CompleteBookSnapshotV1`，不使用 `NoObservation`。
+`QuoteSnapshot` 與 `BookSnapshot` 的 book 一定是
+`CompleteBookSnapshot`，不使用 `NoObservation`。
 
-trade-only source record 應映射成 `TradeBatchV1`，而不是：
+trade-only source record 應映射成 `TradeBatch`，而不是：
 
 - `QuoteSnapshot` + empty book
 - `QuoteSnapshot` + 沿用舊 book
@@ -360,22 +361,22 @@ trade-only source record 應映射成 `TradeBatchV1`，而不是：
 
 ## 7. Book 與 trade primitives
 
-### 7.1 `BookLevelV1`
+### 7.1 `BookLevel`
 
 ```text
-BookLevelV1 {
-    price: PriceV1
-    displayed_quantity: QuantityV1
+BookLevel {
+    price: Price
+    displayed_quantity: Quantity
 }
 ```
 
 `displayed_quantity.value > 0`。它只代表該 snapshot 顯示量，不代表單一 order、
 可成交總量或 queue position。
 
-### 7.2 `BookSideV1`
+### 7.2 `BookSide`
 
 ```text
-BookSideV1 = [Optional<BookLevelV1>; 5]
+BookSide = [Optional<BookLevel>; 5]
 ```
 
 invariant：
@@ -387,12 +388,12 @@ invariant：
 - 所有 present levels 使用相同 quantity unit。
 - 0 至 5 個 present levels 都是合法完整 side。
 
-### 7.3 `CompleteBookSnapshotV1`
+### 7.3 `CompleteBookSnapshot`
 
 ```text
-CompleteBookSnapshotV1 {
-    bids: BookSideV1
-    asks: BookSideV1
+CompleteBookSnapshot {
+    bids: BookSide
+    asks: BookSide
 }
 ```
 
@@ -400,13 +401,13 @@ CompleteBookSnapshotV1 {
 市場狀態是否合法，由 market interface 與 fixture 決定；generic type 不用連續
 撮合假設拒絕。
 
-### 7.4 `TradePrintV1`
+### 7.4 `TradePrint`
 
 ```text
-TradePrintV1 {
-    price: PriceV1
-    quantity: QuantityV1
-    print_kind: TradePrintKindV1
+TradePrint {
+    price: Price
+    quantity: Quantity
+    print_kind: TradePrintKind
 }
 ```
 
@@ -419,11 +420,11 @@ TradePrintV1 {
 來源明確提供的 price／quantity，但 fill model 是否可使用由 market annotations
 與 simulation policy 決定。
 
-### 7.5 `TradeListV1`
+### 7.5 `TradeList`
 
-`TradeBatchV1.trades` 必須非空。batch order semantics：
+`TradeBatch.trades` 必須非空。batch order semantics：
 
-| `TradeOrderV1` | Discriminant | 語意 |
+| `TradeOrder` | Discriminant | 語意 |
 | --- | ---: | --- |
 | `Unspecified` | 0 | 來源未證實 batch 內真實順序；canonical encoding 使用已保存順序，但不宣稱市場因果 |
 | `SourceOrdered` | 1 | interface 與 fixture 明確證實來源順序 |
@@ -434,31 +435,31 @@ canonical order並保持 `Unspecified`。
 
 ## 8. Market annotations
 
-### 8.1 `MarketAnnotationsV1`
+### 8.1 `MarketAnnotations`
 
 ```text
-MarketAnnotationsV1 {
+MarketAnnotations {
     None
-    TwseQuote(TwseQuoteAnnotationsV1)
+    TwseQuote(TwseQuoteAnnotations)
     TpexQuote(...)     // 只有 interface 完成後才能啟用
     Taifex(...)        // 只有 interface 完成後才能啟用
 }
 ```
 
-`EventSchemaV1` 只固定 `None=0`、`TwseQuote=1`。未完成 interface 的 variant 不得
+`EventSchema` 只固定 `None=0`、`TwseQuote=1`。未完成 interface 的 variant 不得
 先分配 runtime discriminant；新增時必須更新 schema version。
 
-### 8.2 `TwseQuoteAnnotationsV1`
+### 8.2 `TwseQuoteAnnotations`
 
 ```text
-TwseQuoteAnnotationsV1 {
+TwseQuoteAnnotations {
     status_flags_raw: u8
     limit_flags_raw: u8
 }
 ```
 
 canonical event 只編碼兩個 raw bytes。typed fields 全部由 raw bytes 與
-`TeralionTwseQuoteV1` 純函式解碼，避免 raw／decoded state 不一致。
+`TeralionTwseQuote` 純函式解碼，避免 raw／decoded state 不一致。
 
 `status_flags_raw` typed view：
 
@@ -502,23 +503,23 @@ instant_trend =  raw       & 0x03
 reserved value 不使 event payload 遺失；raw byte 繼續保存並產生 warning。typed
 view 不建立 standalone status event，也不改寫 SessionPlan phase。
 
-## 9. `EventSchemaV1`
+## 9. `EventSchema`
 
 ### 9.1 Envelope
 
 ```text
-DomainEventV1 {
-    instrument: InstrumentIdV1
-    trading_date: TradingDateV1
-    source_format: SourceFormatIdV1
-    match_time: MatchTimeV1
+DomainEvent {
+    instrument: InstrumentId
+    trading_date: TradingDate
+    source_format: SourceFormatId
+    match_time: MatchTime
     source_sequence: Optional<u64>
-    payload: EventPayloadV1
+    payload: EventPayload
 }
 ```
 
 event schema version 不重複存進每個 in-memory value 也可以，但 cache stream、
-canonical bytes 與 run manifest 必須明確包含 `EventSchemaV1`。
+canonical bytes 與 run manifest 必須明確包含 `event_schema_version = 1`。
 
 `trading_date` 加入 envelope 是為了：
 
@@ -526,7 +527,7 @@ canonical bytes 與 run manifest 必須明確包含 `EventSchemaV1`。
 - 正確表達 TAIFEX 夜盤歸屬。
 - 讓 cache record 可獨立診斷。
 
-它不取代 `match_time`，也不加入 `OrderingRuleV1` 的第一排序鍵之前。
+它不取代 `match_time`，也不加入 `OrderingRule` 的第一排序鍵之前。
 
 `source_sequence` 只有 interface 證實的 source counter 才能 `Some`。API page、
 file line、worker ordinal、`received_at` 或自行產生的 sequence 一律禁止。
@@ -535,21 +536,21 @@ file line、worker ordinal、`received_at` 或自行產生的 sequence 一律禁
 
 | Variant | Discriminant／ordering rank | Payload |
 | --- | ---: | --- |
-| `QuoteSnapshot` | 10 | `QuoteSnapshotV1` |
-| `BookSnapshot` | 20 | `BookSnapshotV1` |
-| `TradeBatch` | 30 | `TradeBatchV1` |
+| `QuoteSnapshot` | 10 | `QuoteSnapshot` |
+| `BookSnapshot` | 20 | `BookSnapshot` |
+| `TradeBatch` | 30 | `TradeBatch` |
 
 discriminant 與 ADR-0001 `event_kind_rank` 共用固定值。第一版不分配 standalone
 status event discriminant。
 
-### 9.3 `QuoteSnapshotV1`
+### 9.3 `QuoteSnapshot`
 
 ```text
-QuoteSnapshotV1 {
-    book: CompleteBookSnapshotV1
-    trade: ObservationV1<TradePrintV1>
-    cumulative_volume: ObservationV1<VolumeV1>
-    annotations: MarketAnnotationsV1
+QuoteSnapshot {
+    book: CompleteBookSnapshot
+    trade: Observation<TradePrint>
+    cumulative_volume: Observation<Volume>
+    annotations: MarketAnnotations
 }
 ```
 
@@ -559,30 +560,30 @@ QuoteSnapshotV1 {
 - `trade=NoObservation` 表示該 tick 沒有新 deal，不清除 recent trade。
 - `cumulative_volume=Set(0)` 是合法值。
 - annotations 與 book／trade／volume 同一 event 原子更新。
-- TWSE `open_price`／`high_price`／`low_price` 不在 V1 payload。
+- TWSE `open_price`／`high_price`／`low_price` 不在第一版 payload。
 
 M1 `STOCK_SNAPSHOT` 必須映射至此 variant。
 
-### 9.4 `BookSnapshotV1`
+### 9.4 `BookSnapshot`
 
 ```text
-BookSnapshotV1 {
-    book: CompleteBookSnapshotV1
-    annotations: MarketAnnotationsV1
+BookSnapshot {
+    book: CompleteBookSnapshot
+    annotations: MarketAnnotations
 }
 ```
 
 它完整取代 book，不含 synthetic trade。TAIFEX mapping 只有在
 [TAIFEX interface](../interfaces/taifex.md)由真實 fixture 固定後才能啟用。
 
-### 9.5 `TradeBatchV1`
+### 9.5 `TradeBatch`
 
 ```text
-TradeBatchV1 {
-    trades: NonEmpty<TradePrintV1>
-    trade_order: TradeOrderV1
-    cumulative_volume: ObservationV1<VolumeV1>
-    annotations: MarketAnnotationsV1
+TradeBatch {
+    trades: NonEmpty<TradePrint>
+    trade_order: TradeOrder
+    cumulative_volume: Observation<Volume>
+    annotations: MarketAnnotations
 }
 ```
 
@@ -608,9 +609,9 @@ asks               = []
 在 type system 中只能表示為：
 
 ```text
-TradeBatchV1 {
+TradeBatch {
     trades: [
-        TradePrintV1 {
+        TradePrint {
             price
             quantity
             print_kind: Intermediate
@@ -635,7 +636,7 @@ compatibility gate ID 是 `TWSE_INTERMEDIATE_ORDERING`。
 1. intermediate `TradeBatch`
 2. final `QuoteSnapshot`
 
-`OrderingRuleV1` 先比較 event kind rank，因此 `QuoteSnapshot(10)` 會排在
+`OrderingRule` 先比較 event kind rank，因此 `QuoteSnapshot(10)` 會排在
 `TradeBatch(30)` 前。若直接啟用：
 
 - final cumulative volume 可能先被 Set，之後被較小的 intermediate cumulative
@@ -646,8 +647,8 @@ compatibility gate ID 是 `TWSE_INTERMEDIATE_ORDERING`。
 
 因此：
 
-- `MarketTypesV1` 已定義合法 representation。
-- `TeralionTwseQuoteV1` 仍依 interface 文件 default reject 此 shape。
+- 本文件的 domain types 已定義合法 representation。
+- `TeralionTwseQuote` 仍依 interface 文件 default reject 此 shape。
 - 不得用 `max(cumulative_volume)`、忽略 intermediate、複製舊 book 或 fingerprint
   偶然順序掩蓋問題。
 - 啟用前必須以獨立 ADR 決定 coalescing 或新的 ordering policy，更新相依版本與
@@ -700,7 +701,7 @@ accepted event 必須：
 validation failure 不得留下 replay clock、MarketState 或 state version 的 partial
 update。
 
-## 12. `CanonicalEventV1`
+## 12. `CanonicalEvent`
 
 ### 12.1 Primitive encoding
 
@@ -747,13 +748,13 @@ thread id、cache offset 與 runtime type name 不進 frame。
 
 ### 12.3 Payload encoding
 
-`PriceV1`：
+`Price`：
 
 ```text
 i128 decimal atoms
 ```
 
-`QuantityV1`／`VolumeV1`：
+`Quantity`／`Volume`：
 
 ```text
 u8 unit discriminant
@@ -768,14 +769,14 @@ slot 0 optional<BookLevel>
 slot 4 optional<BookLevel>
 ```
 
-`ObservationV1`：
+`Observation`：
 
 ```text
 u8 observation discriminant
 variant payload, if any
 ```
 
-`MarketAnnotationsV1`：
+`MarketAnnotations`：
 
 ```text
 u8 annotation discriminant
@@ -783,12 +784,12 @@ TwseQuote => status_flags_raw u8 + limit_flags_raw u8
 ```
 
 event payload 依第 9 節 schema field order 遞迴編碼。任何新增 field、改變順序或
-discriminant 都需要新的 `CanonicalEvent`／event schema version。
+discriminant 都需要新的 canonical event／event schema version。
 
 ### 12.4 Fingerprint 與 equality
 
 ```text
-EventFingerprintV1 = BLAKE3-256(CanonicalEventV1(event))
+EventFingerprint = BLAKE3-256(CanonicalEvent(event))
 ```
 
 domain event equality 必須與 canonical significant fields 一致：
@@ -814,7 +815,7 @@ market-state design 定義；不得直接 concat 無 length 的 variable records
 輸出：
 
 ```text
-Accepted(DomainEventV1)
+Accepted(DomainEvent)
 KnownSkipped(reason)
 Rejected(context)
 ```
@@ -825,12 +826,12 @@ payload。
 
 ### 13.2 Replayer
 
-replayer 只讀 `DomainEventV1`：
+replayer 只讀 `DomainEvent`：
 
 - 不持有 wire JSON。
 - 不解析 raw Teralion format。
-- 只以 `MatchTimeV1` 推進 clock。
-- 依 `OrderingRuleV1` 比較 full ordering key。
+- 只以 `MatchTime` 推進 clock。
+- 依 `OrderingRule` 比較 full ordering key。
 
 ### 13.3 Strategy
 
@@ -929,10 +930,10 @@ M1 只需要實作：
 
 - primitive identities／time／decimal／quantity
 - complete five-level book
-- `QuoteSnapshotV1`
-- `TwseQuoteAnnotationsV1`
-- `ObservationV1`
-- `CanonicalEventV1`
+- `QuoteSnapshot`
+- `TwseQuoteAnnotations`
+- `Observation`
+- `CanonicalEvent`
 - `STOCK_SNAPSHOT` fixture normalization
 
 不需要為 M1 實作 `TradeBatch` runtime path、simulation quantity conversion 或

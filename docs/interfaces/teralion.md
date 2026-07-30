@@ -14,7 +14,7 @@ strategy API。
 - [資料需求](../requirements/data.md)及
   [ADR-0003](../architecture/decisions/0003-session-windows-and-strategy-activation.md)。
 
-適用 interface version：`TeralionFeedArchiveV1`。
+適用 interface：`TeralionFeedArchive`，`interface_version = 1`。
 
 ## 2. 邊界與責任
 
@@ -362,7 +362,8 @@ exchange session 是否完整仍需本地 manifest 與 market-specific invariant
 Teralion tick body 是 opaque JSON，API response 未提供可直接當成 normalizer
 compatibility 的 schema version。published source 因此必須記錄：
 
-- `TeralionFeedArchiveV1`
+- `interface_name = TeralionFeedArchive`
+- `interface_version = 1`
 - endpoint 與不含 credential 的 frozen query
 - observed market／type／format field sets
 - download time
