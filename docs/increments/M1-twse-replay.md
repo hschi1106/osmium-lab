@@ -25,7 +25,7 @@ M1 完成時，專案必須能以單一明確的測試或範例入口執行下�
 ```text
 版本控制中的 2330 Teralion tick fixture
 -> 驗證來源資料
--> 正規化為 QuoteSnapshot
+-> 正規化為 QuoteSnapshot / TradeBatch
 -> 依 match_time 與固定 tie-break 排序
 -> 推進 replay clock
 -> 原子更新 MarketState
@@ -42,10 +42,12 @@ M1 完成時，專案必須能以單一明確的測試或範例入口執行下�
 - 單一交易日。
 - 單一市場：TWSE。
 - 單一商品：`2330`。
-- 一種經實際 fixture 確認的 Teralion TWSE quote `format`。
+- 兩種經實際 fixture 確認的 Teralion TWSE regular quote `format`：
+  `STOCK_SNAPSHOT` 與 `STOCK_REALTIME`。
 - 具有有效 `match_time` 的 tick。
-- `QuoteSnapshot` domain event。
+- `QuoteSnapshot` 與 `TradeBatch` domain event。
 - 最佳五檔快照、可選成交、累計量與原始 flags。
+- `STOCK_REALTIME` intermediate／final `1+1` grouping。
 - 單商品事件排序與回播。
 - 單商品唯讀市場狀態。
 - 一個不送出訂單的編譯期連結 Rust 範例策略。
@@ -57,7 +59,7 @@ M1 完成時，專案必須能以單一明確的測試或範例入口執行下�
 - 呼叫 Teralion API、coverage 查詢、cursor 或資料下載。
 - 本地來源資料目錄、manifest、checksum 驗證或回播快取。
 - TPEx、TAIFEX、權證、選擇權或多商品合併。
-- `BookSnapshot` 或 `TradeBatch`。
+- `BookSnapshot`。
 - order、fill、slippage、fee、tax、position 或 P&L。
 - 動態 strategy loading、腳本策略或外部程序策略。
 - CLI 與使用者設定檔的最終形式。
@@ -89,10 +91,11 @@ fixture 必須來自實際取得的 Teralion TWSE 2330 歷史 tick，不得手�
 
 fixture 必須至少包含：
 
+- `STOCK_SNAPSHOT` 與 `STOCK_REALTIME`。
 - 兩個以上不同的有效 `match_time`。
 - 一次可觀察的五檔快照變化。
-- 若該 format 提供成交，至少一筆具有來源成交資訊的 tick；若不提供，必須在
-  TWSE interface 文件中明確記錄。
+- 至少一筆具有來源成交資訊的 final quote。
+- 所有實測 `STOCK_REALTIME` intermediate／final `1+1` groups。
 - 一次累計量變化。
 - 至少一組可保存但不臆測解讀的來源 flags。
 
@@ -107,7 +110,7 @@ fixture 旁必須記錄下列 metadata：
 - `market`
 - `symbol`
 - `trading_date`
-- Teralion `format`
+- Teralion `formats` 與各 format record count
 - fixture 的內容 checksum
 - fixture 是否為原始摘錄或測試衍生資料
 - 已移除或遮蔽的欄位
@@ -126,9 +129,12 @@ normalizer 負責：
 
 1. 驗證 M1 支援的 market、format 與 symbol 表示。
 2. 驗證 `match_time`、價格、數量及必要欄位。
-3. 將已確認的來源欄位轉成 `QuoteSnapshot`。
+3. 將 final quote 轉成 `QuoteSnapshot`，intermediate print 轉成
+   `TradeBatch`。
 4. 保留未知 flags 的原始值並產生可檢查的 warning。
-5. 對未知 format 或無法安全解讀的 payload 回傳明確錯誤。
+5. 對 `STOCK_REALTIME` 建立完整 match group，驗證 intermediate／final shape 與
+   cumulative volume 關係。
+6. 對未知 format 或無法安全解讀的 payload 回傳明確錯誤。
 
 M1 execution plan 負責將 universe 限制為 TWSE `2330`；可重用的 domain type 或
 normalizer 不得將 `2330` 硬編碼為唯一合法 symbol。
@@ -156,6 +162,20 @@ M1 的 `QuoteSnapshot` 至少表達：
 
 同一來源 tick 內的五檔、成交、累計量及 flags 必須組成一個 `QuoteSnapshot`，
 不得拆成多個不同時間點的事件。
+
+### 5.3 `TradeBatch`
+
+M1 的 `TradeBatch` 只用於 fixture 已證實的 `STOCK_REALTIME` intermediate print：
+
+- 一筆 intermediate source record 產生一個 single-element `TradeBatch`。
+- trade price、quantity、cumulative volume 與 raw flags 保持同一 atomic event。
+- empty bid／ask arrays 不表示清除 book；`TradeBatch` 不攜帶或合成 book。
+- 同 `match_time` 的 final record 仍產生 `QuoteSnapshot`。
+- `OrderingRule` version 2 必須固定 intermediate `TradeBatch` 在 final
+  `QuoteSnapshot` 前。
+
+缺少 final、multiple intermediate／final、volume mismatch 或 invalid final book
+必須拒絕整個 source match group。
 
 ## 6. 排序與回播
 
@@ -221,8 +241,10 @@ M1 每個商品只維護：
 - 從連續快照推論新增、取消或排隊中的逐筆委託。
 - 推論隱藏流動性或真實撮合順序。
 
-一次 `QuoteSnapshot` 只產生一次原子狀態轉換及一次 state version 遞增。若事件驗證
-失敗，狀態、版本與 replay clock 不得留下部分更新。
+每個 accepted `QuoteSnapshot`／`TradeBatch` 只產生一次原子狀態轉換及一次
+state version 遞增。`TradeBatch` 更新 recent trade、cumulative volume 與 flags，
+但保留既有完整 book。若事件驗證失敗，狀態、版本與 replay clock 不得留下部分
+更新。
 
 詳細 reducer 規則由 [market state 設計](../design/market-state.md)定義。
 
@@ -232,7 +254,7 @@ M1 的範例策略用於證明策略邊界，而不是證明交易模型。它�
 
 - 以 Rust trait 與編譯期連結實作。
 - 宣告只需要 TWSE `2330`。
-- 接收目前的 `QuoteSnapshot`。
+- 接收目前的 `QuoteSnapshot` 或 `TradeBatch`。
 - 讀取更新後的 `MarketState`。
 - 產生至少一項只依目前及過去資料計算的可重現指標或觀察結果。
 - 不修改事件、replay clock 或 market state。
@@ -247,7 +269,7 @@ M1 的範例策略用於證明策略邊界，而不是證明交易模型。它�
 
 每次 M1 執行至少產生：
 
-- fixture checksum
+- fixture-set checksum
 - event schema version
 - ordering rule version
 - 正規化事件數
@@ -298,10 +320,10 @@ M1 至少要有下列自動化驗收證據：
 
 | ID | 情境 | 預期結果 |
 | --- | --- | --- |
-| M1-AC-01 | 載入合法 2330 fixture | 所有支援 tick 正規化為預期的 `QuoteSnapshot` |
-| M1-AC-02 | 檢查一筆含五檔、累計量、flags 及來源可用成交欄位的 tick | 單一事件原子保存所有可用內容 |
+| M1-AC-01 | 載入合法 2330 regular fixture | 所有 window 內 `STOCK_SNAPSHOT`／`STOCK_REALTIME` records 正規化為預期的 `QuoteSnapshot`／`TradeBatch`；window 外 record 明確分類 |
+| M1-AC-02 | 檢查 final quote 與 intermediate trade | 各 source record 的 book／trade／累計量／flags 依 event kind 原子保存；intermediate 不清除 book |
 | M1-AC-03 | 以打亂順序的同一組事件執行多次 | event checksum 與 final-state checksum 完全相同 |
-| M1-AC-04 | 兩個事件具有相同 `match_time` | 依具版本的 tie-break 產生固定順序 |
+| M1-AC-04 | intermediate／final 或其他 events 具有相同 `match_time` | 依 source phase 與具版本的 tie-break 產生固定順序 |
 | M1-AC-05 | 新五檔快照到達 | 舊快照被完整取代，不重建逐筆委託 |
 | M1-AC-06 | 策略處理事件 | 策略看到更新後狀態，但看不到下一事件 |
 | M1-AC-07 | tick 缺少或具有無效 `match_time` | 執行失敗，錯誤包含定位資料所需的 context |
@@ -323,7 +345,7 @@ M1 直接驗證下列產品需求：
 
 | 產品需求 | M1 證據 |
 | --- | --- |
-| REPLAY-01 | fixture normalizer 與 `QuoteSnapshot` golden tests |
+| REPLAY-01 | fixture normalizer 與 `QuoteSnapshot`／`TradeBatch` golden tests |
 | REPLAY-02 | 打亂輸入與相同 `match_time` ordering tests |
 | REPLAY-03 | MarketState reducer tests |
 | REPLAY-04 | replay／strategy callback ordering test |
@@ -343,7 +365,8 @@ DATA-01 至 DATA-04、SIM-01、SIM-02 及完整 OPS-01／OPS-02 不由 M1 驗收
 - 合法且有來源紀錄的 2330 fixture 已加入測試資產。
 - TWSE interface 文件記錄該 fixture 使用的 format 與欄位 mapping。
 - wire type 與 domain type 在程式結構及 API 上分離。
-- `QuoteSnapshot`、MarketState、replayer 與 ExampleStrategy 已串成完整流程。
+- `QuoteSnapshot`、`TradeBatch`、MarketState、replayer 與 ExampleStrategy 已
+  串成完整流程。
 - 本文件的所有驗收情境都有自動化測試或明確對應的測試證據。
 - event checksum 與 final-state checksum 已固定為 golden result。
 - focused tests、`cargo fmt --check` 及 workspace `cargo test` 成功。
@@ -355,8 +378,8 @@ DATA-01 至 DATA-04、SIM-01、SIM-02 及完整 OPS-01／OPS-02 不由 M1 驗收
 
 M1 應維持小型、可 review 的 commit，建議依序：
 
-1. 加入合法 fixture、metadata 與 TWSE format mapping 測試。
-2. 定義最小 market types、`QuoteSnapshot` 及 canonical encoding。
+1. 加入合法 regular fixture、metadata 與兩種 TWSE format mapping 測試。
+2. 定義最小 market types、`QuoteSnapshot`、`TradeBatch` 及 canonical encoding。
 3. 實作 normalizer 與錯誤 context。
 4. 實作 snapshot-based MarketState reducer。
 5. 實作 `match_time` ordering、replay clock 與 checksum。

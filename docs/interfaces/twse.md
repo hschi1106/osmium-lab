@@ -25,7 +25,7 @@ type definition；具體 exact price／quantity type 與 canonical encoding 由
 | `format` | 實測筆數 | 第一版行為 |
 | --- | ---: | --- |
 | `STOCK_SNAPSHOT` | 3,597 | M1 支援；正規化為 `QuoteSnapshot` |
-| `STOCK_REALTIME` | 70,199 | 支援完整 book 與已驗證的 intermediate/final `1+1` group；見第 7 節 |
+| `STOCK_REALTIME` | 70,199 | M1 支援完整 book 與已驗證的 intermediate/final `1+1` group；見第 7 節 |
 | `INTRADAY_ODDLOT_REALTIME` | 3,417 | 已知但不支援；保存 raw、計數略過、不產生 event |
 
 第一版不支援：
@@ -41,8 +41,9 @@ type definition；具體 exact price／quantity type 與 canonical encoding 由
 但 replay cache builder 必須依 format 排除，不能因它落在 regular session window
 內就視為支援。
 
-M1 的 committed fixture 應先選擇 `STOCK_SNAPSHOT`，因其實測 shape 全部包含可
-完整解讀的 bid／ask snapshot，符合 M1「一種實際 format」的範圍。
+M1 committed fixture 必須保存全部 regular `STOCK_SNAPSHOT` 與
+`STOCK_REALTIME` records。兩種 format 共同驗證完整 quote；realtime
+intermediate／final group 另外驗證 `TradeBatch -> QuoteSnapshot`。
 
 ## 3. TWSE session
 
@@ -297,8 +298,8 @@ complete empty book。
 group。explicit degraded mode 只能略過整個 group，並記錄 group count、first／last
 `match_time` 及 degraded result；不得只略過 intermediate 後接受 final。
 
-M1 仍可只使用 `STOCK_SNAPSHOT` fixture；M2 完整 `STOCK_REALTIME` normalization
-使用 mapping version 2，不再有獨立 compatibility gate。
+M1 必須使用 committed `STOCK_REALTIME` fixture 驗證全部三個實測 `1+1` groups；
+不能把 intermediate record 略過後只接受 final。
 
 ## 8. Flags 與 quote annotations
 
@@ -495,8 +496,9 @@ kinds        = quote
   任一項都不是單獨的 completeness proof。
 
 完整 raw download 位於本地
-`raw/teralion/twse/2026-07-27/2330/complete`，目前未加入版本控制。M1 fixture 必須
-在確認資料授權後，從實際 `STOCK_SNAPSHOT` 最小化而來；不得手工重造 payload。
+`raw/teralion/twse/2026-07-27/2330/complete`，目前未加入版本控制。M1 fixture
+在確認資料授權後，保存實際 regular `STOCK_SNAPSHOT` 與 `STOCK_REALTIME`
+records；不得手工重造 payload。
 
 ## 11. Validation matrix
 

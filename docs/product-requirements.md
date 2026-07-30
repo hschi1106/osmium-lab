@@ -415,13 +415,17 @@ API key 不得寫入資料檔、log、執行結果或版本控制。
 使用本地 2330 fixture 完成：
 
 ```text
-Teralion tick
--> QuoteSnapshot
+Teralion TWSE regular tick
+-> QuoteSnapshot / TradeBatch
 -> Market State
 -> match_time replay
 -> Example Strategy
 -> event/state checksum
 ```
+
+M1 fixture 必須涵蓋 `STOCK_SNAPSHOT` 與 `STOCK_REALTIME`。final quote 以
+`QuoteSnapshot` 表達；realtime intermediate print 以 `TradeBatch` 表達，並驗證
+同 `match_time` 的 intermediate／final ordering。
 
 ### M2 真實資料與離線回測
 

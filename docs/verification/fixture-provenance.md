@@ -2,9 +2,8 @@
 
 ## 1. 文件目的
 
-本文件記錄 M1 TWSE 2330 fixture 的來源、候選 records、完整性證據、預定最小化
-方式與 repository commit gate。它不包含行情 payload，也不構成法律意見或
-授權。
+本文件記錄 M1 TWSE 2330 fixture 的來源、record selection、完整性證據與
+repository commit gate。它不包含行情 payload，也不構成法律意見或授權。
 
 ```text
 provenance_record_version = 1
@@ -51,13 +50,6 @@ local acquisition 的觀察摘要：
 
 ## 3. Source integrity
 
-候選 records 只來自：
-
-| Page | SHA-256 |
-| --- | --- |
-| `pages/0001.json` | `a3569853550e42fcc5e4d54b7610b316d77ec039511da05eefd69c4eb84e3fe5` |
-| `pages/0016.json` | `a9e1c4feb557e2fe0f62cbd2fec0380325470846b5feb9c61e804d32b19589b7` |
-
 完整 16 頁 checksum manifest 位於 local：
 
 ```text
@@ -65,12 +57,19 @@ raw/teralion/twse/2026-07-27/2330/complete/checksums.sha256
 ```
 
 fixture extraction 前必須先驗證整份 manifest；任一 source page checksum 不符時
-停止，不可從已改變的資料產生同一 fixture identity。
+停止，不可從已改變的資料產生同一 fixture identity。fixture metadata 記錄全部
+16 個 source page checksum。
 
-## 4. Candidate record selectors
+## 4. Record selection 與 coverage anchors
 
-selector 使用 page 內 `items` array 的 zero-based `item_index`。下表只列 identity
-與測試角色，不複製 price、quantity、book 或 deal payload。
+fixture 依 page `0001` 至 `0016` 的順序掃描 `items`，保留 exact raw field 為
+`"format":"STOCK_SNAPSHOT"` 或 `"format":"STOCK_REALTIME"` 的所有 73,796 筆
+regular records。其他 format 不進同一 JSONL：
+
+- `INTRADAY_ODDLOT_REALTIME` 不屬於 M1 支援範圍。
+
+下表保留原本的 zero-based `item_index`，作為 coverage anchors；它們全部包含在
+完整 regular subset 中。
 
 | Page | item_index | `match_time` | `status_flags` | 角色 |
 | --- | ---: | --- | ---: | --- |
@@ -83,7 +82,7 @@ selector 使用 page 內 `items` array 的 zero-based `item_index`。下表只�
 | `0016.json` | 2202 | `2026-07-27T13:29:58.214261+08:00` | 128 | pre-close trial，同時間第二 occurrence |
 | `0016.json` | 2204 | `2026-07-27T13:30:00+08:00` | 4 | closing marker |
 
-這 8 筆候選涵蓋：
+這 8 筆 anchors 證明 subset 至少涵蓋：
 
 - 2 個以上 match times。
 - pre-open／pre-close trial。
@@ -93,17 +92,26 @@ selector 使用 page 內 `items` array 的 zero-based `item_index`。下表只�
 - real same-match-time occurrences。
 - `STOCK_SNAPSHOT` 提供的 deal observation。
 
-最終 fixture 可再縮小，但若移除任何 coverage，必須在 M1 acceptance 說明替代
-record。不得為了湊 coverage 修改 source value；缺少的 negative branch 使用
-明示的 `derived_negative` 或 `synthetic_domain`。
+三組 realtime intermediate／final anchors：
+
+| Page | item indices | `match_time` | Expected domain order |
+| --- | --- | --- | --- |
+| `0005.json` | `3116`／`3117` | `09:28:49.274622` | `TradeBatch -> QuoteSnapshot` |
+| `0005.json` | `4185`／`4186` | `09:30:55.252155` | `TradeBatch -> QuoteSnapshot` |
+| `0009.json` | `4805`／`4806` | `10:29:59.907157` | `TradeBatch -> QuoteSnapshot` |
+
+不得為了湊 coverage 修改 source value；缺少的 negative branch 使用明示的
+`derived_negative` 或 `synthetic_domain`。
 
 ## 5. Fixture artifact
 
 已建立：
 
 ```text
-spec/fixtures/teralion/twse/2330/2026-07-27/stock-snapshot.jsonl
-spec/fixtures/teralion/twse/2330/2026-07-27/metadata.yaml
+fixtures/teralion/twse/2330/2026-07-27/regular-quotes/0001.jsonl
+...
+fixtures/teralion/twse/2330/2026-07-27/regular-quotes/0016.jsonl
+fixtures/teralion/twse/2330/2026-07-27/metadata.yaml
 ```
 
 `metadata.yaml` 至少包含：
@@ -117,8 +125,8 @@ symbol
 trading_date
 source_acquisition_checksum
 source_page_checksums
-record selectors
-record count
+record selection policy
+format counts
 extraction tool identity
 extraction command／algorithm version
 removed fields
@@ -132,26 +140,41 @@ secret scan result
 fixture content：
 
 ```text
-record_count = 8
-sha256      = ff1474c9a77223c42d416facb04c070aec5af6f166a68e1cee237616c55ec84c
+record_count                  = 73796
+shard_count                   = 16
+STOCK_SNAPSHOT                = 3597
+STOCK_REALTIME                = 70199
+expected_replay_window_count  = 73795
+outside_replay_window_count   = 1
+fixture_set_sha256            = 5292ef24885c95c9402988423679e6b6381348cd09bb774d8489f08e9aa11ed1
 ```
 
-第二次 extraction 與 committed candidate byte-for-byte 相同。
+每個 source page 對應同名 JSONL shard。fixture-set checksum 依 shard filename
+升冪串接 exact bytes 後計算；metadata 另記錄每個 shard 的 record count、byte
+count、format counts 與 SHA-256。
+
+第一筆 record 的 `match_time=08:54:56.982904+08:00` 位於 replay window 前，但
+其 `received_at` 位於 download window；fixture 保留這項真實 boundary evidence，
+normalizer／execution plan 不得以 `received_at` 將它放入 timeline。
+
+第二次 extraction 與完整 fixture byte-for-byte 相同。
 
 ## 6. Extraction policy
 
 approval 後 extraction 必須：
 
 1. 驗證 `checksums.sha256`。
-2. 只選上表明示 selectors。
+2. 依 page number 與 `items` index 掃描全部 16 頁，只選 exact
+   `"format":"STOCK_SNAPSHOT"` 或 `"format":"STOCK_REALTIME"`。
 3. 保留每個 selected `items[]` object 的 source field names 與 exact JSON
    values。
 4. 只移除 response envelope、pagination cursor 與 request transport metadata。
 5. 不以 `f64` parse／rewrite numeric lexeme。
 6. 不改寫 `match_time`、`received_at`、format、flags、deal、book 或 cumulative
    volume。
-7. 以 selector order 寫出 JSONL；ordering tests 可在 memory 另行 shuffle。
-8. 產生 exact fixture SHA-256 與 record count。
+7. 每個 source page 寫成同名 JSONL shard；shard 內依 `items` index 排列，
+   ordering tests 可在 memory 另行 shuffle。
+8. 產生每個 shard 與 fixture set 的 exact SHA-256、byte count 與 record count。
 9. 執行 secret scan。
 
 若 source JSON library 無法保證 numeric lexeme fidelity，extraction 必須採用
@@ -168,7 +191,7 @@ version；不得無聲改變數值表示。
 | request headers | 移除 |
 | cursor／pagination envelope | 移除 |
 | unrelated market／symbol／format records | 移除 |
-| selected record market payload | 原樣保留，approval 後才可 commit |
+| 所有 regular `STOCK_SNAPSHOT`／`STOCK_REALTIME` payload | 原樣保留 |
 | `received_at` | 保留於 source fixture 作 provenance；normalizer 不得當 replay time |
 | personal data | acquisition 未預期含有；secret scan 與人工 review 仍必須執行 |
 
@@ -230,7 +253,7 @@ closure_evidence:
   - explicit approval fields recorded
   - repository visibility verified private
   - source checksum manifest verified
-  - extracted fixture checksum recorded
+  - extracted fixture shard／set checksums recorded
   - deterministic re-extraction passed
   - fixture secret scan passed
 ```
@@ -241,13 +264,14 @@ closure_evidence:
 
 ```yaml
 redistribution_status: approved
-approval_scope: selected M1 fixture records committed only to private repository hschi1106/osmium-lab for internal use
+approval_scope: all 73796 STOCK_SNAPSHOT and STOCK_REALTIME records from the verified acquisition committed only to private repository hschi1106/osmium-lab for internal use
 approval_basis: permitted internal/private-repository use
-approval_reference: repository-owner authorization recorded in this approval record on 2026-07-30
+approval_reference: repository-owner authorization and fixture expansion recorded in this approval record on 2026-07-30
 approved_by: repository owner/admin
 approved_at: 2026-07-30T09:12:56Z
+scope_expanded_at: 2026-07-30T09:33:45Z
 expiry_or_review_date: null
-fixture_content_sha256: ff1474c9a77223c42d416facb04c070aec5af6f166a68e1cee237616c55ec84c
+fixture_set_sha256: 5292ef24885c95c9402988423679e6b6381348cd09bb774d8489f08e9aa11ed1
 secret_scan_status: passed_field_allowlist_and_forbidden_pattern_scan
 ```
 

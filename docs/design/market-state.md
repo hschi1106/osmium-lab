@@ -649,7 +649,7 @@ version；run-level event ordinal 由 replayer 另行維護，不能冒充 excha
 至少提供 checked-in golden vectors：
 
 - initial state。
-- M1 TWSE `QuoteSnapshot` 後的 state。
+- M1 TWSE `QuoteSnapshot`／`TradeBatch` 後的 state。
 - 包含 `Clear` 與 `Unknown(raw)` 的 state。
 - source-ordered 與 unspecified `TradeBatch` state。
 - multi-instrument final-state set。
@@ -662,9 +662,9 @@ BLAKE3 checksum。刻意打亂 map insertion 或 input discovery order 後，排
 
 | Milestone | Scope |
 | --- | --- |
-| M1 | TWSE `QuoteSnapshot` reducer、完整五檔 replacement、trade/volume/raw flags、immutable view、state version、canonical final-state checksum |
+| M1 | TWSE `QuoteSnapshot`／`TradeBatch` reducer、完整五檔 replacement、intermediate trade 保留 book、trade/volume/raw flags、immutable view、state version、canonical final-state checksum |
 | M2 | `TradingContext` coordinator transaction、strategy/simulation integration、完整 trace |
-| M3 | `BookSnapshot`、`TradeBatch`、multi-segment boundary policy、multi-instrument final-state set |
+| M3 | TAIFEX `BookSnapshot`／`TradeBatch`、multi-segment boundary policy、multi-instrument final-state set |
 | M4 | TPEx 與其他 market profiles，維持相同 generic reducer contract |
 
 若前一 milestone 提前實作後續 event kind，仍必須符合本文件的 atomicity、view 與

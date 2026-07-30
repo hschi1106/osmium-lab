@@ -477,10 +477,10 @@ requirements:
     planned_milestones:
       - milestone: M1
         role: initial_delivery
-        scope: 以 TWSE 2330 fixture 驗證 QuoteSnapshot 與 wire/domain 分離
+        scope: 以 TWSE 2330 STOCK_SNAPSHOT／STOCK_REALTIME fixture 驗證 QuoteSnapshot、TradeBatch 與 wire/domain 分離
       - milestone: M3
         role: extension
-        scope: 加入 TAIFEX TradeBatch 與 BookSnapshot
+        scope: 加入 TAIFEX-specific TradeBatch 與 BookSnapshot mapping
       - milestone: M4
         role: extension
         scope: 加入 TPEx、權證與選擇權 mappings
@@ -495,6 +495,7 @@ requirements:
       methods:
         - source fixture normalization test
         - event atomicity golden test
+        - TWSE intermediate/final match-group test
         - unknown-format negative test
       documents:
         - docs/verification/plan.md
@@ -558,10 +559,10 @@ requirements:
     planned_milestones:
       - milestone: M1
         role: initial_delivery
-        scope: 驗證 TWSE QuoteSnapshot 完整取代與 state version
+        scope: 驗證 TWSE QuoteSnapshot 完整取代、TradeBatch 保留 book 與 state version
       - milestone: M3
         role: extension
-        scope: 擴充 TradeBatch、BookSnapshot 與多商品狀態
+        scope: 擴充 TAIFEX BookSnapshot／TradeBatch 與多商品狀態
     planned_design_documents:
       - docs/architecture/decisions/0002-snapshot-market-state.md
       - docs/architecture/decisions/0004-trading-context-and-eligibility.md

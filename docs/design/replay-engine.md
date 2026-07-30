@@ -1010,7 +1010,7 @@ plan。
 至少提供：
 
 - zero-event canonical replay stream。
-- M1 single-stream `QuoteSnapshot` sequence。
+- M1 single-instrument `QuoteSnapshot`／`TradeBatch` sequence。
 - duplicate event sequence。
 - same-time TWSE intermediate/final sequence。
 - multi-stream interleaved sequence。
