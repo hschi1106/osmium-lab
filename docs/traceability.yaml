@@ -33,6 +33,13 @@ document_sets:
     - docs/requirements/strategy.md
     - docs/requirements/simulation.md
     - docs/requirements/operations.md
+  interfaces:
+    source:
+      - docs/interfaces/teralion.md
+    markets:
+      - docs/interfaces/twse.md
+      - docs/interfaces/taifex.md
+      - docs/interfaces/tpex.md
   increments:
     M1: docs/increments/M1-twse-replay.md
     M2: docs/increments/M2-offline-backtest.md
@@ -116,6 +123,33 @@ architecture_trace:
       - STRAT-01
       - SIM-01
       - NFR-01
+
+interface_trace:
+  - path: docs/interfaces/teralion.md
+    status: complete
+    interface_version: TeralionFeedArchiveV1
+    requirements:
+      - DATA-01
+      - DATA-02
+      - DATA-03
+      - DATA-05
+      - REPLAY-01
+      - REPLAY-06
+      - NFR-03
+  - path: docs/interfaces/twse.md
+    status: complete
+    mapping_version: TeralionTwseQuoteV1
+    evidence_scope: TWSE 2330 2026-07-27 local raw acquisition
+    requirements:
+      - DATA-01
+      - DATA-02
+      - DATA-03
+      - DATA-05
+      - REPLAY-01
+      - REPLAY-03
+      - REPLAY-06
+      - NFR-01
+      - NFR-03
 
 requirements:
   - id: DATA-01
