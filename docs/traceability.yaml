@@ -216,6 +216,27 @@ design_trace:
       - OPS-02
       - NFR-01
       - NFR-03
+  - path: docs/design/replay-engine.md
+    status: complete
+    design_versions:
+      replay_engine: 1
+      replay_plan: 1
+      canonical_replay_event_stream: 1
+    requirements:
+      - DATA-03
+      - DATA-04
+      - REPLAY-01
+      - REPLAY-02
+      - REPLAY-03
+      - REPLAY-04
+      - REPLAY-05
+      - REPLAY-06
+      - STRAT-01
+      - SIM-01
+      - OPS-02
+      - NFR-01
+      - NFR-02
+      - NFR-03
 
 requirements:
   - id: DATA-01
