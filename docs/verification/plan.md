@@ -2,7 +2,7 @@
 
 ## 1. 文件目的
 
-本文件定義 M1「TWSE 2330 最小 deterministic replay vertical slice」的驗證
+本文件定義 M1「TWSE 2330 regular-market deterministic replay vertical slice」的驗證
 方法、test ID、fixture policy、golden artifacts 與執行順序。它是測試契約，
 不是測試已通過的證據；實際結果由
 [M1 Acceptance](acceptance.md) 登錄。
@@ -26,11 +26,13 @@ scope                     = M1
 
 ### 2.1 M1 必須驗證
 
-- 經核准的 Teralion `TWSE / 2330 / STOCK_SNAPSHOT` fixture 可正規化為
-  `QuoteSnapshot`。
+- 經核准的 Teralion `TWSE / 2330` regular fixture 可將 `STOCK_SNAPSHOT` 與
+  `STOCK_REALTIME` 正規化為 `QuoteSnapshot`／`TradeBatch`。
 - Teralion wire type 與 domain event 分離。
 - exact value、完整五檔 snapshot、deal、cumulative volume、raw／typed flags
   的 mapping。
+- realtime intermediate／final `1+1` grouping、source phase ordering，以及
+  intermediate trade 不清除既有 book。
 - deterministic event identity、canonical encoding、ordering 與 tie-break。
 - replacement-style `MarketState` reducer 與 deterministic final-state checksum。
 - post-event strategy callback、唯讀 state、no-lookahead 與 deterministic
@@ -72,10 +74,12 @@ scope                     = M1
 唯一可作為 source mapping acceptance evidence 的資料類別。它必須：
 
 - 來自 provenance 指定的 Teralion acquisition。
-- 只保留 `STOCK_SNAPSHOT` 的最小必要 records。
+- 保留全部 `STOCK_SNAPSHOT` 與 `STOCK_REALTIME` regular records；排除已知但
+  不支援的盤中零股 format。
 - 精確複製 source values，不改造價格、數量、時間、flags 或 book levels。
 - 移除 API transport metadata 時，在 metadata 明示移除欄位。
-- 有 fixture bytes SHA-256 與每筆 source selector。
+- 有每個 fixture shard 的 SHA-256、固定 concatenation order 的 fixture-set
+  SHA-256、完整 source page checksums 與 deterministic selection policy。
 
 ### 4.2 `derived_negative`
 
@@ -102,7 +106,7 @@ failure。
 
 ### 5.1 Static／provenance checks
 
-- fixture checksum 與 metadata selector 可回溯。
+- fixture shard／set checksums 與 metadata selection policy 可回溯。
 - fixture path 只包含核准檔案。
 - secret pattern scan。
 - docs links、YAML parse 與 traceability mapping。
@@ -117,7 +121,7 @@ failure。
 
 ### 5.3 Integration tests
 
-- approved wire fixture → TWSE normalizer → `QuoteSnapshot`。
+- approved wire fixture → TWSE normalizer → `QuoteSnapshot`／`TradeBatch`。
 - normalized events → deterministic merge → state reducer → strategy callback。
 - warning／error record 與 run outcome。
 - shuffled input repeated runs。
@@ -147,12 +151,15 @@ Test ID 是 acceptance 與 CI report 的穩定 identity；Rust module／function
 
 | Test ID | 測試 |
 | --- | --- |
-| `M1-T001` | `fixture_metadata_matches_bytes`：fixture SHA-256、record count 與 selectors 相符 |
+| `M1-T001` | `fixture_metadata_matches_bytes`：fixture SHA-256、format counts 與 selection policy 相符 |
 | `M1-T002` | `fixture_contains_no_secrets`：未發現 key、auth header、cookie 或 private request metadata |
-| `M1-T003` | `approved_stock_snapshot_normalizes`：每筆 approved record 成功產生 `QuoteSnapshot` |
+| `M1-T003` | `approved_stock_snapshot_normalizes`：window 內 snapshot records 成功產生 `QuoteSnapshot` |
 | `M1-T004` | `snapshot_mapping_is_atomic`：book、deal、cum volume、flags 同屬單一 tick event |
 | `M1-T005` | `book_and_volume_changes_are_preserved`：fixture 中 book 與 cumulative volume 的變化未丟失 |
 | `M1-T006` | `source_flags_are_preserved`：raw flags、typed view、opening／closing／trial 語意符合 TWSE mapping |
+| `M1-T007` | `approved_stock_realtime_normalizes`：window 內 final realtime records 產生 `QuoteSnapshot` |
+| `M1-T008` | `realtime_intermediate_final_group_normalizes`：三個 real `1+1` groups 各產生 `TradeBatch -> QuoteSnapshot` |
+| `M1-T009` | `invalid_realtime_group_is_rejected`：missing／multiple／volume-mismatch group 整組拒絕 |
 
 ### 6.2 Types、canonical encoding 與 errors
 
@@ -162,7 +169,7 @@ Test ID 是 acceptance 與 CI report 的穩定 identity；Rust module／function
 | `M1-T011` | `invalid_match_time_is_rejected` |
 | `M1-T012` | `decimal_never_rounds_or_uses_float` |
 | `M1-T013` | `unknown_format_is_rejected` |
-| `M1-T014` | `invalid_snapshot_shape_is_rejected` |
+| `M1-T014` | `invalid_quote_or_trade_shape_is_rejected` |
 | `M1-T015` | `unknown_status_bits_are_preserved_and_warned` |
 | `M1-T016` | `canonical_event_golden` |
 | `M1-T017` | `event_fingerprint_changes_with_semantics` |
@@ -178,9 +185,10 @@ Test ID 是 acceptance 與 CI report 的穩定 identity；Rust module／function
 | `M1-T024` | `repeated_replay_has_same_event_checksum` |
 | `M1-T025` | `unsupported_version_fails_before_replay` |
 
-`M1-T021` 使用 approved fixture 中相同 `match_time` records，加上必要的
-`synthetic_domain` event 覆蓋完整 tie-break 分支。若 real fixture 只能證明部分
-分支，report 必須分開列出，不得把 synthetic evidence 說成 source observation。
+`M1-T021` 必須使用 approved fixture 的三個 realtime intermediate／final groups
+證明 source phase ordering，並以其他 real same-time records 與必要的
+`synthetic_domain` event 覆蓋完整 tie-break 分支。report 必須分開列出 real 與
+synthetic evidence。
 
 ### 6.4 MarketState
 
@@ -192,6 +200,7 @@ Test ID 是 acceptance 與 CI report 的穩定 identity；Rust module／function
 | `M1-T033` | `explicit_clear_removes_value` |
 | `M1-T034` | `repeated_replay_has_same_final_state_checksum` |
 | `M1-T035` | `reducer_failure_does_not_publish_partial_state` |
+| `M1-T036` | `intermediate_trade_updates_trade_without_clearing_book` |
 
 ### 6.5 Strategy
 
@@ -227,7 +236,7 @@ M1 至少固定：
 
 | Golden | 內容 |
 | --- | --- |
-| `fixture.sha256` | approved fixture exact bytes |
+| `fixture-set.sha256` | approved shards 依 metadata order 串接後的 exact bytes |
 | `normalized-events.bin` | `canonical_event_version = 1` bytes |
 | `event-stream.blake3` | `canonical_replay_event_stream_version = 1` checksum |
 | `final-state.blake3` | `canonical_final_state_set_version = 1` checksum |

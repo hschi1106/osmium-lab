@@ -9,12 +9,12 @@
 ```text
 acceptance_contract_version = 1
 scope                       = M1
-current_overall_status      = Blocked
+current_overall_status      = NotRun
 ```
 
-目前 blocker 是 `TERALION_FIXTURE_REDISTRIBUTION_APPROVAL`；詳見
-[Fixture provenance](fixture-provenance.md)。其餘 design 與 verification
-contract 已可作為最小實作的依據。
+fixture approval gate 已關閉；詳見
+[Fixture provenance](fixture-provenance.md)。implementation 與 acceptance tests
+尚未完成，因此 overall status 是 `NotRun`，不是 `Passed`。
 
 依據：
 
@@ -41,11 +41,11 @@ contract 已可作為最小實作的依據。
 
 | Gate | Status | Closure evidence |
 | --- | --- | --- |
-| `GATE-FIXTURE-01` redistribution／commit approval | `Blocked` | authorized approver、approval date、contract／permission reference |
-| `GATE-FIXTURE-02` fixture metadata 與 checksum | `Blocked` | 需在 approval 後產生 exact fixture bytes |
-| `GATE-SECRET-01` secret scan | `NotRun` | `M1-T002` report |
+| `GATE-FIXTURE-01` redistribution／commit approval | `Passed` | authorized private-repository approval record |
+| `GATE-FIXTURE-02` fixture metadata 與 checksum | `Passed` | regular fixture metadata、source manifest 與 exact SHA-256 |
+| `GATE-SECRET-01` secret scan | `Passed` | field allowlist 與 forbidden-pattern scan，0 findings |
 | `GATE-SPEC-01` M1 design versions fixed | `Passed` | market-types 1、market-state 1、replay-engine 1、strategy-api 1 |
-| `GATE-BUILD-01` offline Rust workspace build | `NotRun` | successful workspace test report |
+| `GATE-BUILD-01` offline Rust workspace build | `Passed` | 2026-07-30 debug／release workspace tests |
 
 `GATE-SPEC-01` 只代表 paper contract 已固定，不代表 implementation 符合。
 
@@ -53,29 +53,33 @@ contract 已可作為最小實作的依據。
 
 ### M1-AC-01：合法且可回溯的 real fixture
 
-**要求：** 使用獲准 commit／再散布的實際 Teralion TWSE 2330
-`STOCK_SNAPSHOT` fixture，並能回溯 source acquisition。
+**要求：** 使用獲准 commit 的實際 Teralion TWSE 2330 regular fixture，涵蓋
+`STOCK_SNAPSHOT` 與 `STOCK_REALTIME`，並能回溯 source acquisition。
 
 | Test IDs | Required evidence | Status |
 | --- | --- | --- |
-| `M1-T001`, `M1-T002`, `M1-T003` | approval reference、fixture metadata、SHA-256、normalizer report、secret scan | `Blocked` |
+| `M1-T001`–`M1-T003`, `M1-T007`, `M1-T008` | approval reference、fixture metadata、SHA-256、normalizer report、secret scan | `NotRun` |
 
 Pass 必須同時滿足：
 
 - provenance approval 欄位完整。
-- fixture bytes checksum 與 metadata 一致。
-- 每筆 record 有 source selector。
+- 每個 fixture shard 與 fixture-set checksum 都和 metadata 一致。
+- deterministic selection policy 與全部 source page checksums 可回溯。
 - 無 secret。
-- 每筆成功產生一個 accepted `QuoteSnapshot`。
+- replay window 內的 final records 成功產生 `QuoteSnapshot`。
+- 三筆 intermediate records 與其 final pair 成功產生
+  `TradeBatch -> QuoteSnapshot`。
+- replay window 外 record 明確分類，不以 `received_at` 塞入 timeline。
 
-### M1-AC-02：單一 tick 的 atomic market observation
+### M1-AC-02：quote／trade 的 atomic market observation
 
-**要求：** 一個 `STOCK_SNAPSHOT` 的完整 book、deal、cumulative volume 與 flags
-在同一 `QuoteSnapshot` 中處理，不拆成不同 replay time。
+**要求：** final quote 的完整 book、deal、cumulative volume 與 flags 在同一
+`QuoteSnapshot` 中處理；intermediate 的 trade、cumulative volume 與 flags 在
+同一 `TradeBatch` 中處理，且不清除 book。
 
 | Test IDs | Required evidence | Status |
 | --- | --- | --- |
-| `M1-T004`, `M1-T005`, `M1-T006`, `M1-T012`, `M1-T016` | mapping assertions、canonical event golden | `NotRun` |
+| `M1-T004`–`M1-T009`, `M1-T012`, `M1-T016`, `M1-T036` | mapping assertions、group rejection、canonical event golden | `NotRun` |
 
 Pass 必須證明至少兩個 match times，且有 book 與 cumulative volume 變化；fixture
 若提供 deal，deal mapping 也必須驗證。raw flags 必須保留。
@@ -95,7 +99,7 @@ strategy output bytes 全部相同；只有 summary 文字相同不算。
 ### M1-AC-04：相同 `match_time` 的 deterministic tie-break
 
 **要求：** 相同 `match_time` 的 occurrence 依 `ordering_rule_version = 2`
-排列，duplicate 不被 collapse。
+排列；realtime intermediate 必須在 final 前，duplicate 不被 collapse。
 
 | Test IDs | Required evidence | Status |
 | --- | --- | --- |
@@ -105,12 +109,12 @@ Pass report 必須分開標示 real fixture 與 synthetic coverage。
 
 ### M1-AC-05：MarketState replacement semantics
 
-**要求：** 完整 snapshot 取代舊 book，state version 每 accepted event 恰增一次；
-reducer error 不發布 partial state。
+**要求：** 完整 snapshot 取代舊 book；`TradeBatch` 保留既有 book；state
+version 每 accepted event 恰增一次；reducer error 不發布 partial state。
 
 | Test IDs | Required evidence | Status |
 | --- | --- | --- |
-| `M1-T030`–`M1-T035` | reducer assertions、final-state golden、failure test | `NotRun` |
+| `M1-T030`–`M1-T036` | reducer assertions、final-state golden、failure test | `NotRun` |
 
 ### M1-AC-06：Strategy 看到 post-event state 且無前視
 
@@ -163,7 +167,7 @@ Pass 必須在 process 無 Teralion credential 且 network policy 為 disabled �
 
 | Requirement | M1 scope | Acceptance criteria |
 | --- | --- | --- |
-| `REPLAY-01` | `QuoteSnapshot` 與 source mapping | M1-AC-01、M1-AC-02、M1-AC-08、M1-AC-09 |
+| `REPLAY-01` | `QuoteSnapshot`／`TradeBatch` 與 source mapping | M1-AC-01、M1-AC-02、M1-AC-08、M1-AC-09 |
 | `REPLAY-02` | deterministic ordering | M1-AC-03、M1-AC-04 |
 | `REPLAY-03` | snapshot MarketState | M1-AC-02、M1-AC-05 |
 | `REPLAY-04` | event → state → strategy 順序 | M1-AC-06 |
@@ -183,7 +187,7 @@ M1 不宣稱完成 `DATA-01` 至 `DATA-04`、`SIM-01`、`SIM-02` 或完整
 ```text
 acceptance-report.yaml
 fixture-metadata.yaml
-fixture.sha256
+fixture-set.sha256
 normalized-events.bin
 event-stream.blake3
 final-state.blake3
@@ -233,7 +237,7 @@ approved_at
 
 1. Authorized approver 關閉 fixture redistribution gate。
 2. 依 provenance selectors 產生 minimal fixture 與 metadata。
-3. 執行 fixture checksum 與 secret scan。
+3. 執行 fixture shard／set checksums 與 secret scan。
 4. 在 debug profile 跑全部 workspace tests。
 5. 在 release profile 重跑。
 6. 在 network-disabled、no-key environment 跑 end-to-end suite。

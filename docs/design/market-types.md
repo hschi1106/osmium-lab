@@ -582,7 +582,8 @@ QuoteSnapshot {
 - annotations 與 book／trade／volume 同一 event 原子更新。
 - TWSE `open_price`／`high_price`／`low_price` 不在第一版 payload。
 
-M1 `STOCK_SNAPSHOT` 必須映射至此 variant。
+M1 `STOCK_SNAPSHOT` 與 non-intermediate `STOCK_REALTIME` 必須映射至此
+variant。
 
 ### 9.4 `BookSnapshot`
 
@@ -951,13 +952,15 @@ M1 只需要實作：
 - primitive identities／time／decimal／quantity
 - complete five-level book
 - `QuoteSnapshot`
+- `TradeBatch` 與 intermediate `TradePrint`
 - `TwseQuoteAnnotations`
 - `Observation`
 - `CanonicalEvent`
-- `STOCK_SNAPSHOT` fixture normalization
+- `STOCK_SNAPSHOT`／`STOCK_REALTIME` fixture normalization
+- TWSE intermediate／final grouping 與 source phase ordering
 
-不需要為 M1 實作 `TradeBatch` runtime path、simulation quantity conversion 或
-TWSE intermediate ordering。
+不需要為 M1 實作 simulation quantity conversion、order／fill 或
+`BookSnapshot` runtime path。
 
 ### 16.2 M2
 
@@ -968,8 +971,9 @@ M2 加入：
 - trading-unit-size metadata 與 simulation quantity conversion
 - market／limit fill evidence
 
-完整 `STOCK_REALTIME` 使用 `TeralionTwseQuote` mapping version 3 與
-`OrderingRule` version 2；未知 match-group shape 必須拒絕。
+M2 沿用 M1 已驗證的 `TeralionTwseQuote` mapping version 3 與
+`OrderingRule` version 2，將相同 normalization 套用至 verified local source 與
+replay cache。
 
 ### 16.3 M3／M4
 

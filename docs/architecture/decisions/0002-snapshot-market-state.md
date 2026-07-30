@@ -368,5 +368,5 @@ M1 對應 `M1-AC-02`、`M1-AC-05`、`M1-AC-06` 與 `M1-AC-09`；M3 補
   state transition、no-lookahead
 - [策略需求](../../requirements/strategy.md)：read-only MarketState
 - [模擬需求](../../requirements/simulation.md)：observable snapshot 與 queue 限制
-- [M1 增量](../../increments/M1-twse-replay.md)：QuoteSnapshot reducer 驗收
+- [M1 增量](../../increments/M1-twse-replay.md)：TWSE QuoteSnapshot／TradeBatch reducer 驗收
 - [資料與執行流程](../data-flow.md)：per-event sequence
