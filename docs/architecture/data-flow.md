@@ -402,8 +402,10 @@ accepted event
 
 - `QuoteSnapshot`：完整取代 book；同一 event 的 trade、volume、flags 一起套用。
 - `BookSnapshot`：完整取代 book。
-- `TradeBatch`：保存 batch 並更新明確提供的累計量。
-- `MarketStatus`：只更新已確認語意的 status／flags。
+- `TradeBatch`：保存 batch，並更新明確提供的累計量與 annotations。
+
+status／flags 只隨所屬 source event 原子更新，不建立獨立 event 或 state
+transition。
 
 optional field 的 absent／clear／unknown／unchanged 語意由 normalizer 明確表達，不能
 在 reducer 中依值猜測。

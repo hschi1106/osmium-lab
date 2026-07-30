@@ -2,7 +2,7 @@
 
 - 狀態：Accepted
 - 決策日期：2026-07-29
-- 最後修訂：2026-07-30（移除第一版不使用的統計狀態）
+- 最後修訂：2026-07-30（移除第一版 standalone status event）
 - 適用版本：`MarketStateSemanticsV1`
 - 主要需求：`REPLAY-01`、`REPLAY-03`、`REPLAY-04`、`STRAT-01`
 
@@ -144,9 +144,11 @@ derived view：
 
 batch 內多筆成交仍只造成一次 MarketState transition。
 
-### 4.4 `MarketStatus`
+### 4.4 Flags 與 status annotations
 
-只有 interface mapping 明確確認的 status 語意可以更新 known status。
+flags／status 只能作為同一 source tick 所屬 `QuoteSnapshot`、`BookSnapshot` 或
+`TradeBatch` 的 annotations 更新。第一版 reducer 不接受獨立的 status event，
+也不把 annotation 拆成另一次 state transition。
 
 未知 flags：
 

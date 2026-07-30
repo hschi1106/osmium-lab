@@ -228,7 +228,9 @@ TAIFEX 跨日資料必須依正確的 trading date 回播，不可單純依日�
 - `QuoteSnapshot`：最佳五檔、可選成交、累計量及 flags
 - `BookSnapshot`：完整五檔及可用的衍生一檔
 - `TradeBatch`：一筆或多筆成交及可用的累計資訊
-- `MarketStatus`：來源可明確辨識的市場狀態
+
+第一版不建立獨立的市場狀態事件。來源 tick 內可明確辨識的 flags／status 必須保留
+在同一個 quote、book 或 trade event 中，不能拆成另一個時間點。
 
 每個事件至少包含：
 
