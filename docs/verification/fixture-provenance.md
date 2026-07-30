@@ -97,9 +97,9 @@ selector 使用 page 內 `items` array 的 zero-based `item_index`。下表只�
 record。不得為了湊 coverage 修改 source value；缺少的 negative branch 使用
 明示的 `derived_negative` 或 `synthetic_domain`。
 
-## 5. Planned fixture artifact
+## 5. Fixture artifact
 
-approval 後預定建立：
+已建立：
 
 ```text
 spec/fixtures/teralion/twse/2330/2026-07-27/stock-snapshot.jsonl
@@ -129,8 +129,14 @@ approved by／at
 secret scan result
 ```
 
-fixture content checksum 目前為 `pending`，會在依本文件 policy 完成 extraction 與
-secret scan 後填入。
+fixture content：
+
+```text
+record_count = 8
+sha256      = ff1474c9a77223c42d416facb04c070aec5af6f166a68e1cee237616c55ec84c
+```
+
+第二次 extraction 與 committed candidate byte-for-byte 相同。
 
 ## 6. Extraction policy
 
@@ -214,17 +220,19 @@ expiry_or_review_date: timestamp or null
 
 ```text
 gate_id: TERALION_FIXTURE_REDISTRIBUTION_APPROVAL
-status: approval_recorded_fixture_pending
-blocks:
-  - M1 AC-01 pass
-  - final M1 offline acceptance
+status: closed
+blocks: []
 does_not_block:
   - domain type implementation
   - normalizer implementation against local/private source
   - synthetic reducer/order/strategy tests
-required_closure:
-  - extracted fixture checksum
-  - secret scan
+closure_evidence:
+  - explicit approval fields recorded
+  - repository visibility verified private
+  - source checksum manifest verified
+  - extracted fixture checksum recorded
+  - deterministic re-extraction passed
+  - fixture secret scan passed
 ```
 
 ## 9. Approval record
@@ -239,8 +247,8 @@ approval_reference: repository-owner authorization recorded in this approval rec
 approved_by: repository owner/admin
 approved_at: 2026-07-30T09:12:56Z
 expiry_or_review_date: null
-fixture_content_sha256: pending
-secret_scan_status: pending_fixture_creation
+fixture_content_sha256: ff1474c9a77223c42d416facb04c070aec5af6f166a68e1cee237616c55ec84c
+secret_scan_status: passed_field_allowlist_and_forbidden_pattern_scan
 ```
 
 本 approval 不授權公開散布，也不因 repository 目前為 private 而自動延伸至 fork、
