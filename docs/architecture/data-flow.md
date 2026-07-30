@@ -294,18 +294,18 @@ frozen execution plan
 
 ```text
 1. merge selects next event by OrderingRule
-2. replay validates event and monotonic time
+2. replay validates event、phase context and monotonic time
 3. replay clock advances to event.match_time
 4. reducer atomically updates that symbol's MarketState
-5. pending simulated orders inspect the event if eligible
-6. resulting order／fill／accounting feedback becomes deterministic
-7. strategy receives current event + updated read-only state + allowed feedback
-8. strategy emits indicator／order intent
-9. new intents are validated and registered
-10. new orders wait for a subsequent eligible event
+5. TradingContext is evaluated from current event + updated state
+6. strategy receives current event + updated read-only state + TradingContext
+7. strategy emits indicator／order intent
+8. new intents are validated and registered
+9. only orders whose origin OrderingKey is earlier inspect the event
+10. fills／accounting are updated and deterministic feedback is emitted
 ```
 
-步驟 5 至 9 的精確 callback API 由 replay、strategy 與 execution-sim design 決定，
+步驟 5 至 10 的精確 callback API 由 replay、strategy 與 execution-sim design 決定，
 但必須維持：
 
 - 目前 event 先更新 MarketState。
