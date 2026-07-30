@@ -66,7 +66,8 @@ strategy order intent
 ### 3.2 Subsequent eligible event
 
 `subsequent eligible event` 是 deterministic replay order 中位於 origin event
-之後、屬於目標商品，且帶有該 fill model 判定所需市場資料的事件。
+之後、屬於目標商品、其 `TradingContext` 允許 matching，且帶有該 fill model
+判定所需市場資料的事件。
 
 其他商品的下一事件不會使訂單取得目標商品的價格。相同 `match_time` 但 tie-break
 位於 origin event 之後的目標商品事件屬於後續事件；它不得在 intent 建立前被策略
@@ -106,6 +107,7 @@ ledger 變化。每筆變化必須有穩定 identity 及來源關聯。
 - order type 受支援。
 - limit order 具有合法 limit price。
 - 計價、數量及必要 instrument metadata 可用。
+- origin event 的 `TradingContext` 允許該類型的新 order entry。
 
 不合法 intent 必須產生可追溯 rejection feedback，不得：
 
@@ -127,6 +129,13 @@ fill。
 - 因為事件具有相同 `match_time` 就忽略 tie-break 的先後。
 
 order acceptance 可以在 intent 產生後立即回報，但 fill 必須遵守上述 eligibility。
+
+simulation 必須使用
+[ADR-0004](../architecture/decisions/0004-trading-context-and-eligibility.md)定義的
+`TradingEligibilityPolicy`。只有 `matching=Enabled(...)` 的 subsequent event
+可以進入 price／quantity fill model；`Indicative(...)` 或 `Unknown` matching
+不得 fill。`CoolDown` 是 phase gate，不是 event；它不合成 market observation，
+且該 phase 不允許 fill。
 
 ### SIM-01.3 Market order
 
@@ -269,6 +278,10 @@ trace identity 必須穩定，使相同輸入可產生相同 order／fill sequen
 `SIM-01` 至少必須由下列證據驗證：
 
 - order 不在 origin event 成交的無前視測試。
+- pre-open trial、pre-close trial、indicative matching 與 unknown matching 不成交
+  的測試。
+- `CoolDown` phase 不合成 event，且不允許新 order／fill 的測試。
+- opening／closing result 只評估較早 pending order 的測試。
 - market buy／sell 使用後續價格及不利 slippage 的測試。
 - 沒有可用價格時 no fill／pending 的測試。
 - limit buy／sell 未觸及、觸及及穿越 limit 的測試。
@@ -278,6 +291,7 @@ trace identity 必須穩定，使相同輸入可產生相同 order／fill sequen
 - invalid intent rejection 測試。
 - 缺少 multiplier 明確失敗的測試。
 - 相同輸入產生相同 order／fill checksum 的測試。
+- eligibility／market-rule／fill-model versions 完整進入 run 與 decision trace 的測試。
 
 M2 必須以 TWSE 2330 單日資料驗證 market／limit fill、slippage、fee、tax 及基本
 P&L；M3 補 TAIFEX futures multiplier 與 `TradeBatch`／`BookSnapshot` 模型。
