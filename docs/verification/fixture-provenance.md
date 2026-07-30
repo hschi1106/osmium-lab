@@ -9,11 +9,13 @@
 ```text
 provenance_record_version = 1
 scope                     = M1 / TWSE / 2330
-redistribution_status     = pending_explicit_approval
+redistribution_status     = approved
 ```
 
-在 `redistribution_status` 改成 `approved` 前，不得把候選 Teralion payload、
-衍生後仍可辨識的行情 records 或其 fixture bytes commit 到 repository。
+本 approval 只涵蓋 private repository `hschi1106/osmium-lab` 的 internal use；
+repository visibility 已於 2026-07-30 透過 GitHub repository metadata 驗證為
+`private`。若 repository visibility、存取政策或使用範圍改變，必須在散布 fixture
+前重新 review。
 
 ## 2. Source acquisition
 
@@ -127,7 +129,8 @@ approved by／at
 secret scan result
 ```
 
-fixture content checksum 目前為 `pending`，因為尚未被允許建立可 commit artifact。
+fixture content checksum 目前為 `pending`，會在依本文件 policy 完成 extraction 與
+secret scan 後填入。
 
 ## 6. Extraction policy
 
@@ -211,9 +214,8 @@ expiry_or_review_date: timestamp or null
 
 ```text
 gate_id: TERALION_FIXTURE_REDISTRIBUTION_APPROVAL
-status: open
+status: approval_recorded_fixture_pending
 blocks:
-  - committing Teralion payload fixture
   - M1 AC-01 pass
   - final M1 offline acceptance
 does_not_block:
@@ -221,7 +223,6 @@ does_not_block:
   - normalizer implementation against local/private source
   - synthetic reducer/order/strategy tests
 required_closure:
-  - explicit approval fields
   - extracted fixture checksum
   - secret scan
 ```
@@ -231,16 +232,17 @@ required_closure:
 目前 record：
 
 ```yaml
-redistribution_status: pending_explicit_approval
-approval_scope: null
-approval_basis: null
-approval_reference: null
-approved_by: null
-approved_at: null
+redistribution_status: approved
+approval_scope: selected M1 fixture records committed only to private repository hschi1106/osmium-lab for internal use
+approval_basis: permitted internal/private-repository use
+approval_reference: repository-owner authorization recorded in this approval record on 2026-07-30
+approved_by: repository owner/admin
+approved_at: 2026-07-30T09:12:56Z
 expiry_or_review_date: null
 fixture_content_sha256: pending
 secret_scan_status: pending_fixture_creation
 ```
 
-approval 完成後要以獨立、reviewable commit 更新本節與 fixture metadata。不要在
-同一 commit 混入 normalizer 行為變更。
+本 approval 不授權公開散布，也不因 repository 目前為 private 而自動延伸至 fork、
+artifact、package、release 或其他 export。fixture extraction 與 metadata 以後續
+獨立 commit 記錄；normalizer 行為變更不得混入。
