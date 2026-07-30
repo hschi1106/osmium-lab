@@ -5,6 +5,7 @@ mod price;
 mod quantity;
 mod symbol;
 mod time;
+mod trading_date;
 mod volume;
 
 pub use decimal::{Decimal, DecimalError};
@@ -14,4 +15,5 @@ pub use price::{Price, PriceError};
 pub use quantity::{Quantity, QuantityError, QuantityUnit, QuantityUnitError};
 pub use symbol::{Symbol, SymbolError};
 pub use time::{MatchTime, MatchTimeError};
+pub use trading_date::{TradingDate, TradingDateError};
 pub use volume::{Volume, VolumeError};
