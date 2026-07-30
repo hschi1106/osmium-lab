@@ -29,8 +29,8 @@ safe request
 
 adapter 不負責：
 
-- 將 source tick 解讀為 `QuoteSnapshot`、`BookSnapshot`、`TradeBatch` 或
-  `MarketStatus`；mapping 由 market interface 與 normalizer 負責。
+- 將 source tick 解讀為 `QuoteSnapshot`、`BookSnapshot` 或 `TradeBatch`；
+  mapping 由 market interface 與 normalizer 負責。
 - 使用 `received_at` 推進 replay clock。
 - 決定 strategy session、fill eligibility 或帳務。
 - 將 `bars`、`stats` 或 coverage counts 當成 tick completeness 的替代品。

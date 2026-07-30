@@ -2,7 +2,7 @@
 
 - 狀態：Accepted
 - 決策日期：2026-07-30
-- 最後修訂：2026-07-30（補充 TAIFEX 實際時段及允許 WarmUp 下單）
+- 最後修訂：2026-07-30（補充 TAIFEX 時段、WarmUp 下單及移除 standalone status event）
 - 適用版本：`SessionWindowPolicyV1`、`StrategySessionPolicyV1`
 - 主要需求：`DATA-01`、`DATA-05`、`REPLAY-04`、`REPLAY-05`、`STRAT-01`、
   `SIM-01`、`NFR-01`
@@ -180,9 +180,9 @@ replay window 決定哪些具有有效 `match_time` 的 domain events 進入該 
 - 多 segment events 依 `match_time` 與 ADR-0001 的 tie-break 串流合併。
 - session window 不改變 event atomicity 或 MarketState snapshot semantics。
 
-Replay Engine 不因 clock 穿越 open／close 而製造 `MarketStatus`。session phase 是
-execution context；只有來源 format／flags 明確支持的狀態才能正規化為
-`MarketStatus` 或 known status。
+Replay Engine 不因 clock 穿越 open／close 而製造 status event。session phase 是
+execution context；來源 format／flags 明確支持的狀態只能作為所屬 source event
+的 annotations。
 
 ## 5. Market-specific application
 
@@ -418,7 +418,7 @@ WarmUp／CoolDown。
 拒絕。會下載中間不需要的長時間空白或其他交易 session，尤其不適合 TAIFEX
 日盤與盤後。
 
-### 10.6 以 session boundary 產生 synthetic `MarketStatus`
+### 10.6 以 session boundary 產生 synthetic status event
 
 拒絕。calendar 只能證明 planned phase，不能證明交易所實際發布的 market status。
 

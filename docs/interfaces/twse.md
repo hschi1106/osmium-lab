@@ -35,7 +35,7 @@ type definition；具體 exact price／quantity type 與 canonical encoding 由
 - 盤後定價
 - 鉅額交易
 - 逐筆委託或 queue reconstruction
-- 由 raw flags 猜測的 `MarketStatus`
+- 由 raw flags 猜測的獨立狀態事件
 
 `kinds=quote` 無法排除 `INTRADAY_ODDLOT_REALTIME`；所以 source sync 可以保存它，
 但 replay cache builder 必須依 format 排除，不能因它落在 regular session window
@@ -207,7 +207,7 @@ source page、cursor、file line 或 ingestion ordinal 都不得補成 sequence�
 | cumulative volume | `Set(cum_volume)` |
 | limit annotations | 保存 raw `limit_flags`，並依第 8.2 節解碼四組 2-bit value |
 | status annotations | 保存 raw `status_flags`，並依第 8.1 節解碼獨立 bits |
-| standalone `MarketStatus` | 不產生；annotations 留在同一 atomic quote event |
+| standalone status event | 不產生；annotations 留在同一 atomic quote event |
 
 book、deal、cumulative volume 與 raw flags 必須組成單一 atomic event。event
 accepted 後，一次完整取代 book、一次更新其他明確 observation，且 state version
@@ -269,7 +269,7 @@ same-`match_time` ordering／cumulative-volume semantics 經 ADR 與 golden fixt
 這項明確拒絕不阻止 M1 使用 `STOCK_SNAPSHOT` fixture；但使用完整
 `STOCK_REALTIME` 的 M2 cache build 前，必須先解決此 schema gap。
 
-## 8. Flags 與 market status
+## 8. Flags 與 quote annotations
 
 整股 `STOCK_SNAPSHOT`／`STOCK_REALTIME` 在 2026-07-27 實測：
 
@@ -314,7 +314,7 @@ Bit 6／5 只有 Bit 7 為 `1` 的試算揭示才具有語意；Bit 7 為 `0` �
 表示「試算揭示」與「逐筆撮合註記」同時 set；不得把 `144` 當成新 enum variant。
 
 `status_flags` annotations 隨原 quote event 原子更新。replayer 不因 clock 穿越
-09:00／13:30 合成另一個 `MarketStatus`，也不能把 `16` 簡化成永久的
+09:00／13:30 合成另一個 status event，也不能把 `16` 簡化成永久的
 `MarketOpen`。
 
 ### 8.2 `limit_flags`：漲跌停註記
