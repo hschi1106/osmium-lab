@@ -33,6 +33,8 @@
 8. 策略讀取市場狀態但不能修改。
 9. replayer 只開啟 explicit universe 需要的 streams。
 10. 資料準備完成後，replay／backtest 預設完全離線。
+11. 每個 market／instrument session 以自己的開收盤時間建立前後五分鐘的下載及
+    回播 window。
 
 ## 3. 系統 context
 
@@ -135,7 +137,13 @@ MarketState reducer 遵守
 ### 4.5 Explicit universe 與 selective I/O
 
 strategy 在 execution plan 建立前宣告 explicit market／symbol universe。planner
-將它轉成需要的 source／cache partitions，replayer 只開啟對應 streams。
+將它與 strategy 選取的 semantic session kinds 轉成需要的 source／cache
+partitions，replayer 只開啟對應 streams。
+
+market／instrument session、前後五分鐘的 download／replay windows，以及
+WarmUp／Active／CoolDown strategy phases 依
+[ADR-0003](decisions/0003-session-windows-and-strategy-activation.md)建立。strategy
+不自行指定 Teralion query 或絕對 session 時鐘。
 
 filesystem 上存在其他商品，不代表 execution 可以掃描、解析或載入它們。
 
@@ -155,6 +163,8 @@ replay、backtest 與 inspect 不依賴網路。
 
 - 解析並驗證 effective configuration。
 - 取得 strategy universe。
+- 解析 strategy session selection，並以版本化 calendar／profile 建立 SessionPlan。
+- 對每個 session open／close 固定加入前後五分鐘的 download／replay windows。
 - 比較所需 partition 與本地狀態。
 - 建立固定的 sync／execution plan。
 - 標示 reuse、download、rebuild、incomplete、corrupt 及 degraded scope。
@@ -220,6 +230,7 @@ cache builder 不修改或刪除來源資料。
 
 - 只開啟 execution plan universe streams。
 - 驗證 stream schema、ordering compatibility 及時間單調性。
+- 只接受位於 planned replay windows 的 `match_time`，並提供 session phase context。
 - 以 bounded streaming merge 選出下一事件。
 - 推進 replay clock。
 - 依序協調 MarketState、strategy 與 strategy output。
@@ -244,8 +255,10 @@ Reducer 不知道下一事件，不接受 strategy mutation，也不重建 queue
 責任：
 
 - 建立編譯期連結的 Rust strategy instance。
-- 驗證參數並取得 explicit universe。
+- 驗證參數並取得 explicit universe 及 semantic session selection。
 - 依 replay order 呼叫 event callback。
+- 提供 WarmUp／Active／CoolDown context；WarmUp／Active 接受新 order intent，
+  CoolDown 拒絕。
 - 提供目前 event 與更新後 read-only MarketState。
 - 收集 indicator、order intent 及 simulation feedback。
 - 將 strategy error／panic 轉成 failed run。
@@ -257,7 +270,8 @@ Strategy Runtime 不讓策略取得 future event、source repository 或可修�
 責任：
 
 - 驗證 order intent。
-- 從 origin event 之後的目標商品 eligible event 判定 fill。
+- 只以 WarmUp／Active phase 中、位於 origin event 之後且符合 fill model 的目標商品
+  eligible event 判定 fill。
 - 套用 versioned fill、slippage、fee、tax 及 multiplier。
 - 更新 order、fill、cash、position 與 P&L ledger。
 - 執行 reconciliation。
