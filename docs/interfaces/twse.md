@@ -15,7 +15,7 @@ type definition；具體 exact price／quantity type 與 canonical encoding 由
 - [TWSE 集中市場即時交易資訊傳輸規格書 B.12.13](https://dsp.twse.com.tw/public/static/downloads/computerPlanningOperationsDepartment/TWSE%E9%9B%86%E4%B8%AD%E5%B8%82%E5%A0%B4%E5%8D%B3%E6%99%82%E4%BA%A4%E6%98%93%E8%B3%87%E8%A8%8A%E5%82%B3%E8%BC%B8%E8%A6%8F%E6%A0%BC%E6%9B%B8%28B.12.13%29%28202612%29_20260515151841.pdf)。
 - 2026-07-27 TWSE `2330` 08:55–13:35 的 77,213 筆實際 response。
 
-適用 mapping：`TeralionTwseQuote`，`mapping_version = 2`。
+適用 mapping：`TeralionTwseQuote`，`mapping_version = 3`。
 
 ## 2. 支援範圍
 
@@ -143,8 +143,21 @@ Teralion JSON number 不得直接以 binary floating-point 作 canonical event v
 decoder 必須保留足以無損轉成 domain decimal／tick representation 的 numeric
 lexeme；exact Rust representation 留給 `market-types`。
 
-Teralion 文件只稱 size 為 `quantity`。在 quantity unit 未由 source／exchange
-contract 與 fixture 固定前，第一版不自行把它改名為 shares、lots 或 contracts。
+TWSE B.12.13 與本地 fixture 已固定 quantity unit：
+
+- regular `STOCK_SNAPSHOT`／`STOCK_REALTIME` 的成交量、五檔量與累計成交量，
+  每一 source quantity unit 是一個 TWSE `TradingUnit`。
+- `INTRADAY_ODDLOT_REALTIME` 的成交量與五檔量，每一 source quantity unit 是
+  一股，因此 equity odd-lot 未來映射為 `Share`。
+
+`TradingUnit` 不直接改寫成 `Share × 1,000`。B.12.13 的個股基本資料另有
+「交易單位」欄位，記錄每交易單位所代表的股數／權證單位數／受益單位數，且可
+不是 1,000。該 conversion factor 屬於 daily instrument metadata，不屬於 quote
+event，也不能由 symbol type 猜測。
+
+2026-07-27 的 2330 evidence 與規格一致：regular `STOCK_SNAPSHOT` 的最大
+`cum_volume` 為 24,003 trading units；盤中零股的最大 `cum_volume` 為
+1,511,292 shares。兩種 format 的 cumulative sequence 必須保持隔離。
 
 ### 5.3 Deal
 
@@ -157,8 +170,9 @@ contract 與 fixture 固定前，第一版不自行把它改名為 shares、lots
 }
 ```
 
-price 與 quantity 使用 level 相同的 exact／positive 驗證。`deal=null` 表示本
-source tick 沒有新的 deal observation，不得：
+price 使用 level 相同的 exact／positive 驗證；quantity 使用
+`QuantityUnit::TradingUnit`。`deal=null` 表示本 source tick 沒有新的 deal
+observation，不得：
 
 - 將 recent trade 清空。
 - 以 `0` price／quantity 代替。
@@ -170,8 +184,9 @@ phase、format 與已確認的 status semantics。
 
 ### 5.4 Cumulative volume
 
-`cum_volume` 是 session cumulative observation，`0` 是合法值而不是 absent。
-normalizer 不從 deal quantities 重算或修補 cumulative volume。
+`cum_volume` 是 `QuantityUnit::TradingUnit` 的 session cumulative
+observation，`0` 是合法值而不是 absent。normalizer 不從 deal quantities重算或
+修補 cumulative volume。
 
 若同一 session 的 accepted event 造成 cumulative volume 倒退，必須依 mapping
 shape 判斷：
@@ -206,6 +221,8 @@ source page、cursor、file line 或 ingestion ordinal 都不得補成 sequence�
 | complete ask slots | `asks` array，依序轉成最多五 slots |
 | trade observation | `deal` present → `Set`；`null` → `NoObservation` |
 | cumulative volume | `Set(cum_volume)` |
+| book／trade quantity unit | constant `TradingUnit` for regular `STOCK_*` formats |
+| cumulative volume unit | constant `TradingUnit` for regular `STOCK_*` formats |
 | limit annotations | 保存 raw `limit_flags`，並依第 8.2 節解碼四組 2-bit value |
 | status annotations | 保存 raw `status_flags`，並依第 8.1 節解碼獨立 bits |
 | standalone status event | 不產生；annotations 留在同一 atomic quote event |
@@ -261,7 +278,7 @@ complete empty book。
 | `09:30:55.252155` | `2345 × 7`／6,055 | `2350 × 6`／6,061 |
 | `10:29:59.907157` | `2360 × 2`／9,339 | `2365 × 1`／9,340 |
 
-`TeralionTwseQuote` mapping version 2 依
+`TeralionTwseQuote` mapping version 3 保留 version 2 定義的 grouping，依
 [ADR-0005](../architecture/decisions/0005-twse-intermediate-final-ordering.md)處理：
 
 1. 以 market、trading date、symbol、format、`match_time` 建立 group，不能依 API
@@ -425,7 +442,9 @@ universe 明確要求 odd-lot session／instrument，planner 必須以 unsupport
 拒絕，不能回退到整股行情。
 
 其 `cum_volume`、book quantity、deal 或 flags 不得混入 `STOCK_*` state。未來加入
-盤中零股時必須使用新的 session／format mapping 與獨立驗收。
+盤中零股 equity 時，quantity unit 必須是 `Share`，並使用新的 session／format
+mapping 與獨立驗收。ETF／其他非 equity odd-lot instrument 仍須由各自 fixture
+與 official unit definition 固定，不得一律套用 `Share`。
 
 ### 9.2 Unknown format
 
@@ -463,6 +482,8 @@ kinds        = quote
 | `intermediate_print=true` | 3 |
 | Regular `status_flags` | 4、8、16、128 |
 | Regular `limit_flags` | 0 |
+| Regular `STOCK_SNAPSHOT` maximum `cum_volume` | 24,003 `TradingUnit` |
+| Odd-lot maximum `cum_volume` | 1,511,292 `Share` |
 
 樣本另顯示：
 
@@ -483,6 +504,7 @@ kinds        = quote
 | --- | --- |
 | 合法 `STOCK_SNAPSHOT` complete book | 一個 atomic `QuoteSnapshot` |
 | 合法 non-intermediate `STOCK_REALTIME` | 一個 atomic `QuoteSnapshot` |
+| regular book／deal／cum quantity | `TradingUnit`；不乘以 1,000 |
 | `deal=null` | trade `NoObservation`，不清除 recent trade |
 | `cum_volume=0` | 保留合法 zero |
 | 少於五檔但合法 arrays | empty slots 明確取代舊 slots |
@@ -511,4 +533,5 @@ kinds        = quote
 - `REPLAY-03`：complete snapshot replacement、`NoObservation` 與 raw flags。
 - `REPLAY-06`：invalid fields、unknown format 及 invalid match-group rejection。
 - `NFR-01`：deterministic mapping 與 warning aggregation。
-- `NFR-03`：`TeralionTwseQuote` 的 numeric mapping version boundary。
+- `NFR-03`：`TeralionTwseQuote` 的 numeric／quantity-unit mapping version
+  boundary。

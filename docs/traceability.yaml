@@ -168,7 +168,7 @@ interface_trace:
   - path: docs/interfaces/twse.md
     status: complete
     mapping_name: TeralionTwseQuote
-    mapping_version: 2
+    mapping_version: 3
     evidence_scope: TWSE 2330 2026-07-27 local raw acquisition
     requirements:
       - DATA-01

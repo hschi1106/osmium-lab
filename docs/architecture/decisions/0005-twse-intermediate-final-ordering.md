@@ -111,7 +111,8 @@ page order 是 exchange sequence。
 
 ### 3.2 驗證 match group
 
-`TeralionTwseQuote` mapping version 2 在產生 domain events 前，以：
+`TeralionTwseQuote` mapping version 2 引入、version 3 保留的規則是在產生
+domain events 前，以：
 
 ```text
 (market, trading_date, symbol, source_format, match_time)
@@ -261,7 +262,8 @@ checksum 與策略可見資料。
   `REPLAY-03`、`REPLAY-04`
 - [Replay requirements](../../requirements/replay.md)：event atomicity、ordering、
   state replacement、failure policy
-- [TWSE interface](../../interfaces/twse.md)：`TeralionTwseQuote` mapping version 2
+- [TWSE interface](../../interfaces/twse.md)：`TeralionTwseQuote` mapping version
+  3；沿用本 ADR 在 version 2 引入的 ordering
 - [Market types](../../design/market-types.md)：`TradeBatch`、`QuoteSnapshot`、
   `TradePrintKind`
 - [MarketState design](../../design/market-state.md)：atomic reducer 與 cumulative

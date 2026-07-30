@@ -210,10 +210,10 @@ quantity unit 必須顯式存在：
 
 | `QuantityUnit` | Discriminant | 語意 |
 | --- | ---: | --- |
-| `SourceUnit` | 0 | 來源只稱 quantity，尚未證實 shares／lots／contracts |
-| `Share` | 1 | 已確認以股為單位 |
-| `TradingUnit` | 2 | 已確認以交易單位為單位 |
-| `Contract` | 3 | 已確認以口／契約為單位 |
+| `SourceUnit` | 0 | 來源只稱 quantity，尚未證實 shares／trading units／contracts |
+| `Share` | 1 | 一股；只用於已確認以股計數的 equity quantity |
+| `TradingUnit` | 2 | 一個交易所定義的交易單位；每單位包含多少股／受益權單位由 instrument metadata 決定 |
+| `Contract` | 3 | 一口衍生品契約；契約乘數由 instrument metadata 決定 |
 
 book level、single trade 與 order size 使用：
 
@@ -241,8 +241,27 @@ Volume {
   configuration 提供。
 - checked add／subtract；overflow、underflow 或 unit mismatch 是 error。
 
-TWSE 2330 Teralion fixture 目前仍使用 `SourceUnit`，直到 Teralion quantity 與
-TWSE message unit 的 mapping 由 fixture contract 固定。
+market／mechanism application：
+
+| Market／mechanism | Domain unit | Evidence／boundary |
+| --- | --- | --- |
+| TWSE regular `STOCK_SNAPSHOT`／`STOCK_REALTIME` | `TradingUnit` | B.12.13 明定成交量、五檔量與累計成交量每一數量單位為一交易單位；2330 fixture magnitude 相符 |
+| TWSE intraday odd-lot equity | `Share` | B.12.13 明定每一數量單位為一股；目前仍是 unsupported format |
+| TPEx regular equity | `TradingUnit` | [TPEx 交易制度](https://www.tpex.org.tw/zh-tw/mainboard/trading/rules/system.html)明定一般有價證券通常每交易單位 1,000 股／單位，但有例外；Teralion format mapping 待 fixture 固定 |
+| TPEx odd-lot equity | `Share` | TPEx 明定零股以一股為交易單位；Teralion format mapping 待 fixture 固定 |
+| TAIFEX futures／options | `Contract` | TAIFEX futures 與 options 行情分別以「口」表示成交量與未沖銷契約量；Teralion format mapping 待 fixture 固定 |
+
+TWSE／TPEx regular 的 `TradingUnit` 不等於硬編碼的 1,000 股。TWSE 普通股票通常
+為 1,000 股，但 secondary-listed foreign stock、offshore ETF 或其他商品可有
+不同單位；TPEx 也有第二上櫃外國股票與加掛 ETF 等例外。每一交易單位所含的
+security units 必須由具日期與 provenance 的 instrument metadata 提供。
+
+同理，TAIFEX `Contract` quantity 不包含 contract multiplier。股票期貨一口可
+表彰 2,000 股或其他經公告／調整後數值，該 multiplier 與 quantity 分開保存。
+官方 futures／options quantity evidence：
+
+- [TAIFEX futures daily market report](https://www.taifex.com.tw/cht/3/futDailyMarketReport)
+- [TAIFEX options daily market report](https://www.taifex.com.tw/cht/3/optDailyMarketReport)
 
 ### 4.9 `SourceFormatId`
 
@@ -946,10 +965,10 @@ M2 加入：
 
 - cache serialization 與 lineage
 - complete 2330 session source normalization
-- simulation-compatible quantity unit
+- trading-unit-size metadata 與 simulation quantity conversion
 - market／limit fill evidence
 
-完整 `STOCK_REALTIME` 使用 `TeralionTwseQuote` mapping version 2 與
+完整 `STOCK_REALTIME` 使用 `TeralionTwseQuote` mapping version 3 與
 `OrderingRule` version 2；未知 match-group shape 必須拒絕。
 
 ### 16.3 M3／M4
@@ -957,7 +976,8 @@ M2 加入：
 TAIFEX、TPEx、warrant 與 option 只能在各 interface 由真實 fixture 固定後：
 
 - 啟用對應 annotation variant。
-- 確認 quantity unit、price precision 與 instrument metadata。
+- 確認 Teralion wire quantity 對官方 market unit 的 mapping、price precision
+  與 instrument metadata。
 - 增加 mapping／canonical golden vectors。
 - review event／canonical compatibility。
 

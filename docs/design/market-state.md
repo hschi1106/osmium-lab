@@ -681,8 +681,9 @@ intermediate TradeBatch
 ```
 
 Reducer 不自行辨認 raw `intermediate_print`，也不重新 grouping；它只接受已由
-`TeralionTwseQuote` mapping version 2 產生、且與 `OrderingRule` version 2 相容的
-domain events。
+`TeralionTwseQuote` mapping version 3 產生、且與 `OrderingRule` version 2 相容的
+domain events。mapping version 3 保留 version 2 的 intermediate/final ordering，
+只固定 quantity-unit semantics。
 
 已驗證的 `1+1` group 會形成兩個 atomic transitions。若 source 出現多筆
 intermediate、缺少 final 或 cumulative volume 關係不符，normalizer 必須拒絕整個
