@@ -1,40 +1,38 @@
-use std::{
-    env,
-    error::Error,
-    fs::{self, File},
-    io::{self, Write},
-    ops::Range,
-    path::PathBuf,
-};
+use std::{env, error::Error, fs, io, ops::Range, path::PathBuf};
 
-const EXTRACTOR_VERSION: u16 = 1;
-const SELECTIONS: [(&str, &[usize]); 2] = [
-    ("0001.json", &[179, 180, 183, 329, 416]),
-    ("0016.json", &[2201, 2202, 2204]),
-];
+const EXTRACTOR_VERSION: u16 = 4;
+const FIRST_PAGE: u16 = 1;
+const LAST_PAGE: u16 = 16;
+const EXPECTED_SNAPSHOT_COUNT: usize = 3_597;
+const EXPECTED_REALTIME_COUNT: usize = 70_199;
+const STOCK_SNAPSHOT_FORMAT_FIELD: &[u8] = br#""format":"STOCK_SNAPSHOT""#;
+const STOCK_REALTIME_FORMAT_FIELD: &[u8] = br#""format":"STOCK_REALTIME""#;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut arguments = env::args_os().skip(1);
     let source_root = PathBuf::from(
         arguments
             .next()
-            .ok_or("usage: extract_m1_fixture <source-complete-directory> <output-jsonl>")?,
+            .ok_or("usage: extract_m1_fixture <source-complete-directory> <output-directory>")?,
     );
     let output_path = PathBuf::from(
         arguments
             .next()
-            .ok_or("usage: extract_m1_fixture <source-complete-directory> <output-jsonl>")?,
+            .ok_or("usage: extract_m1_fixture <source-complete-directory> <output-directory>")?,
     );
     if arguments.next().is_some() {
         return Err("extract_m1_fixture accepts exactly two arguments".into());
     }
 
-    let mut output = File::create(&output_path)?;
-    let mut record_count = 0_usize;
+    let mut page_outputs = Vec::new();
+    let mut snapshot_count = 0_usize;
+    let mut realtime_count = 0_usize;
 
-    for (page_name, selected_indices) in SELECTIONS {
+    for page_number in FIRST_PAGE..=LAST_PAGE {
+        let page_name = format!("{page_number:04}.json");
         let page_path = source_root.join("pages").join(page_name);
         let page = fs::read(&page_path)?;
+        let mut page_output = Vec::new();
         let item_ranges = item_ranges(&page).map_err(|message| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -42,36 +40,54 @@ fn main() -> Result<(), Box<dyn Error>> {
             )
         })?;
 
-        for selected_index in selected_indices {
-            let range = item_ranges.get(*selected_index).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "{} does not contain items[{selected_index}]",
-                        page_path.display()
-                    ),
-                )
-            })?;
-            let record = &page[range.clone()];
+        for (item_index, range) in item_ranges.into_iter().enumerate() {
+            let record = &page[range];
+            if contains_bytes(record, STOCK_SNAPSHOT_FORMAT_FIELD) {
+                snapshot_count += 1;
+            } else if contains_bytes(record, STOCK_REALTIME_FORMAT_FIELD) {
+                realtime_count += 1;
+            } else {
+                continue;
+            }
             if record.first() != Some(&b'{') || record.last() != Some(&b'}') {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!(
-                        "{} items[{selected_index}] is not a JSON object",
+                        "{} items[{item_index}] is not a JSON object",
                         page_path.display()
                     ),
                 )
                 .into());
             }
 
-            output.write_all(record)?;
-            output.write_all(b"\n")?;
-            record_count += 1;
+            page_output.extend_from_slice(record);
+            page_output.push(b'\n');
         }
+
+        page_outputs.push((format!("{page_number:04}.jsonl"), page_output));
     }
 
-    output.flush()?;
-    println!("extractor_version={EXTRACTOR_VERSION} records={record_count}");
+    if snapshot_count != EXPECTED_SNAPSHOT_COUNT || realtime_count != EXPECTED_REALTIME_COUNT {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "expected {EXPECTED_SNAPSHOT_COUNT} STOCK_SNAPSHOT and \
+                 {EXPECTED_REALTIME_COUNT} STOCK_REALTIME records, found \
+                 {snapshot_count} and {realtime_count}"
+            ),
+        )
+        .into());
+    }
+
+    fs::create_dir_all(&output_path)?;
+    for (file_name, bytes) in &page_outputs {
+        fs::write(output_path.join(file_name), bytes)?;
+    }
+    println!(
+        "extractor_version={EXTRACTOR_VERSION} files={} snapshots={snapshot_count} \
+         realtime={realtime_count}",
+        page_outputs.len()
+    );
     Ok(())
 }
 
@@ -221,9 +237,17 @@ fn skip_whitespace(input: &[u8], mut cursor: usize) -> usize {
     cursor
 }
 
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|candidate| candidate == needle)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::item_ranges;
+    use super::{
+        contains_bytes, item_ranges, STOCK_REALTIME_FORMAT_FIELD, STOCK_SNAPSHOT_FORMAT_FIELD,
+    };
 
     #[test]
     fn preserves_selected_value_lexemes_exactly() {
@@ -232,5 +256,17 @@ mod tests {
 
         assert_eq!(&page[ranges[0].clone()], br#"{"price":2320.0}"#);
         assert_eq!(&page[ranges[1].clone()], br#"{"text":"},[]"}"#);
+    }
+
+    #[test]
+    fn selects_both_exact_regular_stock_wire_formats() {
+        let snapshot = br#"{"format":"STOCK_SNAPSHOT","price":2320.0}"#;
+        let realtime = br#"{"format":"STOCK_REALTIME","price":2320.0}"#;
+        let odd_lot = br#"{"format":"INTRADAY_ODDLOT_REALTIME","price":2320.0}"#;
+
+        assert!(contains_bytes(snapshot, STOCK_SNAPSHOT_FORMAT_FIELD));
+        assert!(contains_bytes(realtime, STOCK_REALTIME_FORMAT_FIELD));
+        assert!(!contains_bytes(odd_lot, STOCK_SNAPSHOT_FORMAT_FIELD));
+        assert!(!contains_bytes(odd_lot, STOCK_REALTIME_FORMAT_FIELD));
     }
 }
