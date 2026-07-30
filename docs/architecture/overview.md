@@ -145,6 +145,11 @@ WarmUp／Active／CoolDown strategy phases 依
 [ADR-0003](decisions/0003-session-windows-and-strategy-activation.md)建立。strategy
 不自行指定 Teralion query 或絕對 session 時鐘。
 
+每個 event 更新 MarketState 後，再依
+[ADR-0004](decisions/0004-trading-context-and-eligibility.md)建立 TradingContext，
+分開表達新 order entry、matching availability 與逐 order/event fill eligibility。
+phase 是 baseline，不等同於單一 `is_tradeable`。
+
 filesystem 上存在其他商品，不代表 execution 可以掃描、解析或載入它們。
 
 ### 4.6 Default offline execution
@@ -233,7 +238,7 @@ cache builder 不修改或刪除來源資料。
 - 只接受位於 planned replay windows 的 `match_time`，並提供 session phase context。
 - 以 bounded streaming merge 選出下一事件。
 - 推進 replay clock。
-- 依序協調 MarketState、strategy 與 strategy output。
+- 依序協調 MarketState、TradingContext、strategy 與 strategy output。
 - 產生 event stream 及 final-state checksum 所需的 canonical sequence。
 
 Replay Engine 不呼叫 Teralion、不解讀 wire payload，也不決定 fill price。
@@ -250,27 +255,40 @@ Replay Engine 不呼叫 Teralion、不解讀 wire payload，也不決定 fill pr
 
 Reducer 不知道下一事件，不接受 strategy mutation，也不重建 queue。
 
-### 5.8 Strategy Runtime
+### 5.8 Trading Eligibility Evaluator
+
+責任：
+
+- 以 session phase、目前 event、更新後 MarketState 及 market rules 建立
+  TradingContext。
+- 分開表達 new-order-entry 與 matching availability。
+- 為 restriction／fill block 提供穩定 reason codes。
+- 依 policy 及 market-rule versions 產生 deterministic projection。
+
+Evaluator 不修改 MarketState、不解碼未經 interface 確認的 raw semantics，也不決定
+fill price／quantity。
+
+### 5.9 Strategy Runtime
 
 責任：
 
 - 建立編譯期連結的 Rust strategy instance。
 - 驗證參數並取得 explicit universe 及 semantic session selection。
 - 依 replay order 呼叫 event callback。
-- 提供 WarmUp／Active／CoolDown context；WarmUp／Active 接受新 order intent，
-  CoolDown 拒絕。
-- 提供目前 event 與更新後 read-only MarketState。
+- 提供 WarmUp／Active／CoolDown phase baseline。
+- 提供目前 event、更新後 read-only MarketState 與 TradingContext。
+- 依 TradingContext 將不允許的新 order intent 明確拒絕。
 - 收集 indicator、order intent 及 simulation feedback。
 - 將 strategy error／panic 轉成 failed run。
 
 Strategy Runtime 不讓策略取得 future event、source repository 或可修改 state handle。
 
-### 5.9 Execution Simulation 與 Accounting
+### 5.10 Execution Simulation 與 Accounting
 
 責任：
 
 - 驗證 order intent。
-- 只以 WarmUp／Active phase 中、位於 origin event 之後且符合 fill model 的目標商品
+- 只以位於 origin event 之後、`matching=Enabled(...)` 且符合 fill model 的目標商品
   eligible event 判定 fill。
 - 套用 versioned fill、slippage、fee、tax 及 multiplier。
 - 更新 order、fill、cash、position 與 P&L ledger。
@@ -279,7 +297,7 @@ Strategy Runtime 不讓策略取得 future event、source repository 或可修�
 
 Simulation 不修改 market event／state，不宣稱 queue position 或真實 exchange matching。
 
-### 5.10 Result Writer 與 Inspector
+### 5.11 Result Writer 與 Inspector
 
 責任：
 

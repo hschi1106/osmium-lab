@@ -55,10 +55,11 @@ TWSE 普通交易使用 `regular` session：
 | Replay window by `match_time` | `[08:55, 13:35)` |
 | `WarmUp` | `[08:55, 09:00)` |
 | `Active` | `[09:00, 13:30]` |
-| `CoolDown` | `(13:30, 13:35)` |
+| `CoolDown` phase | `(13:30, 13:35)` |
 
 完整規則由 [ADR-0003](../architecture/decisions/0003-session-windows-and-strategy-activation.md)
-定義。落在 margin 內不代表該 format 自動受支援。
+定義。落在 margin 內不代表該 format 自動受支援；`CoolDown` 也不是來源 event，
+平台不在 13:30 合成 observation。
 
 2026-07-27 樣本的第一筆 source tick：
 
@@ -387,6 +388,8 @@ evidence、尚無 local fixture evidence。正式啟用 fill rule 前必須新�
 - flags 本身不改寫 planner 的 `WarmUp`／`Active`／`CoolDown` phase。
 - fill model 若要使用 opening、closing、trial 或 limit annotations，必須以
   versioned rule 明確宣告；不能只因某個 bit 存在就成交。
+- TradingContext 與 order／event eligibility 依
+  [ADR-0004](../architecture/decisions/0004-trading-context-and-eligibility.md)建立。
 
 ## 9. 已知不支援 format
 

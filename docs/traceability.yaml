@@ -63,6 +63,7 @@ document_sets:
       - docs/architecture/decisions/0001-match-time-ordering.md
       - docs/architecture/decisions/0002-snapshot-market-state.md
       - docs/architecture/decisions/0003-session-windows-and-strategy-activation.md
+      - docs/architecture/decisions/0004-trading-context-and-eligibility.md
 
 architecture_trace:
   - path: docs/architecture/overview.md
@@ -130,6 +131,15 @@ architecture_trace:
       - STRAT-01
       - SIM-01
       - NFR-01
+  - path: docs/architecture/decisions/0004-trading-context-and-eligibility.md
+    requirements:
+      - REPLAY-03
+      - REPLAY-04
+      - STRAT-01
+      - SIM-01
+      - OPS-02
+      - NFR-01
+      - NFR-03
 
 interface_trace:
   - path: docs/interfaces/teralion.md
@@ -452,6 +462,7 @@ requirements:
         scope: 擴充 TradeBatch、BookSnapshot 與多商品狀態
     planned_design_documents:
       - docs/architecture/decisions/0002-snapshot-market-state.md
+      - docs/architecture/decisions/0004-trading-context-and-eligibility.md
       - docs/design/market-types.md
       - docs/design/market-state.md
     planned_verification:
@@ -493,6 +504,7 @@ requirements:
         scope: 驗證多商品 callback 順序
     planned_design_documents:
       - docs/architecture/decisions/0003-session-windows-and-strategy-activation.md
+      - docs/architecture/decisions/0004-trading-context-and-eligibility.md
       - docs/design/replay-engine.md
       - docs/design/market-state.md
       - docs/design/strategy-api.md
@@ -611,6 +623,7 @@ requirements:
         scope: 多商品狀態 view
     planned_design_documents:
       - docs/architecture/decisions/0003-session-windows-and-strategy-activation.md
+      - docs/architecture/decisions/0004-trading-context-and-eligibility.md
       - docs/design/strategy-api.md
       - docs/design/replay-engine.md
       - docs/design/market-state.md
@@ -619,6 +632,7 @@ requirements:
       methods:
         - API boundary or compile-fail test
         - callback integration test
+        - trading-context decision table test
         - deterministic output test
       documents:
         - docs/verification/plan.md
@@ -648,6 +662,7 @@ requirements:
         scope: TAIFEX TradeBatch／BookSnapshot 與 multiplier
     planned_design_documents:
       - docs/architecture/decisions/0003-session-windows-and-strategy-activation.md
+      - docs/architecture/decisions/0004-trading-context-and-eligibility.md
       - docs/design/execution-sim.md
       - docs/design/strategy-api.md
       - docs/design/market-state.md
@@ -655,6 +670,7 @@ requirements:
       methods:
         - fill-model unit test
         - no-origin-event-fill test
+        - pre-open/pre-close indicative-matching no-fill test
         - volume-allocation and partial-fill test
       documents:
         - docs/verification/plan.md

@@ -389,6 +389,8 @@ state version 及 callback。因內容完全相同，其彼此相對位置不影
 
 ## 10. MarketState flow
 
+### 10.1 Reducer
+
 ```text
 accepted event
 -> validate reducer preconditions
@@ -410,12 +412,27 @@ transition。
 optional field 的 absent／clear／unknown／unchanged 語意由 normalizer 明確表達，不能
 在 reducer 中依值猜測。
 
+### 10.2 TradingContext projection
+
+每次完整 state transition 後，平台以 materialized phase、目前 event、更新後
+MarketState 及 market-specific rules 建立 TradingContext：
+
+```text
+session phase + event annotations + MarketState
+-> TradingEligibilityPolicy
+-> new-order-entry state + matching state + restriction reasons
+```
+
+TradingContext 是 derived execution context，不寫入 canonical event，也不反向修改
+MarketState。逐 order/event 的 fill eligibility 仍由 simulation 以 context 與 fill
+model 共同判定。
+
 ## 11. Strategy 與 simulation feedback flow
 
 ### 11.1 Strategy output
 
 ```text
-event identity + state version
+event identity + state version + TradingContext
 -> strategy callback
 -> indicator records
 -> order intents
@@ -429,7 +446,8 @@ event identity + state version
 ```text
 intent
 -> simulated order
--> subsequent eligible event
+-> subsequent event + TradingContext
+-> eligibility decision
 -> fill decision
 -> slippage／quantity allocation
 -> fee／tax／multiplier

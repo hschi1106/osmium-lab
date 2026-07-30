@@ -126,12 +126,19 @@ universe declaration 必須：
 - 目前 replay time
 - 該 event 所屬商品
 - 該 event 完成原子更新後的唯讀 MarketState
+- 由目前 phase、event annotations 與版本化 market rules 產生的唯讀
+  `TradingContext`
 
 callback sequence 必須與 deterministic replay order 相同。相同 `match_time` 的
 事件仍逐一 callback；策略只能看到 tie-break 中目前及較早的事件。
 
 平台可以提供 universe 內其他商品「截至目前已處理事件」的唯讀狀態，但不得提供
 任何商品的下一事件、未來狀態或日後才知道的統計。
+
+`TradingContext` 必須分開表達新 order entry 與 matching availability。策略可以用
+它避免明知無效的 intent，但不得自行解碼 raw flags 取代平台規則，也不得把 context
+視為 fill 保證。具體契約見
+[ADR-0004](../architecture/decisions/0004-trading-context-and-eligibility.md)。
 
 ### STRAT-01.5 唯讀市場邊界
 
@@ -199,6 +206,10 @@ indicator 不得被回寫為市場事實，也不得修改後續 MarketState red
 
 不合法 quantity、price、unsupported order type 或 universe 外商品必須被明確
 拒絕並回報策略，不得轉成另一種意圖或靜默捨棄。
+
+即使 phase baseline 允許新 intent，market-specific `TradingContext` 仍可依
+pre-open trial、pre-close trial、closing result、indicative matching 或 unknown
+condition 將該 intent restricted、blocked 或 rejected。
 
 order intent 不得修改產生它的 market event。其最早 fill eligibility 由
 `SIM-01` 決定，且不得使用產生 intent 的同一事件回填成交。
@@ -275,12 +286,16 @@ panic handling 的技術方式由 design 決定；需求是失敗可見且不污
 - explicit universe 建立 execution plan 的 integration test。
 - universe 外資料不開啟、universe 外 intent 被拒絕的測試。
 - callback 收到目前 event 及更新後 state version 的測試。
+- callback 收到與目前 event／state version 對應的唯讀 TradingContext 測試。
+- phase baseline allowed、但 market condition restricted／closed 時 intent 被明確
+  reject 的測試。
 - type／API boundary 不允許修改 event、MarketState 或 replay clock 的 compile-fail
   或等價測試。
 - strategy 看不到下一事件及未完成統計的測試。
 - indicator 與 order intent 可追溯至 event 的測試。
 - order／fill feedback 可追溯且不提前送達的測試。
 - 相同輸入多次執行產生相同 indicator、intent 與 feedback sequence 的測試。
+- strategy 不自行解碼 raw flags 改寫平台 eligibility 的 API boundary 測試。
 - strategy error／panic 不產生成功結果的測試。
 
 [M1：TWSE 回播核心](../increments/M1-twse-replay.md)以不送單的 ExampleStrategy

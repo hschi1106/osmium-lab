@@ -29,6 +29,7 @@ newtype、enum、array、small-vector 或其他容器，只要 public semantics�
 - [M1 TWSE 增量](../increments/M1-twse-replay.md)
 - [ADR-0001：match-time ordering](../architecture/decisions/0001-match-time-ordering.md)
 - [ADR-0002：snapshot MarketState](../architecture/decisions/0002-snapshot-market-state.md)
+- [ADR-0004：TradingContext 與 eligibility](../architecture/decisions/0004-trading-context-and-eligibility.md)
 - [Teralion interface](../interfaces/teralion.md)
 - [TWSE interface](../interfaces/twse.md)
 
@@ -842,6 +843,9 @@ strategy 收到 immutable event／MarketState view。public type：
 - typed flags view 是 pure read-only projection。
 - derived best bid／ask／spread 不可反向修改 book。
 
+`TradingContext` 由 session 與 market rules 在 event 更新後建立，不屬於 market
+type、DomainEvent 或 canonical event bytes。
+
 ### 13.4 Simulation
 
 simulation 必須檢查：
@@ -850,6 +854,7 @@ simulation 必須檢查：
 - session phase。
 - source event 是否提供合法 fill evidence。
 - TWSE trial、緩跌／緩漲及其他 annotations 的 versioned fill rule。
+- `TradingContext.matching` 與 new-order-entry restriction。
 
 market type 只表達 observation，不自行成交。
 

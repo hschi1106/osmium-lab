@@ -2,7 +2,7 @@
 
 - 狀態：Accepted
 - 決策日期：2026-07-30
-- 最後修訂：2026-07-30（補充 TAIFEX 時段、WarmUp 下單及移除 standalone status event）
+- 最後修訂：2026-07-30（補充 TAIFEX 時段、WarmUp 下單及 TradingContext boundary）
 - 適用契約：`SessionWindowPolicy`、`StrategySessionPolicy`
 - policy versions：`SessionWindowPolicy = 1`、`StrategySessionPolicy = 1`
 - 主要需求：`DATA-01`、`DATA-05`、`REPLAY-04`、`REPLAY-05`、`STRAT-01`、
@@ -290,13 +290,17 @@ partition。
 
 每個 materialized segment 具有三個由平台計算的 phase：
 
-| Phase | `match_time` 範圍 | MarketState update | Strategy callback | 新 order intent | 既有 order fill |
+| Phase | `match_time` 範圍 | MarketState update | Strategy callback | Phase-level 新 order intent | 既有 order fill |
 | --- | --- | --- | --- | --- | --- |
 | `WarmUp` | `[O - 5m, O)` | 是 | 是 | 允許 | 依 fill model 判定 |
 | `Active` | `[O, C]` | 是 | 是 | 允許 | 依 fill model 判定 |
 | `CoolDown` | `(C, C + 5m)` | 是 | 是 | 不允許 | 不允許 |
 
 exactly at close `C` 的 event 屬於 `Active`。沒有 event 時不產生虛構 callback。
+表中的新 order intent 是 phase baseline，不保證 market-specific condition 接受該
+intent，也不保證目前 event 可以 fill。統一判定由
+[ADR-0004](0004-trading-context-and-eligibility.md)的 `TradingContext` 與
+`TradingEligibilityPolicy` 負責。
 
 每次 callback 的 read-only context 至少能識別：
 
@@ -304,7 +308,8 @@ exactly at close `C` 的 event 屬於 `Active`。沒有 event 時不產生虛構
 - instrument
 - session kind／segment identity
 - current phase
-- 是否允許產生新 order intent
+- current `TradingContext`
+- 是否允許產生特定新 order intent
 
 WarmUp 用於以已發生資料建立 strategy-local indicator 與 MarketState，也允許
 strategy 提前送出 limit order intent，模擬開盤前掛單。intent 是否 accepted、何時
@@ -314,8 +319,13 @@ strategy 提前送出 limit order intent，模擬開盤前掛單。intent 是否
 CoolDown 用於接收來源確實提供的 final observations、處理既有 order feedback 及
 完成 session 摘要，不允許新的 order intent 或 fill。
 
+`CoolDown` 只是 execution phase，不是 event kind 或 market state。平台不因進入
+`CoolDown`、clock 穿越 `C` 或 replay window 尚未結束而合成 event／TradingContext／
+strategy callback；只有來源確實存在且具有該範圍 `match_time` 的 observation 才會
+繼續原本的 event pipeline。
+
 第一版若需要處理 session close 時尚未完成的 order，其 cancel／carry policy 由
-simulation design 明確定義；CoolDown event 不得成為 fill-eligible event，strategy
+simulation design 明確定義；`CoolDown` phase 不提供 fill eligibility，strategy
 也不能以擴張自己的 active window 繞過。
 
 ### 6.3 Multi-market strategy
@@ -323,9 +333,10 @@ simulation design 明確定義；CoolDown event 不得成為 fill-eligible event
 多 market strategy 的 planner 為每個 instrument 建立獨立 SessionPlan，再取所有
 selected segments 的 event union 依 `match_time` merge。
 
-Strategy context 可以讀取 universe 內各商品截至目前的 session phase 與
-MarketState，但不能因某商品為 `Active` 就假設其他商品也已開盤。跨市場同時可交易
-條件由 strategy 使用平台提供的 phase context 判斷，不得自行複製 exchange hours。
+Strategy context 可以讀取 universe 內各商品截至目前的 session phase、MarketState
+與 TradingContext，但不能因某商品為 `Active` 就假設其他商品也可撮合。跨市場
+order-entry／matching 條件由平台按商品判定，strategy 不得自行複製 exchange hours
+或解碼 raw flags。
 
 ## 7. Plan、manifest 與 cache identity
 
@@ -440,9 +451,9 @@ WarmUp／CoolDown。
 - multi-segment window overlap／merge test。
 - 每頁 cursor request 維持相同 query identity 的 integration test。
 - `received_at` 在 download window、`match_time` 在 replay window 的分類測試。
-- WarmUp／Active／CoolDown boundary callback tests。
+- WarmUp／Active／CoolDown phase boundary tests，且 boundary 不合成 callback。
 - WarmUp limit order intent acceptance 及 fill-model eligibility tests。
-- CoolDown 新 order intent／fill rejection tests。
+- `CoolDown` phase 新 order intent／fill rejection tests。
 - strategy unknown session kind preflight failure test。
 - multi-market 不同 phase 的 deterministic replay test。
 - session／calendar version 改變造成 cache invalidation 的測試。
