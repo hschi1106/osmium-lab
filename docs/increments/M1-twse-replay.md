@@ -177,6 +177,7 @@ ordering key 必須只由事件本身可用且跨執行穩定的資料組成，�
 market
 -> symbol
 -> source format
+-> source phase rank
 -> event kind rank
 -> 可用的來源計數
 -> canonical event fingerprint

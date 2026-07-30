@@ -64,6 +64,7 @@ document_sets:
       - docs/architecture/decisions/0002-snapshot-market-state.md
       - docs/architecture/decisions/0003-session-windows-and-strategy-activation.md
       - docs/architecture/decisions/0004-trading-context-and-eligibility.md
+      - docs/architecture/decisions/0005-twse-intermediate-final-ordering.md
 
 architecture_trace:
   - path: docs/architecture/overview.md
@@ -140,6 +141,15 @@ architecture_trace:
       - OPS-02
       - NFR-01
       - NFR-03
+  - path: docs/architecture/decisions/0005-twse-intermediate-final-ordering.md
+    requirements:
+      - REPLAY-01
+      - REPLAY-02
+      - REPLAY-03
+      - REPLAY-04
+      - REPLAY-06
+      - NFR-01
+      - NFR-03
 
 interface_trace:
   - path: docs/interfaces/teralion.md
@@ -157,7 +167,7 @@ interface_trace:
   - path: docs/interfaces/twse.md
     status: complete
     mapping_name: TeralionTwseQuote
-    mapping_version: 1
+    mapping_version: 2
     evidence_scope: TWSE 2330 2026-07-27 local raw acquisition
     requirements:
       - DATA-01
@@ -165,6 +175,7 @@ interface_trace:
       - DATA-03
       - DATA-05
       - REPLAY-01
+      - REPLAY-02
       - REPLAY-03
       - REPLAY-06
       - NFR-01
@@ -189,10 +200,22 @@ design_trace:
       - OPS-02
       - NFR-01
       - NFR-03
-    compatibility_gates:
-      - id: TWSE_INTERMEDIATE_ORDERING
-        status: open
-        scope: STOCK_REALTIME intermediate TradeBatch 與 final QuoteSnapshot 的同 match_time ordering
+  - path: docs/design/market-state.md
+    status: complete
+    design_versions:
+      market_state: 1
+      state_reducer: 1
+      canonical_market_state: 1
+      canonical_final_state_set: 1
+    requirements:
+      - REPLAY-01
+      - REPLAY-03
+      - REPLAY-04
+      - STRAT-01
+      - SIM-01
+      - OPS-02
+      - NFR-01
+      - NFR-03
 
 requirements:
   - id: DATA-01
@@ -385,6 +408,7 @@ requirements:
         role: extension
         scope: 加入 TPEx、權證與選擇權 mappings
     planned_design_documents:
+      - docs/architecture/decisions/0005-twse-intermediate-final-ordering.md
       - docs/design/market-types.md
       - docs/design/replay-engine.md
       - docs/interfaces/twse.md
@@ -426,6 +450,7 @@ requirements:
         scope: 驗證 TWSE 與 TAIFEX 多商品 deterministic merge
     planned_design_documents:
       - docs/architecture/decisions/0001-match-time-ordering.md
+      - docs/architecture/decisions/0005-twse-intermediate-final-ordering.md
       - docs/design/market-types.md
       - docs/design/replay-engine.md
     planned_verification:
@@ -463,6 +488,7 @@ requirements:
     planned_design_documents:
       - docs/architecture/decisions/0002-snapshot-market-state.md
       - docs/architecture/decisions/0004-trading-context-and-eligibility.md
+      - docs/architecture/decisions/0005-twse-intermediate-final-ordering.md
       - docs/design/market-types.md
       - docs/design/market-state.md
     planned_verification:
@@ -505,6 +531,7 @@ requirements:
     planned_design_documents:
       - docs/architecture/decisions/0003-session-windows-and-strategy-activation.md
       - docs/architecture/decisions/0004-trading-context-and-eligibility.md
+      - docs/architecture/decisions/0005-twse-intermediate-final-ordering.md
       - docs/design/replay-engine.md
       - docs/design/market-state.md
       - docs/design/strategy-api.md
