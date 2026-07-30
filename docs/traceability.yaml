@@ -40,6 +40,13 @@ document_sets:
       - docs/interfaces/twse.md
       - docs/interfaces/taifex.md
       - docs/interfaces/tpex.md
+  design:
+    - docs/design/market-types.md
+    - docs/design/data-sync.md
+    - docs/design/replay-engine.md
+    - docs/design/market-state.md
+    - docs/design/strategy-api.md
+    - docs/design/execution-sim.md
   increments:
     M1: docs/increments/M1-twse-replay.md
     M2: docs/increments/M2-offline-backtest.md
@@ -150,6 +157,30 @@ interface_trace:
       - REPLAY-06
       - NFR-01
       - NFR-03
+
+design_trace:
+  - path: docs/design/market-types.md
+    status: complete
+    design_versions:
+      - MarketTypesV1
+      - EventSchemaV1
+      - CanonicalEventV1
+    requirements:
+      - DATA-04
+      - DATA-05
+      - REPLAY-01
+      - REPLAY-02
+      - REPLAY-03
+      - REPLAY-06
+      - SIM-01
+      - SIM-02
+      - OPS-02
+      - NFR-01
+      - NFR-03
+    compatibility_gates:
+      - id: TWSE_INTERMEDIATE_ORDERING
+        status: open
+        scope: STOCK_REALTIME intermediate TradeBatch 與 final QuoteSnapshot 的同 match_time ordering
 
 requirements:
   - id: DATA-01
