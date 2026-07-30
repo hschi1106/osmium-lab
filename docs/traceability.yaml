@@ -48,6 +48,7 @@ document_sets:
     decisions:
       - docs/architecture/decisions/0001-match-time-ordering.md
       - docs/architecture/decisions/0002-snapshot-market-state.md
+      - docs/architecture/decisions/0003-session-windows-and-strategy-activation.md
 
 architecture_trace:
   - path: docs/architecture/overview.md
@@ -106,6 +107,15 @@ architecture_trace:
       - REPLAY-04
       - STRAT-01
       - SIM-01
+  - path: docs/architecture/decisions/0003-session-windows-and-strategy-activation.md
+    requirements:
+      - DATA-01
+      - DATA-05
+      - REPLAY-04
+      - REPLAY-05
+      - STRAT-01
+      - SIM-01
+      - NFR-01
 
 requirements:
   - id: DATA-01
@@ -123,6 +133,7 @@ requirements:
         role: extension
         scope: 擴充 TPEx、權證與選擇權
     planned_design_documents:
+      - docs/architecture/decisions/0003-session-windows-and-strategy-activation.md
       - docs/interfaces/teralion.md
       - docs/design/data-sync.md
       - docs/operations/cli.md
@@ -258,6 +269,7 @@ requirements:
         role: extension
         scope: 擴充權證及選擇權的到期日、履約價與買賣權別
     planned_design_documents:
+      - docs/architecture/decisions/0003-session-windows-and-strategy-activation.md
       - docs/interfaces/teralion.md
       - docs/interfaces/twse.md
       - docs/interfaces/taifex.md
@@ -413,6 +425,7 @@ requirements:
         role: extension
         scope: 驗證多商品 callback 順序
     planned_design_documents:
+      - docs/architecture/decisions/0003-session-windows-and-strategy-activation.md
       - docs/design/replay-engine.md
       - docs/design/market-state.md
       - docs/design/strategy-api.md
@@ -452,6 +465,7 @@ requirements:
         role: initial_multi_symbol_delivery
         scope: 驗證 2330 與 futures streaming merge
     planned_design_documents:
+      - docs/architecture/decisions/0003-session-windows-and-strategy-activation.md
       - docs/architecture/data-flow.md
       - docs/design/replay-engine.md
       - docs/design/data-sync.md
@@ -529,6 +543,7 @@ requirements:
         role: extension
         scope: 多商品狀態 view
     planned_design_documents:
+      - docs/architecture/decisions/0003-session-windows-and-strategy-activation.md
       - docs/design/strategy-api.md
       - docs/design/replay-engine.md
       - docs/design/market-state.md
@@ -565,6 +580,7 @@ requirements:
         role: extension
         scope: TAIFEX TradeBatch／BookSnapshot 與 multiplier
     planned_design_documents:
+      - docs/architecture/decisions/0003-session-windows-and-strategy-activation.md
       - docs/design/execution-sim.md
       - docs/design/strategy-api.md
       - docs/design/market-state.md
