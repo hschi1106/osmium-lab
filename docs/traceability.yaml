@@ -23,10 +23,9 @@ status_meaning:
 milestone_status:
   M1:
     implementation: complete
-    formal_acceptance: not_run
-    pending:
-      - M1-T053 network-disabled acceptance run
-      - acceptance-report.yaml
+    formal_acceptance: complete
+    completion_quality: strict
+    evidence: docs/verification/evidence/m1/formal-2026-07-31/acceptance-report.yaml
   M2:
     reference_scope: TWSE 2330 2026-07-27 regular
     implementation: complete
@@ -77,6 +76,7 @@ document_sets:
     acceptance: docs/verification/acceptance.md
     m2_acceptance: docs/verification/m2-acceptance.md
     m2_local_evidence: docs/verification/evidence/m2/local-2026-07-31.yaml
+    m1_formal_evidence: docs/verification/evidence/m1/formal-2026-07-31/acceptance-report.yaml
     fixture_provenance: docs/verification/fixture-provenance.md
     performance: docs/verification/performance.md
   architecture:
@@ -375,7 +375,7 @@ verification_trace:
     status: complete
     acceptance_contract_version: 1
     scope: M1
-    current_overall_status: not_run
+    current_overall_status: complete
     requirements:
       - REPLAY-01
       - REPLAY-02
@@ -395,6 +395,22 @@ verification_trace:
       status: closed
     requirements:
       - REPLAY-01
+      - NFR-03
+  - path: docs/verification/evidence/m1/formal-2026-07-31/acceptance-report.yaml
+    status: complete
+    acceptance_contract_version: 1
+    verification_plan_version: 2
+    scope: M1
+    completion_quality: strict
+    requirements:
+      - REPLAY-01
+      - REPLAY-02
+      - REPLAY-03
+      - REPLAY-04
+      - REPLAY-06
+      - STRAT-01
+      - OPS-02
+      - NFR-01
       - NFR-03
 
 requirements:

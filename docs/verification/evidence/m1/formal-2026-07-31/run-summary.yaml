@@ -1,0 +1,35 @@
+run_summary_version: 1
+outcome: passed
+
+versions:
+  mapping: 3
+  market_types: 1
+  event_schema: 1
+  canonical_event: 1
+  normalized_event_set: 1
+  ordering_rule: 2
+  replay_engine: 1
+  replay_event_stream: 1
+  market_state: 1
+  state_reducer: 1
+  final_state_set: 1
+  strategy_api: 1
+  strategy_output: 1
+
+counts:
+  input_records: 73796
+  outside_replay_window: 1
+  known_skipped: 0
+  normalized_events: 73795
+  quote_snapshots: 73792
+  trade_batches: 3
+  strategy_callbacks: 73795
+  strategy_output_records: 147590
+  warnings: 0
+
+checksums:
+  fixture_set_sha256: 5292ef24885c95c9402988423679e6b6381348cd09bb774d8489f08e9aa11ed1
+  normalized_events_blake3: 7e37ff0ad4a8b15b4c569b295c0f03f26bb6c0f32db1493edac71620e85a28df
+  event_stream_blake3: 0cecf1f6c3c6a8422955183fe383e787612efee3a4c4a7961d7faa6ee9e1de56
+  final_state_blake3: 02f256fc1007ce41e56200a4f82fc0f0cb504ee29afdf7262307a232862e7ea0
+  strategy_output_blake3: 763a5cb305a7ebbe86ea463e4091e90346421273e61b2f40f0c8ba4247690917

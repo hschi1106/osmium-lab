@@ -1,0 +1,90 @@
+acceptance_contract_version: 1
+verification_plan_version: 2
+status: Passed
+git_commit: 0a65094913eb1f8ea12a7ed32554075afbe7fb7b
+fixture_identity: teralion/twse/2330/2026-07-27/regular
+fixture_checksum:
+  algorithm: sha256
+  value: 5292ef24885c95c9402988423679e6b6381348cd09bb774d8489f08e9aa11ed1
+strategy_identity:
+  id: example.twse-post-state-observer
+  version: "1"
+design_versions:
+  mapping: 3
+  market_types: 1
+  event_schema: 1
+  canonical_event: 1
+  normalized_event_set: 1
+  ordering_rule: 2
+  replay_engine: 1
+  replay_event_stream: 1
+  market_state: 1
+  state_reducer: 1
+  final_state_set: 1
+  strategy_api: 1
+  strategy_output: 1
+rust_toolchain: "rustc 1.97.1 (8bab26f4f 2026-07-14)"
+host: "Darwin arm64"
+build_profiles:
+  debug: Passed
+  release: Passed
+network_policy:
+  status: disabled
+  runner: sandbox-exec
+  policy: deny network
+credential_policy:
+  TERALION_API_KEY: absent
+tests:
+  M1-T001: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T002: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T003: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T004: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T005: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T006: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T007: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T008: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T009: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T010: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T011: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T012: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T013: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T014: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T015: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T016: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T017: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T020: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T021: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T022: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T023: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T024: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T025: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T030: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T031: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T032: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T033: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T034: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T035: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T036: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T040: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T041: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T042: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T043: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T044: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T045: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T046: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T047: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T048: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T049: { status: Passed, evidence: test-results/workspace-debug.log + test-results/workspace-release.log }
+  M1-T050: { status: Passed, evidence: run-summary.yaml }
+  M1-T051: { status: Passed, evidence: test-results/artifact-comparison.log }
+  M1-T052: { status: Passed, evidence: test-results/network-disabled-replay.log }
+  M1-T053: { status: Passed, evidence: test-results/network-disabled-replay.log }
+  M1-T054: { status: Passed, evidence: run-summary.yaml + warnings.yaml }
+artifact_checksums:
+  fixture_set_sha256: 5292ef24885c95c9402988423679e6b6381348cd09bb774d8489f08e9aa11ed1
+  normalized_events_blake3: 7e37ff0ad4a8b15b4c569b295c0f03f26bb6c0f32db1493edac71620e85a28df
+  event_stream_blake3: 0cecf1f6c3c6a8422955183fe383e787612efee3a4c4a7961d7faa6ee9e1de56
+  final_state_blake3: 02f256fc1007ce41e56200a4f82fc0f0cb504ee29afdf7262307a232862e7ea0
+  strategy_output_blake3: 763a5cb305a7ebbe86ea463e4091e90346421273e61b2f40f0c8ba4247690917
+approver: tools/run_m1_acceptance.sh
+approved_at: "2026-07-31T03:46:58Z"
