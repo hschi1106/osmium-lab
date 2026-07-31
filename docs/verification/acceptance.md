@@ -47,7 +47,7 @@ goldens、debug／release workspace tests 與 no-key local test 已完成；但
 | `GATE-FIXTURE-02` fixture metadata 與 checksum | `Passed` | regular fixture metadata、source manifest 與 exact SHA-256 |
 | `GATE-SECRET-01` secret scan | `Passed` | field allowlist 與 forbidden-pattern scan，0 findings |
 | `GATE-SPEC-01` M1 design versions fixed | `Passed` | market-types 1、market-state 1、replay-engine 1、strategy-api 1 |
-| `GATE-BUILD-01` offline Rust workspace build | `Passed` | 2026-07-31 debug／release 各 55 tests／27 suites，workspace Clippy 無 warning |
+| `GATE-BUILD-01` offline Rust workspace build | `Passed` | 2026-07-31 debug／release 各 58 tests／31 suites，workspace Clippy 無 warning |
 
 `GATE-SPEC-01` 只代表 paper contract 已固定，不代表 implementation 符合。
 
@@ -231,9 +231,10 @@ approved fixture implementation 已在
 | final state（BLAKE3-256） | `02f256fc1007ce41e56200a4f82fc0f0cb504ee29afdf7262307a232862e7ea0` |
 | strategy output（BLAKE3-256） | `763a5cb305a7ebbe86ea463e4091e90346421273e61b2f40f0c8ba4247690917` |
 
-大型 `normalized-events.bin` 與 `strategy-output.bin` 由 `m1-runner` 在 acceptance
-run 期間從 committed fixture 產生，不提交為第二份 source data；測試直接比較
-其完整 bytes，並以表列 checksum 固定 expected result。
+大型 `normalized-events.bin` 與 `strategy-output.bin` 由 `osmium replay` 在
+acceptance run 期間從 committed fixture 產生，不提交為第二份 source data；
+測試直接比較其完整 bytes，並以表列 checksum 固定 expected result。執行方式與
+完整輸出集合見 [CLI 操作契約](../operations/cli.md)。
 
 ## 7. Failure policy
 
@@ -266,12 +267,14 @@ run 期間從 committed fixture 產生，不提交為第二份 source data；測
 
 - fixture approval、implementation 與 compact golden gates 已完成。
 - `cargo fmt --check`、workspace Clippy、debug 及 release workspace tests 已
-  成功；debug／release 各為 55 tests／27 suites。
+  成功；debug／release 各為 58 tests／31 suites。
 - vertical slice 已驗證 73,795 events、73,795 callbacks、147,590 strategy
   output records、0 warnings；同一 input 共 10 runs 及 3 個固定 shuffle seeds
   的 normalized event bytes、event／state checksums 與 strategy output bytes
   完全相同。
 - 移除 `TERALION_API_KEY` 後的 focused local run 已成功。
+- `osmium replay` 已能以 staging + atomic rename 產生完整 replay artifact set，
+  並拒絕覆寫既有輸出目錄。
 - `M1-T053` 尚未在 network-disabled CI/container 執行；本機執行環境有網路
   能力，不能替代該 evidence。
 - M1-AC-01 至 M1-AC-10 的正式 status 維持 `NotRun`；M1 overall 為

@@ -878,13 +878,17 @@ requirements:
         - docs/verification/plan.md
         - docs/verification/acceptance.md
     supporting_documents: []
-    verification_evidence: []
-    implementation_paths: []
+    verification_evidence:
+      - docs/verification/evidence/m1/cli-local-2026-07-31.yaml
+    implementation_paths:
+      - crates/osmium-cli/src/lib.rs
+      - crates/osmium-cli/src/main.rs
+      - crates/m1-runner/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
-      implementation: not_started
-      verification: not_started
+      implementation: partial
+      verification: partial
 
   - id: OPS-02
     title: 執行結果
@@ -919,12 +923,14 @@ requirements:
       - docs/increments/M1-twse-replay.md
     verification_evidence:
       - docs/verification/evidence/m1/local-2026-07-31.yaml
+      - docs/verification/evidence/m1/cli-local-2026-07-31.yaml
       - fixtures/teralion/twse/2330/2026-07-27/golden/run-summary.yaml
     implementation_paths:
       - crates/replay-engine/src/checksum.rs
       - crates/market-state/src/canonical.rs
       - crates/strategy-api/src/output.rs
       - crates/m1-runner/src/lib.rs
+      - crates/osmium-cli/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
