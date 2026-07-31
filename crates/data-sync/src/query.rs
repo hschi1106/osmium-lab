@@ -58,6 +58,10 @@ impl ArchiveTimestamp {
 #[repr(u8)]
 pub enum ArchiveKind {
     Quote = 1,
+    Book = 2,
+    Close = 3,
+    Stats = 4,
+    Trade = 5,
 }
 
 impl ArchiveKind {
@@ -65,6 +69,10 @@ impl ArchiveKind {
     pub const fn slug(self) -> &'static str {
         match self {
             Self::Quote => "quote",
+            Self::Book => "book",
+            Self::Close => "close",
+            Self::Stats => "stats",
+            Self::Trade => "trade",
         }
     }
 }

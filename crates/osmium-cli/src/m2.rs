@@ -43,6 +43,7 @@ pub enum M2CommandKind {
     Plan,
     Sync,
     Verify,
+    CachePrepare,
     Replay,
     Backtest,
     Run,
@@ -72,6 +73,7 @@ pub fn execute(command: &M2Command) -> Result<String, M2CommandError> {
                 execute_verify(&command.config)
             }
         }
+        M2CommandKind::CachePrepare => prepare_cache(&command.config),
         M2CommandKind::Replay => {
             if is_m3_config(&command.config)? {
                 execute_m3_replay(&command.config)
@@ -181,11 +183,26 @@ fn m3_queries(
         .map(|window| window.replay_end_exclusive())
         .max()
         .ok_or_else(|| M2CommandError::Other("M3 session plan has no windows".to_owned()))?;
+    let kinds = match key.instrument().market() {
+        MarketId::Twse => [ArchiveKind::Quote].as_slice(),
+        MarketId::Taifex => [
+            ArchiveKind::Book,
+            ArchiveKind::Close,
+            ArchiveKind::Stats,
+            ArchiveKind::Trade,
+        ]
+        .as_slice(),
+        market => {
+            return Err(M2CommandError::Other(format!(
+                "M3 does not support market {market:?}"
+            )));
+        }
+    };
     let ticks = TeralionQuery::ticks(
         key.instrument().clone(),
         ArchiveTimestamp::parse(replay_start.to_iso8601(480))?,
         ArchiveTimestamp::parse(replay_end_exclusive.to_iso8601(480))?,
-        [ArchiveKind::Quote],
+        kinds.iter().copied(),
         5_000,
     )?;
     let daily = TeralionQuery::daily_instrument(key.instrument().clone(), key.trading_date());
