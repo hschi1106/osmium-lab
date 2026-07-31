@@ -456,7 +456,8 @@ trading-date 規則必須：
 - TAIFEX 日盤／夜盤 trading-date fixture tests。
 
 M3 必須提供 TAIFEX futures 的 trading date 與 multiplier provenance 證據；M4
-再補 options／warrants 的履約價及買賣權別。
+先固定 TPEx regular-equity 的 market metadata；M5 再補 options／warrants 的
+underlying、履約價、到期日及買賣權別。
 
 ## 9. 跨需求不變條件
 

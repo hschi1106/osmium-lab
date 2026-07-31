@@ -576,7 +576,8 @@ action；不得包含 credential、full cursor 或 secret-bearing URL。
 | --- | --- |
 | M2 | Teralion TWSE 2330 單日 cursor sync、verified immutable source、rebuildable cache、offline reuse |
 | M3 | TAIFEX multi-segment、跨日 trading date、multi-instrument cache streams |
-| M4 | TPEx、權證、選擇權 source/mapping extensions |
+| M4 | TPEx regular-equity source/mapping extension |
+| M5 | warrant／option source/mapping extensions |
 
 M2 不因未來 market 需求建立通用 data lake、分散式 scheduler 或任意 plugin source。
 新增市場應沿用 partition、revision、state、publish 與 cache boundary，再增加

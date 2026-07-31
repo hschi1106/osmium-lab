@@ -1059,7 +1059,12 @@ order 與 worker count 必須得到相同 BLAKE3-256。
 
 ### M4
 
-- TPEx、warrant、option mappings 與 market-specific composition/profile versions。
+- TPEx mapping 與 market-specific composition/profile version。
+- 維持同一 plan、stream、merge、clock 與 transaction contract。
+
+### M5
+
+- warrant／option mappings 與 contract-specific composition/profile versions。
 - 維持同一 plan、stream、merge、clock 與 transaction contract。
 
 ## 17. 相依文件邊界

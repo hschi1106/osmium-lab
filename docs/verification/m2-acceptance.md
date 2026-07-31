@@ -16,8 +16,8 @@ status                      = Passed
 completion_quality          = Strict
 ```
 
-本結果只涵蓋 M2 的 TWSE 單商品範圍，不代表 M3 的 TAIFEX、多商品 merge 或 M4
-市場擴充已完成。
+本結果只涵蓋 M2 的 TWSE 單商品範圍，不代表 M3 的 TAIFEX、多商品 merge、M4 TPEx
+或 M5 warrant／option 市場擴充已完成。
 
 ## 2. Published source
 

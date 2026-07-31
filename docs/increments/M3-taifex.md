@@ -179,7 +179,7 @@ multi-stream property tests，但不得把猜測 payload 當作 TAIFEX format ev
 - multi-currency 或 FX conversion；reference account 仍為 TWD。
 - stop、IOC、FOK、cancel／replace 或複雜 order lifecycle。
 - Teralion `close`／`stats` 作為 domain event 或 MarketState input。
-- TPEx、權證與其他 M4 markets。
+- TPEx（M4）、權證與選擇權（M5）。
 - parallel replay；M3 只要求 bounded deterministic merge，不要求 concurrency。
 
 來源保存可以保留 `close`／`stats` raw payload，但 normalizer 必須明確分類為

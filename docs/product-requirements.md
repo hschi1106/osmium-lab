@@ -448,9 +448,18 @@ M1 fixture 必須涵蓋 `STOCK_SNAPSHOT` 與 `STOCK_REALTIME`。non-trial final 
 - 2330 與 futures 多商品回播
 - 缺少商品乘數時的明確設定與錯誤
 
-### M4 擴充市場
+### M4 TPEx
 
-依序加入 TPEx、權證與選擇權。每個市場先以實際 Teralion fixture 確認資料格式，再擴充事件 mapping 與測試。
+先加入一個以實際 Teralion fixture 驗證的 TPEx regular-equity vertical slice，完成
+source、mapping、session、state、cache、offline replay 與 acceptance evidence。TPEx
+零股及其他尚未由 fixture 固定的 format 不得在 M4 中猜測支援。
+
+### M5 市場擴充
+
+在 M4 TPEx formal acceptance 完成後，分別加入 warrants 與 options。每個 instrument
+kind 必須先以實際 Teralion fixture 確認 underlying、expiry、strike、call/put、
+multiplier、session 與 wire formats，再擴充事件 mapping、accounting 與測試；M5-W
+與 M5-O 可獨立驗收，未完成者不得升格為 overall complete。
 
 每個里程碑必須拆成小型、可獨立驗證的 commit。
 
