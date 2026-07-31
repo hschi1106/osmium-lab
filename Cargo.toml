@@ -4,6 +4,7 @@ members = [
     "crates/market-types",
     "crates/normalizer/twse",
     "crates/replay-engine",
+    "crates/strategy-api",
 ]
 resolver = "2"
 
