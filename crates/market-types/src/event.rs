@@ -3,14 +3,15 @@ use std::{error::Error, fmt};
 use crate::{
     BookLevel, BookSide, BookSideKind, CanonicalEncodingError, CanonicalValue,
     CompleteBookSnapshot, Decimal, InstrumentId, MarketAnnotations, MarketId, MatchTime,
-    Observation, Price, Quantity, QuantityUnit, SourceFormatId, Symbol, TradeError, TradeOrder,
-    TradePrint, TradePrintKind, TradingDate, TwseQuoteAnnotations, UnknownValue, Volume,
-    append_bytes, append_length, append_optional_u64, trade::validate_trade_units,
+    Observation, Price, Quantity, QuantityUnit, SourceFormatId, Symbol, TpexQuoteAnnotations,
+    TradeError, TradeOrder, TradePrint, TradePrintKind, TradingDate, TwseQuoteAnnotations,
+    UnknownValue, Volume, append_bytes, append_length, append_optional_u64,
+    trade::validate_trade_units,
 };
 
-pub const MARKET_TYPES_VERSION: u16 = 2;
-pub const EVENT_SCHEMA_VERSION: u16 = 2;
-pub const CANONICAL_EVENT_VERSION: u16 = 2;
+pub const MARKET_TYPES_VERSION: u16 = 3;
+pub const EVENT_SCHEMA_VERSION: u16 = 3;
+pub const CANONICAL_EVENT_VERSION: u16 = 3;
 const CANONICAL_MAGIC: &[u8; 4] = b"OSME";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -293,7 +294,7 @@ impl DomainEvent {
         &self.payload
     }
 
-    /// Encodes the version-2 canonical event frame.
+    /// Encodes the version-3 canonical event frame.
     pub fn to_canonical_bytes(&self) -> Result<Vec<u8>, CanonicalEncodingError> {
         let mut bytes = Vec::with_capacity(256);
         bytes.extend_from_slice(CANONICAL_MAGIC);
@@ -310,7 +311,7 @@ impl DomainEvent {
         Ok(bytes)
     }
 
-    /// Decodes and validates one complete version-2 canonical event frame.
+    /// Decodes and validates one complete version-3 canonical event frame.
     pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, CanonicalDecodingError> {
         let mut parser = CanonicalParser::new(bytes);
         if parser.take(4)? != CANONICAL_MAGIC
@@ -565,6 +566,10 @@ impl<'a> CanonicalParser<'a> {
         match self.u8()? {
             0 => Ok(MarketAnnotations::None),
             1 => Ok(MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(
+                self.u8()?,
+                self.u8()?,
+            ))),
+            2 => Ok(MarketAnnotations::TpexQuote(TpexQuoteAnnotations::new(
                 self.u8()?,
                 self.u8()?,
             ))),

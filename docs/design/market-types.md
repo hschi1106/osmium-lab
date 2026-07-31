@@ -76,9 +76,9 @@ domain type 只表達來源 interface 已證實的內容：
 每個 event stream、replay cache 與 run manifest 必須能識別：
 
 ```text
-market_types_version       = 2
-event_schema_version       = 2
-canonical_event_version    = 2
+market_types_version       = 3
+event_schema_version       = 3
+canonical_event_version    = 3
 ordering_rule_version      = 3
 normalizer_mapping_name    = market-interface-specific name
 normalizer_mapping_version = market-interface-specific integer
@@ -686,7 +686,9 @@ mapping version 2 只接受 fixture 已證實的一筆 intermediate + 一筆 fin
 intermediate、複製舊 book 或 API input order 掩蓋問題。
 
 phase rank 可由既有 canonical event fields 純函式重建，所以
-`event_schema_version` 與 `canonical_event_version` 維持 `1`。
+M4 新增 `MarketAnnotations::TpexQuote` discriminant，會改變 canonical bytes；因此
+目前版本升至 `3`。舊版本的 event stream／cache 不可與 M4 stream 混用，必須透過
+cache rebuild 產生 version 3 artifact。
 
 ## 11. Validation invariants
 
