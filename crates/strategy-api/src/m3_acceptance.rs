@@ -12,7 +12,7 @@ use crate::{
 pub const M3_ACCEPTANCE_STRATEGY_ID: &str = "acceptance.m3-multi-market";
 pub const M3_ACCEPTANCE_STRATEGY_VERSION: &str = "1";
 
-/// Deterministic acceptance strategy for the M3 TWSE/TAIFEX universe.
+/// Deterministic acceptance strategy for the M3/M4 multi-market universe.
 ///
 /// Each instrument opens one displayed-unit limit order at the best ask and
 /// emits a matching close at the best bid on a later event. The strategy does
@@ -53,13 +53,8 @@ impl M3AcceptanceStrategy {
 
     fn quantity(instrument: &InstrumentId) -> Result<Quantity, StrategyExecutionError> {
         let unit = match instrument.market() {
-            MarketId::Twse => QuantityUnit::TradingUnit,
+            MarketId::Twse | MarketId::Tpex => QuantityUnit::TradingUnit,
             MarketId::Taifex => QuantityUnit::Contract,
-            _ => {
-                return Err(StrategyExecutionError::new(
-                    "unsupported M3 instrument market",
-                ));
-            }
         };
         Quantity::new(1, unit)
             .map_err(|_| StrategyExecutionError::new("invalid M3 acceptance order quantity"))

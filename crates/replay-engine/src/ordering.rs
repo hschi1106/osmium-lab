@@ -113,9 +113,12 @@ impl PreparedOrderEvent {
 }
 
 fn source_phase_rank(event: &DomainEvent) -> Result<u8, OrderingError> {
-    if event.instrument().market() != market_types::MarketId::Twse
-        || event.source_format().as_str() != "STOCK_REALTIME"
-    {
+    let invalid_shape = match event.instrument().market() {
+        market_types::MarketId::Twse => OrderingError::InvalidTwseRealtimeShape,
+        market_types::MarketId::Tpex => OrderingError::InvalidTpexRealtimeShape,
+        _ => return Ok(0),
+    };
+    if event.source_format().as_str() != "STOCK_REALTIME" {
         return Ok(0);
     }
 
@@ -138,9 +141,7 @@ fn source_phase_rank(event: &DomainEvent) -> Result<u8, OrderingError> {
                 10
             })
         }
-        EventPayload::BookSnapshot(_) | EventPayload::TradeBatch(_) => {
-            Err(OrderingError::InvalidTwseRealtimeShape)
-        }
+        EventPayload::BookSnapshot(_) | EventPayload::TradeBatch(_) => Err(invalid_shape),
     }
 }
 
@@ -148,6 +149,7 @@ fn source_phase_rank(event: &DomainEvent) -> Result<u8, OrderingError> {
 pub enum OrderingError {
     CanonicalEncoding(CanonicalEncodingError),
     InvalidTwseRealtimeShape,
+    InvalidTpexRealtimeShape,
     EventFingerprintCollision,
 }
 
@@ -160,6 +162,9 @@ impl fmt::Display for OrderingError {
             Self::InvalidTwseRealtimeShape => {
                 formatter.write_str("invalid TWSE STOCK_REALTIME ordering shape")
             }
+            Self::InvalidTpexRealtimeShape => {
+                formatter.write_str("invalid TPEx STOCK_REALTIME ordering shape")
+            }
             Self::EventFingerprintCollision => {
                 formatter.write_str("equal ordering keys have different canonical event bytes")
             }
@@ -171,7 +176,9 @@ impl Error for OrderingError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::CanonicalEncoding(error) => Some(error),
-            Self::InvalidTwseRealtimeShape | Self::EventFingerprintCollision => None,
+            Self::InvalidTwseRealtimeShape
+            | Self::InvalidTpexRealtimeShape
+            | Self::EventFingerprintCollision => None,
         }
     }
 }

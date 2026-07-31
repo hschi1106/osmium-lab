@@ -21,6 +21,7 @@ pub enum SessionProfileId {
     TaifexIndexFutures = 2,
     TaifexStockFutures = 3,
     TaifexStockFuturesRegularOnly = 4,
+    TpexRegular = 5,
 }
 
 impl SessionProfileId {
@@ -28,20 +29,20 @@ impl SessionProfileId {
     pub fn for_instrument(instrument: &InstrumentId) -> Result<Self, SessionPlanError> {
         match instrument.market() {
             MarketId::Twse => Ok(Self::TwseRegular),
+            MarketId::Tpex => Ok(Self::TpexRegular),
             MarketId::Taifex => match instrument.symbol().as_str() {
                 "TXFH6" => Ok(Self::TaifexIndexFutures),
                 "CDFH6" => Ok(Self::TaifexStockFutures),
                 "CAFH6" => Ok(Self::TaifexStockFuturesRegularOnly),
                 _ => Err(SessionPlanError::UnsupportedInstrument(instrument.clone())),
             },
-            market => Err(SessionPlanError::UnsupportedMarket(market)),
         }
     }
 
     #[must_use]
     pub const fn allows(self, kind: SessionKind) -> bool {
         match self {
-            Self::TwseRegular | Self::TaifexStockFuturesRegularOnly => {
+            Self::TwseRegular | Self::TpexRegular | Self::TaifexStockFuturesRegularOnly => {
                 matches!(kind, SessionKind::Regular)
             }
             Self::TaifexIndexFutures | Self::TaifexStockFutures => true,
@@ -211,7 +212,7 @@ fn build_window(
     trading_date: TradingDate,
 ) -> Result<SessionWindow, SessionPlanError> {
     let (open_date, open_time, close_date, close_time) = match (profile, kind) {
-        (SessionProfileId::TwseRegular, SessionKind::Regular) => {
+        (SessionProfileId::TwseRegular | SessionProfileId::TpexRegular, SessionKind::Regular) => {
             (trading_date, "09:00:00", trading_date, "13:30:00")
         }
         (SessionProfileId::TaifexIndexFutures, SessionKind::Regular)

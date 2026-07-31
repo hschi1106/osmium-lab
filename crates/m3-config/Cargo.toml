@@ -9,6 +9,7 @@ blake3 = "1.8"
 data-sync = { path = "../data-sync" }
 market-types = { path = "../market-types" }
 taifex-normalizer = { path = "../normalizer/taifex" }
+tpex-normalizer = { path = "../normalizer/tpex" }
 run-planner = { path = "../run-planner" }
 replay-engine = { path = "../replay-engine" }
 serde = { version = "1", features = ["derive"] }

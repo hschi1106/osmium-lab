@@ -20,6 +20,10 @@ use taifex_normalizer::{
     MAPPING_NAME as TAIFEX_MAPPING_NAME, MAPPING_VERSION as TAIFEX_MAPPING_VERSION,
     NormalizerConfig as TaifexNormalizerConfig, TaifexNormalizer,
 };
+use tpex_normalizer::{
+    MAPPING_NAME as TPEX_MAPPING_NAME, MAPPING_VERSION as TPEX_MAPPING_VERSION,
+    NormalizerConfig as TpexNormalizerConfig, TpexNormalizer,
+};
 use twse_normalizer::{
     MAPPING_NAME as TWSE_MAPPING_NAME, MAPPING_VERSION as TWSE_MAPPING_VERSION,
     NormalizerConfig as TwseNormalizerConfig, TwseNormalizer,
@@ -37,6 +41,7 @@ pub const CACHE_FORMAT_VERSION: u16 = 1;
 #[derive(Debug, Clone)]
 pub enum PartitionNormalizerConfig {
     Twse(TwseNormalizerConfig),
+    Tpex(TpexNormalizerConfig),
     Taifex(TaifexNormalizerConfig),
 }
 
@@ -192,6 +197,21 @@ impl CacheBuilder {
                     trading_date,
                     TAIFEX_MAPPING_NAME.to_owned(),
                     TAIFEX_MAPPING_VERSION,
+                    events,
+                )
+            }
+            PartitionNormalizerConfig::Tpex(config) => {
+                let instrument = config.instrument().clone();
+                let trading_date = config.trading_date();
+                let events = TpexNormalizer::new(config)
+                    .normalize_json_lines(&lines)
+                    .map_err(|error| CacheBuildError::Normalization(error.to_string()))?
+                    .into_events();
+                (
+                    instrument,
+                    trading_date,
+                    TPEX_MAPPING_NAME.to_owned(),
+                    TPEX_MAPPING_VERSION,
                     events,
                 )
             }
@@ -615,13 +635,16 @@ impl CacheRecord {
 fn validate_descriptor(descriptor: &CacheDescriptor) -> Result<(), CacheReadError> {
     let mapping_compatible = (descriptor.normalizer_mapping_name == TWSE_MAPPING_NAME
         && descriptor.normalizer_mapping_version == TWSE_MAPPING_VERSION)
+        || (descriptor.normalizer_mapping_name == TPEX_MAPPING_NAME
+            && descriptor.normalizer_mapping_version == TPEX_MAPPING_VERSION)
         || (descriptor.normalizer_mapping_name == TAIFEX_MAPPING_NAME
             && descriptor.normalizer_mapping_version == TAIFEX_MAPPING_VERSION);
     let mapping_market_compatible = match MarketId::from_discriminant(descriptor.instrument_market)
     {
         Ok(MarketId::Twse) => descriptor.normalizer_mapping_name == TWSE_MAPPING_NAME,
+        Ok(MarketId::Tpex) => descriptor.normalizer_mapping_name == TPEX_MAPPING_NAME,
         Ok(MarketId::Taifex) => descriptor.normalizer_mapping_name == TAIFEX_MAPPING_NAME,
-        Ok(MarketId::Tpex) | Err(_) => false,
+        Err(_) => false,
     };
     if descriptor.cache_format_version != CACHE_FORMAT_VERSION
         || descriptor.market_types_version != MARKET_TYPES_VERSION

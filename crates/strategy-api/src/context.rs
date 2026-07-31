@@ -3,7 +3,7 @@ use std::{error::Error, fmt};
 use market_state::{MarketStateView, SessionSegmentId, StateField};
 use market_types::{
     DomainEvent, EventPayload, InstantTrend, LimitPosition, MarketAnnotations, MarketId, MatchTime,
-    MatchingMethod, TradingDate,
+    MatchingMethod, TpexQuoteAnnotations, TradingDate,
 };
 use replay_engine::EventOccurrence;
 
@@ -268,6 +268,10 @@ impl TwseTradingContextEvaluator {
                 value: MarketAnnotations::None,
                 ..
             }
+            | StateField::Known {
+                value: MarketAnnotations::TpexQuote(_),
+                ..
+            }
             | StateField::Unavailable(_)
             | StateField::Unknown { .. } => return Err(ContextError::MissingTwseAnnotations),
         };
@@ -338,6 +342,117 @@ impl TwseTradingContextEvaluator {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+pub struct TpexTradingContextEvaluator;
+
+impl TpexTradingContextEvaluator {
+    pub fn evaluate(
+        self,
+        event: &DomainEvent,
+        occurrence: &EventOccurrence,
+        state: MarketStateView<'_>,
+        segment: &SessionSegment,
+    ) -> Result<TradingContext, ContextError> {
+        validate_event_state(event, occurrence, state, segment)?;
+        let phase = segment.phase(event.match_time())?;
+        let session = SessionCallbackContext {
+            segment_id: segment.id().clone(),
+            session_kind: segment.kind(),
+            phase,
+        };
+        let annotations = match state.last_annotations() {
+            StateField::Known {
+                value: MarketAnnotations::TpexQuote(value),
+                ..
+            } => *value,
+            StateField::Known {
+                value: MarketAnnotations::None,
+                ..
+            }
+            | StateField::Known {
+                value: MarketAnnotations::TwseQuote(_),
+                ..
+            }
+            | StateField::Unavailable(_)
+            | StateField::Unknown { .. } => return Err(ContextError::MissingTpexAnnotations),
+        };
+        let matching = evaluate_annotated_matching(event, phase, segment, annotations);
+        let new_order_entry = if phase == SessionPhase::CoolDown {
+            NewOrderEntry::Blocked(OrderBlockReason::CoolDown)
+        } else if annotations.status().closing_marker() {
+            NewOrderEntry::Blocked(OrderBlockReason::ClosingResult)
+        } else if matching == MatchingState::Indicative(IndicativeReason::PreOpenTrial) {
+            NewOrderEntry::Restricted(OrderRestrictionReason::PreOpenLimitOrdersOnly)
+        } else if matches!(
+            matching,
+            MatchingState::Indicative(IndicativeReason::DelayedOpen)
+                | MatchingState::Indicative(IndicativeReason::DelayedClose)
+        ) {
+            NewOrderEntry::Restricted(OrderRestrictionReason::IndicativeMarket)
+        } else if matching == MatchingState::Unknown {
+            NewOrderEntry::Unknown
+        } else {
+            NewOrderEntry::Allowed
+        };
+        Ok(TradingContext {
+            event_fingerprint: *occurrence.event_fingerprint().as_bytes(),
+            instrument_state_version: occurrence.instrument_state_version(),
+            session,
+            new_order_entry,
+            matching,
+            market_rule_name: "tpex.quote-annotations",
+            market_rule_version: 1,
+        })
+    }
+}
+
+fn evaluate_annotated_matching(
+    event: &DomainEvent,
+    phase: SessionPhase,
+    segment: &SessionSegment,
+    annotations: TpexQuoteAnnotations,
+) -> MatchingState {
+    let status = annotations.status();
+    let limits = annotations.limits();
+    let reserved = status.reserved_bits() != 0
+        || [limits.trade(), limits.best_bid(), limits.best_ask()]
+            .contains(&LimitPosition::Reserved)
+        || limits.instant_trend() == InstantTrend::Reserved;
+    if reserved {
+        return MatchingState::Unknown;
+    }
+    if status.opening_marker() {
+        return MatchingState::Indicative(IndicativeReason::PreOpenTrial);
+    }
+    if status.closing_marker() {
+        return MatchingState::Indicative(IndicativeReason::PreCloseTrial);
+    }
+    match limits.instant_trend() {
+        InstantTrend::VolatilityInterruptionDown => {
+            MatchingState::Indicative(IndicativeReason::VolatilityInterruptionDown)
+        }
+        InstantTrend::VolatilityInterruptionUp => {
+            MatchingState::Indicative(IndicativeReason::VolatilityInterruptionUp)
+        }
+        InstantTrend::Normal if status.trial() => {
+            let reason = if status.delayed_open() {
+                IndicativeReason::DelayedOpen
+            } else if status.delayed_close() {
+                IndicativeReason::DelayedClose
+            } else if phase == SessionPhase::WarmUp {
+                IndicativeReason::PreOpenTrial
+            } else if phase == SessionPhase::Active && event.match_time() < segment.close() {
+                IndicativeReason::PreCloseTrial
+            } else {
+                IndicativeReason::UnclassifiedTrial
+            };
+            MatchingState::Indicative(reason)
+        }
+        InstantTrend::Normal => MatchingState::Enabled(status.matching_method()),
+        InstantTrend::Reserved => unreachable!("reserved trend handled above"),
+    }
+}
+
 /// Evaluates the market-specific trading rules used by the M3 multi-market run.
 ///
 /// TWSE keeps its annotation-driven evaluator. TAIFEX events currently carry no
@@ -358,8 +473,10 @@ impl MarketTradingContextEvaluator {
             MarketId::Twse => {
                 TwseTradingContextEvaluator.evaluate(event, occurrence, state, segment)
             }
+            MarketId::Tpex => {
+                TpexTradingContextEvaluator.evaluate(event, occurrence, state, segment)
+            }
             MarketId::Taifex => self.evaluate_taifex(event, occurrence, state, segment),
-            market => Err(ContextError::UnsupportedMarket(market)),
         }
     }
 
@@ -453,6 +570,7 @@ pub enum ContextError {
     MissingAppliedEvent,
     EventIdentityMismatch,
     MissingTwseAnnotations,
+    MissingTpexAnnotations,
     UnsupportedMarket(MarketId),
 }
 
@@ -469,6 +587,7 @@ impl fmt::Display for ContextError {
             Self::MissingAppliedEvent => "post-event state has no applied event identity",
             Self::EventIdentityMismatch => "event, occurrence, and state identities differ",
             Self::MissingTwseAnnotations => "TWSE trading context requires known TWSE annotations",
+            Self::MissingTpexAnnotations => "TPEx trading context requires known TPEx annotations",
             Self::UnsupportedMarket(market) => {
                 return write!(formatter, "unsupported trading-context market: {market:?}");
             }

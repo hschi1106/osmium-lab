@@ -7,9 +7,9 @@ use market_state::{
 use market_types::{
     BookLevel, BookSide, BookSideKind, BookSnapshot, CompleteBookSnapshot, DomainEvent, EventKind,
     EventPayload, IndicativeAuction, InstrumentId, MarketAnnotations, MarketId, MatchTime,
-    Observation, Price, Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol, TradeBatch,
-    TradeOrder, TradePrint, TradePrintKind, TradingDate, TwseQuoteAnnotations, UnknownValue,
-    Volume,
+    Observation, Price, Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol,
+    TpexQuoteAnnotations, TradeBatch, TradeOrder, TradePrint, TradePrintKind, TradingDate,
+    TwseQuoteAnnotations, UnknownValue, Volume,
 };
 
 fn instrument(symbol: &str) -> InstrumentId {
@@ -85,6 +85,42 @@ fn quote_event(
             .unwrap(),
         ),
     )
+}
+
+#[test]
+fn tpex_profile_accepts_tpex_annotations_and_replaces_the_book() {
+    let instrument = InstrumentId::new(MarketId::Tpex, Symbol::new("6488").unwrap());
+    let date = TradingDate::parse("2026-07-27").unwrap();
+    let reducer = MarketStateReducer::tpex_regular();
+    let context = ReducerContext::new(
+        date,
+        SessionSegmentId::new("regular").unwrap(),
+        SegmentBoundaryPolicy::Carry,
+        1,
+    );
+    let event = DomainEvent::new(
+        instrument.clone(),
+        date,
+        SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
+        MatchTime::parse("2026-07-27T09:00:00+08:00").unwrap(),
+        None,
+        EventPayload::QuoteSnapshot(
+            QuoteSnapshot::new(
+                book(&["100"], &["101"]),
+                Observation::NoObservation,
+                Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
+                MarketAnnotations::TpexQuote(TpexQuoteAnnotations::new(16, 0)),
+            )
+            .unwrap(),
+        ),
+    );
+    let mut state = MarketState::new(instrument, date);
+    reducer.apply(&mut state, &event, &context).unwrap();
+    assert_eq!(state.state_version(), 1);
+    assert_eq!(
+        state.view().best_bid().unwrap().price(),
+        Price::parse("100").unwrap()
+    );
 }
 
 #[test]
@@ -408,8 +444,8 @@ fn initial_market_state_canonical_frame_matches_the_documented_layout() {
     let state = MarketState::new(instrument("2330"), date());
     let mut expected = Vec::new();
     expected.extend_from_slice(b"OSMS");
-    expected.extend_from_slice(&2_u16.to_be_bytes());
-    expected.extend_from_slice(&2_u16.to_be_bytes());
+    expected.extend_from_slice(&3_u16.to_be_bytes());
+    expected.extend_from_slice(&3_u16.to_be_bytes());
     expected.push(MarketId::Twse.discriminant());
     expected.extend_from_slice(&4_u32.to_be_bytes());
     expected.extend_from_slice(b"2330");

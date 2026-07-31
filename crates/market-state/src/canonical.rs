@@ -10,8 +10,8 @@ use crate::{
     UnavailableReason,
 };
 
-pub const CANONICAL_MARKET_STATE_VERSION: u16 = 2;
-pub const CANONICAL_FINAL_STATE_SET_VERSION: u16 = 2;
+pub const CANONICAL_MARKET_STATE_VERSION: u16 = 3;
+pub const CANONICAL_FINAL_STATE_SET_VERSION: u16 = 3;
 
 impl MarketState {
     pub fn to_canonical_bytes(&self) -> Result<Vec<u8>, CanonicalEncodingError> {
