@@ -1,6 +1,7 @@
 mod context;
 mod example;
 mod identity;
+mod m2_acceptance;
 mod orders;
 mod output;
 mod runner;
@@ -15,6 +16,9 @@ pub use example::{EXAMPLE_STRATEGY_ID, EXAMPLE_STRATEGY_VERSION, ExampleStrategy
 pub use identity::{
     BinaryIdentity, CanonicalParamsChecksum, DeclarationError, StrategyDeclaration,
     StrategyIdentity,
+};
+pub use m2_acceptance::{
+    M2_ACCEPTANCE_STRATEGY_ID, M2_ACCEPTANCE_STRATEGY_VERSION, M2AcceptanceStrategy,
 };
 pub use orders::{
     CancellationReason, ORDER_INTENT_VERSION, OrderFeedback, OrderId, OrderIntent,

@@ -37,7 +37,7 @@ fn main() -> ExitCode {
             }
             Err(error) => {
                 eprintln!("error: {error}");
-                ExitCode::from(1)
+                ExitCode::from(error.exit_code())
             }
         },
         Ok(ParsedCommand::Inspect(run)) => match execute_m2_inspect(&run) {

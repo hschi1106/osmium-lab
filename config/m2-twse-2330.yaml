@@ -10,7 +10,7 @@ universe:
   symbols: ["2330"]
   session_kinds: [regular]
 strategy:
-  id: example.twse-post-state-observer
+  id: acceptance.twse-basic-orders
   version: "1"
   parameters: {}
 replay:

@@ -55,6 +55,8 @@ document_sets:
   verification:
     plan: docs/verification/plan.md
     acceptance: docs/verification/acceptance.md
+    m2_acceptance: docs/verification/m2-acceptance.md
+    m2_local_evidence: docs/verification/evidence/m2/local-2026-07-31.yaml
     fixture_provenance: docs/verification/fixture-provenance.md
     performance: docs/verification/performance.md
   architecture:
@@ -403,14 +405,21 @@ requirements:
       documents:
         - docs/verification/plan.md
         - docs/verification/acceptance.md
-    supporting_documents: []
-    verification_evidence: []
-    implementation_paths: []
+    supporting_documents:
+      - docs/increments/M2-offline-backtest.md
+      - docs/verification/m2-acceptance.md
+    verification_evidence:
+      - docs/verification/evidence/m2/local-2026-07-31.yaml
+    implementation_paths:
+      - crates/data-sync/src/query.rs
+      - crates/data-sync/src/cursor.rs
+      - crates/data-sync/src/transport.rs
+      - crates/data-sync/src/sync.rs
     lifecycle:
       specification: complete
       design: partial
-      implementation: not_started
-      verification: not_started
+      implementation: partial
+      verification: partial
 
   - id: DATA-02
     title: 本地來源資料
@@ -438,14 +447,19 @@ requirements:
       documents:
         - docs/verification/plan.md
         - docs/verification/acceptance.md
-    supporting_documents: []
-    verification_evidence: []
-    implementation_paths: []
+    supporting_documents:
+      - docs/increments/M2-offline-backtest.md
+      - docs/verification/m2-acceptance.md
+    verification_evidence:
+      - docs/verification/evidence/m2/local-2026-07-31.yaml
+    implementation_paths:
+      - crates/data-sync/src/storage.rs
+      - crates/data-sync/src/verify.rs
     lifecycle:
       specification: complete
       design: partial
-      implementation: not_started
-      verification: not_started
+      implementation: partial
+      verification: partial
 
   - id: DATA-03
     title: 資料完整性
@@ -470,14 +484,19 @@ requirements:
       documents:
         - docs/verification/plan.md
         - docs/verification/acceptance.md
-    supporting_documents: []
-    verification_evidence: []
-    implementation_paths: []
+    supporting_documents:
+      - docs/increments/M2-offline-backtest.md
+      - docs/verification/m2-acceptance.md
+    verification_evidence:
+      - docs/verification/evidence/m2/local-2026-07-31.yaml
+    implementation_paths:
+      - crates/data-sync/src/verify.rs
+      - crates/run-planner/src/partition.rs
     lifecycle:
       specification: complete
       design: partial
-      implementation: not_started
-      verification: not_started
+      implementation: partial
+      verification: partial
 
   - id: DATA-04
     title: 回播快取
@@ -503,14 +522,19 @@ requirements:
         - docs/verification/plan.md
         - docs/verification/acceptance.md
         - docs/verification/performance.md
-    supporting_documents: []
-    verification_evidence: []
-    implementation_paths: []
+    supporting_documents:
+      - docs/increments/M2-offline-backtest.md
+      - docs/verification/m2-acceptance.md
+    verification_evidence:
+      - docs/verification/evidence/m2/local-2026-07-31.yaml
+    implementation_paths:
+      - crates/data-sync/src/cache.rs
+      - crates/replay-engine/src/stream.rs
     lifecycle:
       specification: complete
       design: partial
-      implementation: not_started
-      verification: not_started
+      implementation: partial
+      verification: partial
 
   - id: DATA-05
     title: 商品資料
@@ -542,14 +566,19 @@ requirements:
       documents:
         - docs/verification/plan.md
         - docs/verification/acceptance.md
-    supporting_documents: []
-    verification_evidence: []
-    implementation_paths: []
+    supporting_documents:
+      - docs/increments/M2-offline-backtest.md
+      - docs/verification/m2-acceptance.md
+    verification_evidence:
+      - docs/verification/evidence/m2/local-2026-07-31.yaml
+    implementation_paths:
+      - crates/data-sync/src/storage.rs
+      - crates/m2-config/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
-      implementation: not_started
-      verification: not_started
+      implementation: partial
+      verification: partial
 
   - id: REPLAY-01
     title: 標準事件
@@ -722,13 +751,18 @@ requirements:
         - M1-AC-06
     supporting_documents:
       - docs/increments/M1-twse-replay.md
+      - docs/increments/M2-offline-backtest.md
+      - docs/verification/m2-acceptance.md
     verification_evidence:
       - docs/verification/evidence/m1/local-2026-07-31.yaml
       - fixtures/teralion/twse/2330/2026-07-27/golden/strategy-output.blake3
+      - docs/verification/evidence/m2/local-2026-07-31.yaml
     implementation_paths:
       - crates/replay-engine/src/engine.rs
       - crates/strategy-api/src/runner.rs
       - crates/strategy-api/src/strategy.rs
+      - crates/m2-runner/src/lib.rs
+      - crates/execution-sim/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
@@ -765,13 +799,19 @@ requirements:
         - docs/verification/performance.md
     supporting_documents:
       - docs/increments/M1-twse-replay.md
-    verification_evidence: []
-    implementation_paths: []
+      - docs/increments/M2-offline-backtest.md
+      - docs/verification/m2-acceptance.md
+    verification_evidence:
+      - docs/verification/evidence/m2/local-2026-07-31.yaml
+    implementation_paths:
+      - crates/replay-engine/src/stream.rs
+      - crates/data-sync/src/cache.rs
+      - crates/m2-runner/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
-      implementation: not_started
-      verification: not_started
+      implementation: partial
+      verification: partial
 
   - id: REPLAY-06
     title: 錯誤、warning 與降級執行
@@ -805,13 +845,18 @@ requirements:
         - M1-AC-09
     supporting_documents:
       - docs/increments/M1-twse-replay.md
+      - docs/increments/M2-offline-backtest.md
+      - docs/verification/m2-acceptance.md
     verification_evidence:
       - docs/verification/evidence/m1/local-2026-07-31.yaml
       - fixtures/teralion/twse/2330/2026-07-27/golden/warnings.yaml
+      - docs/verification/evidence/m2/local-2026-07-31.yaml
     implementation_paths:
       - crates/normalizer/twse/src/lib.rs
       - crates/replay-engine/src/engine.rs
       - crates/m1-runner/src/lib.rs
+      - crates/data-sync/src/verify.rs
+      - crates/osmium-cli/src/m2.rs
     lifecycle:
       specification: complete
       design: partial
@@ -852,15 +897,21 @@ requirements:
         - M1-AC-06
     supporting_documents:
       - docs/increments/M1-twse-replay.md
+      - docs/increments/M2-offline-backtest.md
+      - docs/verification/m2-acceptance.md
     verification_evidence:
       - docs/verification/evidence/m1/local-2026-07-31.yaml
       - fixtures/teralion/twse/2330/2026-07-27/golden/strategy-output.blake3
+      - docs/verification/evidence/m2/local-2026-07-31.yaml
     implementation_paths:
       - crates/strategy-api/src/strategy.rs
       - crates/strategy-api/src/context.rs
       - crates/strategy-api/src/output.rs
       - crates/strategy-api/src/runner.rs
       - crates/strategy-api/src/example.rs
+      - crates/strategy-api/src/orders.rs
+      - crates/strategy-api/src/m2_acceptance.rs
+      - crates/m2-runner/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
@@ -893,14 +944,19 @@ requirements:
       documents:
         - docs/verification/plan.md
         - docs/verification/acceptance.md
-    supporting_documents: []
-    verification_evidence: []
-    implementation_paths: []
+    supporting_documents:
+      - docs/increments/M2-offline-backtest.md
+      - docs/verification/m2-acceptance.md
+    verification_evidence:
+      - docs/verification/evidence/m2/local-2026-07-31.yaml
+    implementation_paths:
+      - crates/execution-sim/src/lib.rs
+      - crates/m2-runner/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
-      implementation: not_started
-      verification: not_started
+      implementation: partial
+      verification: partial
 
   - id: SIM-02
     title: 帳務與損益
@@ -925,14 +981,19 @@ requirements:
       documents:
         - docs/verification/plan.md
         - docs/verification/acceptance.md
-    supporting_documents: []
-    verification_evidence: []
-    implementation_paths: []
+    supporting_documents:
+      - docs/increments/M2-offline-backtest.md
+      - docs/verification/m2-acceptance.md
+    verification_evidence:
+      - docs/verification/evidence/m2/local-2026-07-31.yaml
+    implementation_paths:
+      - crates/execution-sim/src/accounting.rs
+      - crates/m2-runner/src/artifacts.rs
     lifecycle:
       specification: complete
       design: partial
-      implementation: not_started
-      verification: not_started
+      implementation: partial
+      verification: partial
 
   - id: OPS-01
     title: 操作流程
@@ -961,10 +1022,13 @@ requirements:
     supporting_documents: []
     verification_evidence:
       - docs/verification/evidence/m1/cli-local-2026-07-31.yaml
+      - docs/verification/evidence/m2/local-2026-07-31.yaml
     implementation_paths:
       - crates/osmium-cli/src/lib.rs
       - crates/osmium-cli/src/main.rs
       - crates/m1-runner/src/lib.rs
+      - crates/osmium-cli/src/m2.rs
+      - crates/m2-config/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
@@ -1006,12 +1070,15 @@ requirements:
       - docs/verification/evidence/m1/local-2026-07-31.yaml
       - docs/verification/evidence/m1/cli-local-2026-07-31.yaml
       - fixtures/teralion/twse/2330/2026-07-27/golden/run-summary.yaml
+      - docs/verification/evidence/m2/local-2026-07-31.yaml
     implementation_paths:
       - crates/replay-engine/src/checksum.rs
       - crates/market-state/src/canonical.rs
       - crates/strategy-api/src/output.rs
       - crates/m1-runner/src/lib.rs
       - crates/osmium-cli/src/lib.rs
+      - crates/m2-runner/src/artifacts.rs
+      - crates/execution-sim/src/accounting.rs
     lifecycle:
       specification: complete
       design: partial
@@ -1054,11 +1121,14 @@ requirements:
     verification_evidence:
       - docs/verification/evidence/m1/local-2026-07-31.yaml
       - fixtures/teralion/twse/2330/2026-07-27/golden/run-summary.yaml
+      - docs/verification/evidence/m2/local-2026-07-31.yaml
     implementation_paths:
       - crates/replay-engine/src/checksum.rs
       - crates/market-state/src/canonical.rs
       - crates/strategy-api/src/output.rs
       - crates/m1-runner/tests/m1_vertical_slice.rs
+      - crates/m2-runner/src/artifacts.rs
+      - crates/m2-runner/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
@@ -1088,14 +1158,19 @@ requirements:
       documents:
         - docs/verification/plan.md
         - docs/verification/performance.md
-    supporting_documents: []
-    verification_evidence: []
-    implementation_paths: []
+    supporting_documents:
+      - docs/increments/M2-offline-backtest.md
+      - docs/verification/m2-acceptance.md
+    verification_evidence:
+      - docs/verification/evidence/m2/local-2026-07-31.yaml
+    implementation_paths:
+      - crates/data-sync/src/cache.rs
+      - crates/m2-runner/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
-      implementation: not_started
-      verification: not_started
+      implementation: partial
+      verification: partial
 
   - id: NFR-03
     title: 安全與版本
@@ -1130,10 +1205,14 @@ requirements:
     verification_evidence:
       - docs/verification/evidence/m1/local-2026-07-31.yaml
       - fixtures/teralion/twse/2330/2026-07-27/metadata.yaml
+      - docs/verification/evidence/m2/local-2026-07-31.yaml
     implementation_paths:
       - crates/market-types/src/event.rs
       - crates/replay-engine/src/ordering.rs
       - crates/m1-runner/src/lib.rs
+      - crates/data-sync/src/transport.rs
+      - crates/data-sync/src/cache.rs
+      - crates/m2-runner/src/artifacts.rs
     lifecycle:
       specification: complete
       design: partial

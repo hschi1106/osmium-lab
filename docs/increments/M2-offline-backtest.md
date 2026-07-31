@@ -823,6 +823,11 @@ live API acceptance 與 offline CI 必須分開：
 [traceability matrix](../traceability.yaml)維護。M2 完成前不得只把本文件列為
 `verification_evidence`。
 
+2026-07-31 的 TWSE 2330 reference slice 已完成 live sync、offline sandbox、
+cache rebuild、10-run、debug/release、artifact inspection 與 secret scan；實際
+identity、checksum及結果見
+[M2 reference acceptance](../verification/m2-acceptance.md)。
+
 ## 21. Completion criteria
 
 M2 只有在下列條件全部成立時完成：

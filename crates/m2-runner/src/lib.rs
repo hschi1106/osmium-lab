@@ -2,7 +2,7 @@ use std::{error::Error, fmt};
 
 use execution_sim::{Ledger, PerformanceSummary, Simulator};
 use market_types::{Decimal, DomainEvent};
-use replay_engine::{CompletedReplay, ReplayCore};
+use replay_engine::{CompletedReplay, EventStream, ReplayCore};
 use strategy_api::{
     OrderFeedback, SessionSegment, Strategy, StrategyEventContext, StrategyFeedbackContext,
     StrategyFinalizeContext, StrategyInitializationContext, StrategyOutput, StrategyOutputSink,
@@ -24,10 +24,55 @@ pub struct CompletedBacktest {
 }
 
 pub fn run_backtest<S: Strategy>(
+    core: ReplayCore,
+    strategy: S,
+    segment: &SessionSegment,
+    events: impl IntoIterator<Item = DomainEvent>,
+    simulator: Simulator,
+    ledger: Ledger,
+    final_mark: Option<Decimal>,
+) -> Result<CompletedBacktest, BacktestError> {
+    let mut events = events.into_iter();
+    run_backtest_with_next(
+        core,
+        strategy,
+        segment,
+        || Ok(events.next()),
+        simulator,
+        ledger,
+        final_mark,
+    )
+}
+
+pub fn run_backtest_stream<S: Strategy, E: EventStream>(
+    core: ReplayCore,
+    strategy: S,
+    segment: &SessionSegment,
+    stream: &mut E,
+    simulator: Simulator,
+    ledger: Ledger,
+    final_mark: Option<Decimal>,
+) -> Result<CompletedBacktest, BacktestError> {
+    run_backtest_with_next(
+        core,
+        strategy,
+        segment,
+        || {
+            stream
+                .next_event()
+                .map_err(|error| BacktestError::InputStream(error.to_string()))
+        },
+        simulator,
+        ledger,
+        final_mark,
+    )
+}
+
+fn run_backtest_with_next<S: Strategy>(
     mut core: ReplayCore,
     mut strategy: S,
     segment: &SessionSegment,
-    events: impl IntoIterator<Item = DomainEvent>,
+    mut next_event: impl FnMut() -> Result<Option<DomainEvent>, BacktestError>,
     mut simulator: Simulator,
     mut ledger: Ledger,
     final_mark: Option<Decimal>,
@@ -49,7 +94,7 @@ pub fn run_backtest<S: Strategy>(
         strategy.canonical_params_checksum(),
     );
 
-    for event in events {
+    while let Some(event) = next_event()? {
         let commit = core
             .apply_ordered(&event)
             .map_err(|error| BacktestError::Replay(error.to_string()))?;
@@ -185,6 +230,7 @@ fn process_feedback<S: Strategy>(
 #[derive(Debug)]
 pub enum BacktestError {
     Declaration,
+    InputStream(String),
     Replay(String),
     Context(String),
     Strategy(String),
