@@ -316,10 +316,11 @@ JSONL shard 包成 fixture response、驗證 TAIFEX `book/close/stats/trade` kin
 partition source revision，接著建立 source-bound replay cache。它拒絕覆寫既有 data
 root；需要重建時使用新的空 data root。
 
-`config/m3-taifex-multi.yaml` 的四商品 run 另外要求
-`fixtures/teralion/twse/2330/2026-07-20`；目前 repository 只提交該日 TWSE daily
-instrument discovery，沒有 tick fixture，因此 tool 應回報 missing fixture，不能
-用 `2026-07-27` M1 slice 或 synthetic records 填補。
+`config/m3-taifex-multi.yaml` 的四商品 run 另外使用
+`fixtures/teralion/twse/2330/2026-07-20` 的 committed regular quote fixture。該
+fixture 由 Teralion `quote` cursor download 抽取整股 formats，並與 daily instrument
+及 source/cache lineage 一起驗證；不能用 `2026-07-27` M1 slice 或 synthetic records
+替代。
 
 ## 8. `replay`
 

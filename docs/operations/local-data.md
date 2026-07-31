@@ -8,7 +8,7 @@
 
 ```text
 local_data_contract_version = 2
-current_scope               = M2 TWSE 2330 + M3 partitioned TAIFEX source and cache
+current_scope               = M2 TWSE 2330 + M3 TWSE/TAIFEX partitioned source and cache
 ```
 
 資料內容及狀態演算法由 [Data Sync 設計](../design/data-sync.md)定義；CLI command

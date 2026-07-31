@@ -3,7 +3,7 @@
 ## 1. 文件目的
 
 本文件定義 M1「TWSE 2330 regular-market deterministic replay vertical slice」、
-M2「Teralion 真實資料準備與離線 backtest」及 M3「TAIFEX 三商品與多商品離線
+M2「Teralion 真實資料準備與離線 backtest」及 M3「TWSE 2330 加 TAIFEX 三商品與多商品離線
 backtest」的驗證方法、test ID、fixture policy、golden artifacts 與執行順序。它是
 測試契約，不是測試已通過的證據；實際結果由 M1/M2 acceptance、
 [M3 acceptance](m3-acceptance.md) 及 machine-readable CI evidence 登錄。
@@ -760,16 +760,15 @@ target/debug/osmium inspect --run target/m3-run
 
 ```sh
 tools/run_m3_acceptance.sh \
-  --output docs/verification/evidence/m3/formal-<UTC-date> \
-  --allow-blocked
+  --output docs/verification/evidence/m3/formal-<UTC-date>
 ```
 
 M3 machine-readable evidence 至少包含：fixture／daily checksums、source revision、
 cache descriptor、event/state/strategy/order/fill/ledger checksums、opened stream audit、
 multiplier/accounting trace、network-disabled execution、corruption rejection、10 次
 rerun、三個 discovery permutations、cache rebuild、debug/release comparison 與
-performance baseline。四商品 evidence 缺少任何一個 shared-date TWSE tick fixture 時，
-status 必須是 `Blocked`，不得以三商品結果升格為 `Passed`。
+performance baseline。四商品 evidence 必須使用 shared-date TWSE tick fixture；目前
+committed fixture 已滿足此 gate，不能以三商品結果替代四商品 evidence。
 
 ## 23. M3 exit criteria
 

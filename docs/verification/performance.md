@@ -12,9 +12,8 @@
 3. `CAFH6`：只含日盤。
 4. `TWSE 2330` 加上述三個 TAIFEX 商品。
 
-目前 repository 只有前三項的 committed tick fixture；四商品基線因缺少同一
-`2026-07-20` 的 TWSE `2330` tick fixture 保持 `Blocked`，不得以 synthetic data
-替代。
+目前四項都有 committed fixture。TWSE `2330` regular fixture 包含 101,869 筆
+整股 quote records；零股 records 不納入 replay source。
 
 ## Recorded metrics
 
@@ -26,6 +25,11 @@ events: <replayed event count>
 source_bytes: <published source bytes>
 cache_bytes: <derived cache bytes>
 elapsed_seconds: <wall-clock seconds>
+four_instrument:
+  events: <replayed event count>
+  source_bytes: <published source bytes>
+  cache_bytes: <derived cache bytes>
+  elapsed_seconds: <wall-clock seconds>
 ```
 
 此外，acceptance report 必須保留：
@@ -47,9 +51,8 @@ baseline 是同一 machine、同一 Rust toolchain、同一 fixture 與同一 co
 
 ```sh
 tools/run_m3_acceptance.sh \
-  --output docs/verification/evidence/m3/formal-$(date +%Y-%m-%d) \
-  --allow-blocked
+  --output docs/verification/evidence/m3/formal-$(date +%Y-%m-%d)
 ```
 
-若要完成 M3，先補齊 `fixtures/teralion/twse/2330/2026-07-20` 的 authorized
-source、daily instrument、metadata 與 cache lineage，再移除 `--allow-blocked`。
+正式 report 會同時保存三商品與四商品 baseline；source/cache 與 run directories
+在 harness 結束後清除，避免把 derived artifacts 當成 fixture source。

@@ -33,21 +33,17 @@ milestone_status:
     completion_quality: strict
     evidence: docs/verification/evidence/m2/refreshed-2026-07-31.yaml
   M3:
-    reference_scope: TAIFEX TXFH6/CDFH6/CAFH6 2026-07-20; four-instrument extension pending
+    reference_scope: TWSE 2330 + TAIFEX TXFH6/CDFH6/CAFH6 2026-07-20
     specification: complete
     source_evidence: complete
-    fixtures: partial
-    implementation: partial
-    formal_acceptance: blocked
-    completion_quality: partial
+    fixtures: complete
+    implementation: complete
+    formal_acceptance: complete
+    completion_quality: strict
     evidence:
       - docs/verification/evidence/m3/source-selection-2026-07-31.yaml
       - docs/verification/m3-acceptance.md
-      - docs/verification/evidence/m3/formal-2026-08-01/acceptance-report.yaml
-    pending:
-      - authorized TWSE 2330 2026-07-20 tick fixture and source/cache lineage
-      - four-instrument offline ordering, strategy and performance acceptance
-      - close M3 formal acceptance after all M3-AC-01..17 are Passed
+      - docs/verification/evidence/m3/formal-2026-08-01-complete/acceptance-report.yaml
   M4:
     implementation: not_started
 
@@ -109,7 +105,7 @@ document_sets:
       - docs/architecture/decisions/0005-twse-intermediate-final-ordering.md
 
 m3_trace:
-  status: blocked
+  status: complete
   implementation_paths:
     - crates/data-sync/src/query.rs
     - crates/data-sync/src/cursor.rs
@@ -119,6 +115,9 @@ m3_trace:
     - crates/osmium-cli/src/lib.rs
     - crates/m2-runner/src/lib.rs
     - crates/execution-sim/src/accounting.rs
+    - tools/acquire_m3_twse_fixture.sh
+    - tools/extract_twse_fixture.rs
+    - fixtures/teralion/twse/2330/2026-07-20
   configuration:
     - config/m3-taifex-three.yaml
     - config/m3-taifex-multi.yaml
@@ -133,6 +132,7 @@ m3_trace:
       - M3-AC-04
       - M3-AC-05
       - M3-AC-06
+      - M3-AC-07
       - M3-AC-08
       - M3-AC-09
       - M3-AC-10
@@ -140,16 +140,9 @@ m3_trace:
       - M3-AC-12
       - M3-AC-13
       - M3-AC-14
-      - M3-AC-16
-    partial:
       - M3-AC-15
-    blocked:
-      - M3-AC-07
+      - M3-AC-16
       - M3-AC-17
-  blocker:
-    id: M3-TWSE-COMPANION-TICKS
-    description: 同一 2026-07-20 trading date 的 TWSE 2330 tick source fixture 尚未提交
-    evidence: docs/verification/m3-acceptance.md
 
 architecture_trace:
   - path: docs/architecture/overview.md
