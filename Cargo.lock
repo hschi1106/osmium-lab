@@ -176,6 +176,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "strategy-api"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "market-state",
+ "market-types",
+ "replay-engine",
+ "twse-normalizer",
+]
+
+[[package]]
 name = "syn"
 version = "3.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
