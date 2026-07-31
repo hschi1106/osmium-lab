@@ -1,0 +1,64 @@
+evidence_schema_version: 1
+run_id: cli-local-2026-07-31
+scope: M1 replay CLI and artifact export
+status: passed_with_network_disabled_ci_pending
+
+implementation_commit: 6704ae1
+
+environment:
+  rustc: "1.97.1 (8bab26f4f 2026-07-14)"
+  host: aarch64-apple-darwin
+  network_policy: enabled
+  network_policy_qualifies_for_m1_t053: false
+
+commands:
+  - command: cargo fmt --check
+    outcome: passed
+  - command: cargo clippy --workspace --all-targets -- -D warnings
+    outcome: passed
+  - command: cargo test --workspace
+    profile: debug
+    outcome: passed
+    tests: 58
+    suites: 31
+  - command: cargo test --workspace --release
+    profile: release
+    outcome: passed
+    tests: 58
+    suites: 31
+
+cli_test:
+  binary: osmium
+  command: replay
+  api_key_environment_removed: TERALION_API_KEY
+  fixture_source: fixtures/teralion/twse/2330/2026-07-27
+  expected_normalized_events: 73795
+  expected_strategy_callbacks: 73795
+  expected_warnings: 0
+  artifact_publish: staging_then_rename
+  existing_output_policy: reject
+  outcome: passed
+
+exported_artifacts:
+  - fixture-metadata.yaml
+  - fixture-set.sha256
+  - normalized-events.bin
+  - event-stream.blake3
+  - final-state.blake3
+  - strategy-output.bin
+  - strategy-output.blake3
+  - warnings.yaml
+  - run-summary.yaml
+
+artifact_checksums:
+  fixture_set_sha256: 5292ef24885c95c9402988423679e6b6381348cd09bb774d8489f08e9aa11ed1
+  normalized_events_blake3: 7e37ff0ad4a8b15b4c569b295c0f03f26bb6c0f32db1493edac71620e85a28df
+  event_stream_blake3: 0cecf1f6c3c6a8422955183fe383e787612efee3a4c4a7961d7faa6ee9e1de56
+  final_state_blake3: 02f256fc1007ce41e56200a4f82fc0f0cb504ee29afdf7262307a232862e7ea0
+  strategy_output_blake3: 763a5cb305a7ebbe86ea463e4091e90346421273e61b2f40f0c8ba4247690917
+
+formal_acceptance:
+  overall: NotRun
+  pending:
+    - test_id: M1-T053
+      reason: 必須在 network-disabled CI/container 執行，本機 network-enabled run 不構成證據
