@@ -507,13 +507,18 @@ requirements:
         - M1-AC-09
     supporting_documents:
       - docs/increments/M1-twse-replay.md
-    verification_evidence: []
-    implementation_paths: []
+    verification_evidence:
+      - docs/verification/evidence/m1/local-2026-07-31.yaml
+      - fixtures/teralion/twse/2330/2026-07-27/golden/run-summary.yaml
+    implementation_paths:
+      - crates/market-types/src/event.rs
+      - crates/normalizer/twse/src/lib.rs
+      - crates/m1-runner/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
-      implementation: not_started
-      verification: not_started
+      implementation: partial
+      verification: partial
 
   - id: REPLAY-02
     title: 事件排序
@@ -544,13 +549,18 @@ requirements:
         - M1-AC-04
     supporting_documents:
       - docs/increments/M1-twse-replay.md
-    verification_evidence: []
-    implementation_paths: []
+    verification_evidence:
+      - docs/verification/evidence/m1/local-2026-07-31.yaml
+      - fixtures/teralion/twse/2330/2026-07-27/golden/event-stream.blake3
+    implementation_paths:
+      - crates/replay-engine/src/ordering.rs
+      - crates/replay-engine/src/engine.rs
+      - crates/m1-runner/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
-      implementation: not_started
-      verification: not_started
+      implementation: partial
+      verification: partial
 
   - id: REPLAY-03
     title: 市場狀態
@@ -584,13 +594,18 @@ requirements:
         - M1-AC-09
     supporting_documents:
       - docs/increments/M1-twse-replay.md
-    verification_evidence: []
-    implementation_paths: []
+    verification_evidence:
+      - docs/verification/evidence/m1/local-2026-07-31.yaml
+      - fixtures/teralion/twse/2330/2026-07-27/golden/final-state.blake3
+    implementation_paths:
+      - crates/market-state/src/model.rs
+      - crates/market-state/src/reducer.rs
+      - crates/market-state/src/canonical.rs
     lifecycle:
       specification: complete
       design: partial
-      implementation: not_started
-      verification: not_started
+      implementation: partial
+      verification: partial
 
   - id: REPLAY-04
     title: 事件處理順序與無前視
@@ -626,13 +641,18 @@ requirements:
         - M1-AC-06
     supporting_documents:
       - docs/increments/M1-twse-replay.md
-    verification_evidence: []
-    implementation_paths: []
+    verification_evidence:
+      - docs/verification/evidence/m1/local-2026-07-31.yaml
+      - fixtures/teralion/twse/2330/2026-07-27/golden/strategy-output.blake3
+    implementation_paths:
+      - crates/replay-engine/src/engine.rs
+      - crates/strategy-api/src/runner.rs
+      - crates/strategy-api/src/strategy.rs
     lifecycle:
       specification: complete
       design: partial
-      implementation: not_started
-      verification: not_started
+      implementation: partial
+      verification: partial
 
   - id: REPLAY-05
     title: 多商品與資源使用
@@ -704,13 +724,18 @@ requirements:
         - M1-AC-09
     supporting_documents:
       - docs/increments/M1-twse-replay.md
-    verification_evidence: []
-    implementation_paths: []
+    verification_evidence:
+      - docs/verification/evidence/m1/local-2026-07-31.yaml
+      - fixtures/teralion/twse/2330/2026-07-27/golden/warnings.yaml
+    implementation_paths:
+      - crates/normalizer/twse/src/lib.rs
+      - crates/replay-engine/src/engine.rs
+      - crates/m1-runner/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
-      implementation: not_started
-      verification: not_started
+      implementation: partial
+      verification: partial
 
   - id: STRAT-01
     title: 策略能力與邊界
@@ -746,13 +771,20 @@ requirements:
         - M1-AC-06
     supporting_documents:
       - docs/increments/M1-twse-replay.md
-    verification_evidence: []
-    implementation_paths: []
+    verification_evidence:
+      - docs/verification/evidence/m1/local-2026-07-31.yaml
+      - fixtures/teralion/twse/2330/2026-07-27/golden/strategy-output.blake3
+    implementation_paths:
+      - crates/strategy-api/src/strategy.rs
+      - crates/strategy-api/src/context.rs
+      - crates/strategy-api/src/output.rs
+      - crates/strategy-api/src/runner.rs
+      - crates/strategy-api/src/example.rs
     lifecycle:
       specification: complete
       design: partial
-      implementation: not_started
-      verification: not_started
+      implementation: partial
+      verification: partial
 
   - id: SIM-01
     title: 基礎成交模型
@@ -885,13 +917,19 @@ requirements:
         - M1-AC-10
     supporting_documents:
       - docs/increments/M1-twse-replay.md
-    verification_evidence: []
-    implementation_paths: []
+    verification_evidence:
+      - docs/verification/evidence/m1/local-2026-07-31.yaml
+      - fixtures/teralion/twse/2330/2026-07-27/golden/run-summary.yaml
+    implementation_paths:
+      - crates/replay-engine/src/checksum.rs
+      - crates/market-state/src/canonical.rs
+      - crates/strategy-api/src/output.rs
+      - crates/m1-runner/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
-      implementation: not_started
-      verification: not_started
+      implementation: partial
+      verification: partial
 
   - id: NFR-01
     title: 可重現
@@ -926,13 +964,19 @@ requirements:
         - M1-AC-10
     supporting_documents:
       - docs/increments/M1-twse-replay.md
-    verification_evidence: []
-    implementation_paths: []
+    verification_evidence:
+      - docs/verification/evidence/m1/local-2026-07-31.yaml
+      - fixtures/teralion/twse/2330/2026-07-27/golden/run-summary.yaml
+    implementation_paths:
+      - crates/replay-engine/src/checksum.rs
+      - crates/market-state/src/canonical.rs
+      - crates/strategy-api/src/output.rs
+      - crates/m1-runner/tests/m1_vertical_slice.rs
     lifecycle:
       specification: complete
       design: partial
-      implementation: not_started
-      verification: not_started
+      implementation: partial
+      verification: partial
 
   - id: NFR-02
     title: 效能
@@ -996,10 +1040,15 @@ requirements:
         - docs/verification/acceptance.md
     supporting_documents:
       - docs/increments/M1-twse-replay.md
-    verification_evidence: []
-    implementation_paths: []
+    verification_evidence:
+      - docs/verification/evidence/m1/local-2026-07-31.yaml
+      - fixtures/teralion/twse/2330/2026-07-27/metadata.yaml
+    implementation_paths:
+      - crates/market-types/src/event.rs
+      - crates/replay-engine/src/ordering.rs
+      - crates/m1-runner/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
-      implementation: not_started
-      verification: not_started
+      implementation: partial
+      verification: partial
