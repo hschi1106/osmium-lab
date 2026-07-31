@@ -1,0 +1,5 @@
+   Compiling data-sync v0.1.0 (/Users/hschi1106/Documents/osmium-lab/crates/data-sync)
+   Compiling m3-config v0.1.0 (/Users/hschi1106/Documents/osmium-lab/crates/m3-config)
+   Compiling m2-config v0.1.0 (/Users/hschi1106/Documents/osmium-lab/crates/m2-config)
+   Compiling osmium-cli v0.1.0 (/Users/hschi1106/Documents/osmium-lab/crates/osmium-cli)
+    Finished `release` profile [optimized] target(s) in 4.08s

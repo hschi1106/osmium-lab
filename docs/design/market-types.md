@@ -7,13 +7,14 @@
 MarketState、strategy 與 simulation 共用同一組不依賴 Teralion wire type 的資料
 語意。
 
-本文件固定第一版契約：
+本文件固定目前契約（schema version 3）：
 
-- market types schema version `1`
-- event schema version `1`
-- canonical event encoding version `1`
+- market types schema version `3`
+- event schema version `3`
+- canonical event encoding version `3`
 - exact time、decimal、quantity 與 instrument identity
 - `QuoteSnapshot`、`BookSnapshot`、`TradeBatch` payload shape
+- TWSE 與 TPEx quote annotations 的 market-specific typed view
 - `Set`／`Clear`／`NoObservation`／`Unknown` update semantics
 - TWSE quote flags 的 typed view
 - canonical bytes 的欄位順序與 primitive encoding
@@ -539,7 +540,7 @@ DomainEvent {
 ```
 
 event schema version 不重複存進每個 in-memory value 也可以，但 cache stream、
-canonical bytes 與 run manifest 必須明確包含 `event_schema_version = 1`。
+canonical bytes 與 run manifest 必須明確包含 `event_schema_version = 3`。
 
 `trading_date` 加入 envelope 是為了：
 
@@ -765,8 +766,8 @@ fixed field order：
 
 ```text
 1. magic bytes              = "OSME"
-2. canonical version        = u16(1)
-3. event schema version     = u16(1)
+2. canonical version        = u16(3)
+3. event schema version     = u16(3)
 4. market discriminant      = u8
 5. symbol                   = string
 6. trading_date epoch days  = i32

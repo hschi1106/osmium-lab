@@ -6,10 +6,11 @@ M4 是 M3 之後的第一個新 market vertical slice，只加入 TPEx 普通股
 `regular` session。M4 不同時承接權證、選擇權或 TPEx 零股；那些範圍移至 M5，
 避免在沒有實際 wire fixture 前猜測共用 mapping。
 
-目前狀態為 `specification: complete`、`implementation: not_started`。正式實作前
-必須先取得一份獲准的 Teralion TPEx fixture，固定 exact symbol、trading date、
-source formats 與 session calendar；symbol/date 未經 fixture gate 確認前，不得在
-config 或測試中填入 synthetic value。
+目前狀態為 `specification: complete`、`implementation: complete`、
+`formal_acceptance: complete`。已完成一份獲准的 Teralion TPEx fixture：symbol
+`6488`、trading date `2026-07-20`、17 頁完整 cursor source、regular session
+mapping 與五市場 offline acceptance。正式 evidence 位於
+[`docs/verification/evidence/m4/formal-2026-08-01/acceptance-report.yaml`](../verification/evidence/m4/formal-2026-08-01/acceptance-report.yaml)。
 
 ## 2. 範圍
 
@@ -116,7 +117,10 @@ format 滲入 replay engine 或 strategy API。
 
 M4 只有在 M4-AC-01..12 全部 `Passed`、formal report 沒有 `Blocked`／`Partial`／
 `NotRun`，且 TPEx fixture 與 source/cache lineage 可由新 checkout 重建時完成。
-完成後才可開始 M5；M5 不得把未完成的 TPEx work 隱含納入自身 scope。
+上述條件已由 network-disabled formal run 通過：五個 streams、250,745 events、
+10 次重跑、3 次 universe permutation、cache rebuild、debug/release 比對與
+corruption rejection 均 byte-identical 或明確拒絕。完成後才可開始 M5；M5 不得把
+已完成的 TPEx work 以外的未驗證 scope 隱含納入自身範圍。
 
 ## 8. References
 

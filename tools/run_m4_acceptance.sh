@@ -249,6 +249,13 @@ status: Passed
 completion_quality: full
 git_commit: $git_commit
 rust_toolchain: "$rust_toolchain"
+schema_versions:
+  market_types: 3
+  event_schema: 3
+  canonical_event: 3
+  market_state: 3
+  canonical_market_state: 3
+  canonical_final_state_set: 3
 scope:
   tpex_regular_equity: passed
   twse_and_taifex_regression: passed
@@ -305,6 +312,10 @@ EOF
 # Source/cache and repeated-run directories are derived and intentionally not committed.
 # The report, test logs and canonical artifact checksums are the durable evidence.
 rm -rf "$staging/data" "$staging/rebuild-data" "$staging/runs"
+find "$staging" -maxdepth 1 -name 'permutation-*.yaml' -delete
+find "$staging" -maxdepth 1 -name 'rebuild.yaml' -delete
+find "$staging/test-results" -maxdepth 1 -name '.left-files' -delete
+find "$staging/test-results" -maxdepth 1 -name '.right-files' -delete
 
 mv "$staging" "$output_path"
 trap - EXIT HUP INT TERM
