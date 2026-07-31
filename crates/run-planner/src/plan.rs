@@ -396,7 +396,11 @@ fn validate_partition(
         || !config
             .trading_dates()
             .contains(&partition.key.trading_date())
-        || config.session_kinds() != partition.key.session_kinds()
+        || !partition
+            .key
+            .session_kinds()
+            .iter()
+            .all(|kind| config.session_kinds().contains(kind))
     {
         return Err(PlanError::PartitionOutsideConfig(partition.key.identity()));
     }

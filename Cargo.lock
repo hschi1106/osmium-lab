@@ -632,6 +632,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "m3-config"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "data-sync",
+ "market-types",
+ "run-planner",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "strategy-api",
+ "tempfile",
+]
+
+[[package]]
 name = "market-state"
 version = "0.1.0"
 dependencies = [
@@ -678,6 +693,7 @@ dependencies = [
  "m1-runner",
  "m2-config",
  "m2-runner",
+ "m3-config",
  "market-state",
  "market-types",
  "replay-engine",

@@ -14,6 +14,9 @@ use execution_sim::{
     RoundingPolicy, Simulator,
 };
 use m2_config::{M2PlanBundle, load, plan};
+use m3_config::{
+    M3_CONFIG_VERSION, config_version as m3_config_version, load as load_m3, plan as plan_m3,
+};
 use market_state::{
     MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
 };
@@ -45,17 +48,30 @@ pub struct M2Command {
 pub fn execute(command: &M2Command) -> Result<String, M2CommandError> {
     match command.kind {
         M2CommandKind::Plan => execute_plan(&command.config),
-        M2CommandKind::Sync => execute_sync(&command.config),
-        M2CommandKind::Verify => execute_verify(&command.config),
-        M2CommandKind::Replay => execute_replay(&command.config),
-        M2CommandKind::Backtest => execute_backtest(
-            &command.config,
-            command
-                .output
-                .as_deref()
-                .ok_or(M2CommandError::OutputRequired)?,
-        ),
+        M2CommandKind::Sync => {
+            ensure_m2_config(&command.config)?;
+            execute_sync(&command.config)
+        }
+        M2CommandKind::Verify => {
+            ensure_m2_config(&command.config)?;
+            execute_verify(&command.config)
+        }
+        M2CommandKind::Replay => {
+            ensure_m2_config(&command.config)?;
+            execute_replay(&command.config)
+        }
+        M2CommandKind::Backtest => {
+            ensure_m2_config(&command.config)?;
+            execute_backtest(
+                &command.config,
+                command
+                    .output
+                    .as_deref()
+                    .ok_or(M2CommandError::OutputRequired)?,
+            )
+        }
         M2CommandKind::Run => {
+            ensure_m2_config(&command.config)?;
             let config = load(&command.config)?;
             let bundle = plan(config)?;
             if bundle.execution.network_requirement() == NetworkRequirement::Required {
@@ -82,6 +98,27 @@ pub fn execute_inspect(path: &Path) -> Result<String, M2CommandError> {
 }
 
 fn execute_plan(path: &Path) -> Result<String, M2CommandError> {
+    if m3_config_version(path)? == M3_CONFIG_VERSION {
+        let bundle = plan_m3(load_m3(path)?)?;
+        let mut output = format!(
+            "plan_identity={}\nnetwork_requirement={:?}\npartitions={}",
+            hex(bundle.execution.identity().as_bytes()),
+            bundle.execution.network_requirement(),
+            bundle.execution.partitions().len()
+        );
+        for (index, partition) in bundle.execution.partitions().iter().enumerate() {
+            output.push_str(&format!(
+                "\npartition[{index}]={:?}/{:?}@{} sessions={:?} source_action={:?} cache_action={:?}",
+                partition.key().instrument().market(),
+                partition.key().instrument().symbol(),
+                partition.key().trading_date(),
+                partition.key().session_kinds(),
+                partition.source_action(),
+                partition.cache_action(),
+            ));
+        }
+        return Ok(output);
+    }
     let bundle = plan(load(path)?)?;
     let partition = &bundle.execution.partitions()[0];
     Ok(format!(
@@ -91,6 +128,14 @@ fn execute_plan(path: &Path) -> Result<String, M2CommandError> {
         partition.source_action(),
         partition.cache_action()
     ))
+}
+
+fn ensure_m2_config(path: &Path) -> Result<(), M2CommandError> {
+    if m3_config_version(path)? == M3_CONFIG_VERSION {
+        Err(M2CommandError::M3Unsupported)
+    } else {
+        Ok(())
+    }
 }
 
 fn execute_sync(path: &Path) -> Result<String, M2CommandError> {
@@ -320,6 +365,7 @@ fn hex(bytes: &[u8]) -> String {
 #[derive(Debug)]
 pub enum M2CommandError {
     Config(m2_config::M2ConfigError),
+    M3Config(m3_config::M3ConfigError),
     Query(data_sync::QueryError),
     Transport(data_sync::TransportError),
     Sync(data_sync::SyncError),
@@ -336,6 +382,7 @@ pub enum M2CommandError {
     MissingCredential,
     CacheMissing,
     OutputRequired,
+    M3Unsupported,
     Other(String),
 }
 
@@ -348,7 +395,9 @@ impl M2CommandError {
             | Self::Normalizer(_)
             | Self::State(_)
             | Self::Strategy(_)
-            | Self::OutputRequired => 2,
+            | Self::OutputRequired
+            | Self::M3Config(_)
+            | Self::M3Unsupported => 2,
             Self::Verify(_)
             | Self::CacheBuild(_)
             | Self::CacheRead(_)
@@ -372,6 +421,7 @@ macro_rules! convert {
     };
 }
 convert!(Config, m2_config::M2ConfigError);
+convert!(M3Config, m3_config::M3ConfigError);
 convert!(Query, data_sync::QueryError);
 convert!(Transport, data_sync::TransportError);
 convert!(Sync, data_sync::SyncError);
@@ -403,5 +453,20 @@ mod tests {
         assert_eq!(M2CommandError::CacheMissing.exit_code(), 20);
         assert_eq!(M2CommandError::MissingCredential.exit_code(), 30);
         assert_eq!(M2CommandError::Other("internal".to_owned()).exit_code(), 1);
+    }
+
+    #[test]
+    fn m3_plan_command_lists_each_partition_without_source_access() {
+        let summary = execute(&M2Command {
+            kind: M2CommandKind::Plan,
+            config: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../config/m3-taifex-multi.yaml"),
+            output: None,
+        })
+        .unwrap();
+        assert!(summary.contains("partitions=4"));
+        assert!(summary.contains("TXFH6"));
+        assert!(summary.contains("AfterHours"));
+        assert!(summary.contains("CAFH6"));
     }
 }

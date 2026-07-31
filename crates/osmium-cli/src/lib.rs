@@ -19,7 +19,7 @@ Usage:
   osmium plan|sync|verify|replay|backtest|run --config <file> [--output <directory>]
   osmium inspect --run <run-directory>
 
-The M1 fixture root must contain metadata.yaml, regular-quotes/, and
+plan accepts M2 config_version 1 and M3 config_version 2. The M1 fixture root must contain metadata.yaml, regular-quotes/, and
 golden/fixture-set.sha256. The output directory must not already exist.
 ";
 
@@ -181,7 +181,7 @@ fn parse_m2(
                     flag.to_string_lossy()
                 )));
             }
-            _ => return Err(CliError::usage("unknown M2 option")),
+            _ => return Err(CliError::usage("unknown config option")),
         }
     }
     Ok(ParsedCommand::M2(M2Command {
