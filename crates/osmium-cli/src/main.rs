@@ -1,6 +1,8 @@
 use std::{env, process::ExitCode};
 
-use osmium_cli::{ParsedCommand, USAGE, execute_m2, execute_replay, parse_args};
+use osmium_cli::{
+    ParsedCommand, USAGE, execute_m2, execute_m2_inspect, execute_replay, parse_args,
+};
 
 fn main() -> ExitCode {
     match parse_args(env::args_os().skip(1)) {
@@ -36,6 +38,16 @@ fn main() -> ExitCode {
             Err(error) => {
                 eprintln!("error: {error}");
                 ExitCode::from(1)
+            }
+        },
+        Ok(ParsedCommand::Inspect(run)) => match execute_m2_inspect(&run) {
+            Ok(summary) => {
+                println!("{summary}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("error: {error}");
+                ExitCode::from(20)
             }
         },
         Err(error) => {

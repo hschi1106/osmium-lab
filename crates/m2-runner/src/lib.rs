@@ -9,6 +9,9 @@ use strategy_api::{
     TwseTradingContextEvaluator,
 };
 
+mod artifacts;
+pub use artifacts::{ArtifactError, InspectSummary, inspect_run, publish_backtest};
+
 pub const BACKTEST_COORDINATOR_VERSION: u16 = 1;
 
 #[derive(Debug)]
@@ -269,5 +272,18 @@ mod tests {
             run_backtest(core, strategy, &segment, [], simulator, ledger, None).unwrap();
         assert_eq!(completed.performance.fill_count, 0);
         assert_eq!(completed.replay.summary().event_count(), 0);
+
+        let root = tempfile::tempdir().unwrap();
+        let output = root.path().join("run");
+        publish_backtest(&output, &completed, &[7; 32], "source-1", "cache-1").unwrap();
+        let inspected = inspect_run(&output).unwrap();
+        assert_eq!(inspected.status, "successful");
+        assert_eq!(inspected.event_count, 0);
+
+        std::fs::write(output.join("ledger.bin"), b"corrupt").unwrap();
+        assert!(matches!(
+            inspect_run(&output),
+            Err(ArtifactError::Checksum(name)) if name == "ledger.bin"
+        ));
     }
 }

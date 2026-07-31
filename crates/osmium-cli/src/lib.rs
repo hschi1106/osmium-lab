@@ -8,12 +8,16 @@ use std::{
 use m1_runner::{ArtifactExportError, M1FixtureInput, M1RunError, M1RunSummary};
 
 mod m2;
-pub use m2::{M2Command, M2CommandError, M2CommandKind, execute as execute_m2};
+pub use m2::{
+    M2Command, M2CommandError, M2CommandKind, execute as execute_m2,
+    execute_inspect as execute_m2_inspect,
+};
 
 pub const USAGE: &str = "\
 Usage:
   osmium replay --fixture <fixture-root> --output <output-directory>
   osmium plan|sync|verify|replay|backtest|run --config <file> [--output <directory>]
+  osmium inspect --run <run-directory>
 
 The M1 fixture root must contain metadata.yaml, regular-quotes/, and
 golden/fixture-set.sha256. The output directory must not already exist.
@@ -24,6 +28,7 @@ pub enum ParsedCommand {
     Help,
     Replay(ReplayCommand),
     M2(M2Command),
+    Inspect(PathBuf),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +82,21 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<ParsedComm
     };
     if command == "--help" || command == "-h" {
         return Ok(ParsedCommand::Help);
+    }
+    if command == "inspect" {
+        let flag = args
+            .next()
+            .ok_or_else(|| CliError::usage("missing required --run option"))?;
+        if flag != "--run" {
+            return Err(CliError::usage("inspect requires --run <run-directory>"));
+        }
+        let run = args
+            .next()
+            .ok_or_else(|| CliError::usage("missing value for --run"))?;
+        if args.next().is_some() {
+            return Err(CliError::usage("unexpected inspect option"));
+        }
+        return Ok(ParsedCommand::Inspect(PathBuf::from(run)));
     }
     if let Some(kind) = match command.to_str() {
         Some("plan") => Some(M2CommandKind::Plan),
@@ -329,5 +349,23 @@ mod tests {
             assert!(error.is_usage_error());
             assert_eq!(error.exit_code(), 2);
         }
+    }
+
+    #[test]
+    fn inspect_requires_exactly_one_run_directory() {
+        assert_eq!(
+            parse_args(["inspect".into(), "--run".into(), "target/run".into()]).unwrap(),
+            ParsedCommand::Inspect("target/run".into())
+        );
+        assert!(parse_args(["inspect".into()]).is_err());
+        assert!(
+            parse_args([
+                "inspect".into(),
+                "--run".into(),
+                "target/run".into(),
+                "--orders".into()
+            ])
+            .is_err()
+        );
     }
 }
