@@ -1,17 +1,34 @@
-use std::{error::Error, fmt};
+use std::{collections::BTreeMap, error::Error, fmt};
 
-use market_types::Decimal;
+use market_types::{Decimal, InstrumentId, MarketId, QuantityUnit};
 use strategy_api::OrderSide;
 
 use crate::FillRecord;
 
-pub const ACCOUNTING_VERSION: u16 = 1;
+pub const ACCOUNTING_VERSION: u16 = 2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum AccountingModel {
+    EquityV1 = 1,
+    FuturesV1 = 2,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstrumentEconomics {
     pub units_per_trading_unit: u64,
     pub multiplier: Decimal,
     pub provenance: Box<str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstrumentLedgerConfig {
+    instrument: InstrumentId,
+    quantity_unit: QuantityUnit,
+    model: AccountingModel,
+    economics: InstrumentEconomics,
+    fee: ChargeModel,
+    tax: ChargeModel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +54,57 @@ pub struct ChargeModel {
     pub rounding: RoundingPolicy,
 }
 
+impl InstrumentLedgerConfig {
+    #[must_use]
+    pub fn new(
+        instrument: InstrumentId,
+        quantity_unit: QuantityUnit,
+        model: AccountingModel,
+        economics: InstrumentEconomics,
+        fee: ChargeModel,
+        tax: ChargeModel,
+    ) -> Self {
+        Self {
+            instrument,
+            quantity_unit,
+            model,
+            economics,
+            fee,
+            tax,
+        }
+    }
+
+    #[must_use]
+    pub const fn instrument(&self) -> &InstrumentId {
+        &self.instrument
+    }
+
+    #[must_use]
+    pub const fn quantity_unit(&self) -> QuantityUnit {
+        self.quantity_unit
+    }
+
+    #[must_use]
+    pub const fn model(&self) -> AccountingModel {
+        self.model
+    }
+
+    #[must_use]
+    pub const fn economics(&self) -> &InstrumentEconomics {
+        &self.economics
+    }
+
+    #[must_use]
+    pub const fn fee(&self) -> ChargeModel {
+        self.fee
+    }
+
+    #[must_use]
+    pub const fn tax(&self) -> ChargeModel {
+        self.tax
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ledger {
     initial_cash: Decimal,
@@ -50,6 +118,7 @@ pub struct Ledger {
     economics: InstrumentEconomics,
     fee: ChargeModel,
     tax: ChargeModel,
+    accounting_model: AccountingModel,
 }
 
 impl Ledger {
@@ -59,6 +128,17 @@ impl Ledger {
         economics: InstrumentEconomics,
         fee: ChargeModel,
         tax: ChargeModel,
+    ) -> Self {
+        Self::new_with_model(initial_cash, economics, fee, tax, AccountingModel::EquityV1)
+    }
+
+    #[must_use]
+    pub fn new_with_model(
+        initial_cash: Decimal,
+        economics: InstrumentEconomics,
+        fee: ChargeModel,
+        tax: ChargeModel,
+        accounting_model: AccountingModel,
     ) -> Self {
         Self {
             initial_cash,
@@ -72,6 +152,7 @@ impl Ledger {
             economics,
             fee,
             tax,
+            accounting_model,
         }
     }
 
@@ -93,9 +174,12 @@ impl Ledger {
             price,
             &self.economics,
         )?;
-        let cash_delta = match fill.side() {
-            OrderSide::Buy => checked_neg(checked_add(checked_add(notional, fee)?, tax)?)?,
-            OrderSide::Sell => checked_sub(checked_sub(notional, fee)?, tax)?,
+        let cash_delta = match self.accounting_model {
+            AccountingModel::EquityV1 => match fill.side() {
+                OrderSide::Buy => checked_neg(checked_add(checked_add(notional, fee)?, tax)?)?,
+                OrderSide::Sell => checked_sub(checked_sub(notional, fee)?, tax)?,
+            },
+            AccountingModel::FuturesV1 => checked_sub(checked_sub(realized_delta, fee)?, tax)?,
         };
         let next_cash = checked_add(self.cash, cash_delta)?;
         let next_fee = checked_add(self.total_fee, fee)?;
@@ -113,11 +197,12 @@ impl Ledger {
     }
 
     pub fn reconcile(&self) -> Result<(), AccountingError> {
-        let mut rebuilt = Self::new(
+        let mut rebuilt = Self::new_with_model(
             self.initial_cash,
             self.economics.clone(),
             self.fee,
             self.tax,
+            self.accounting_model,
         );
         for fill in self.fills.clone() {
             rebuilt.apply_fill(fill)?;
@@ -179,8 +264,21 @@ impl Ledger {
         self.realized_pnl
     }
     #[must_use]
+    pub const fn average_cost(&self) -> Option<Decimal> {
+        self.average_cost
+    }
+    #[must_use]
+    pub const fn economics(&self) -> &InstrumentEconomics {
+        &self.economics
+    }
+    #[must_use]
     pub fn fills(&self) -> &[FillRecord] {
         &self.fills
+    }
+
+    #[must_use]
+    pub const fn accounting_model(&self) -> AccountingModel {
+        self.accounting_model
     }
 }
 
@@ -205,7 +303,9 @@ fn validate_models(
         || economics.multiplier.atoms() <= 0
         || economics.provenance.is_empty()
         || fee.rate.atoms() < 0
+        || fee.minimum.atoms() < 0
         || tax.rate.atoms() < 0
+        || tax.minimum.atoms() < 0
         || fee.precision > 18
         || tax.precision > 18
     {
@@ -323,9 +423,13 @@ fn transition_position(
         let total = previous_value
             .checked_add(added_value)
             .ok_or(AccountingError::Overflow)?;
+        let divisor = i128::try_from(next.unsigned_abs()).map_err(|_| AccountingError::Overflow)?;
+        if total % divisor != 0 {
+            return Err(AccountingError::PrecisionLoss);
+        }
         return Ok((
             next,
-            Some(Decimal::from_atoms(total / next.unsigned_abs() as i128)),
+            Some(Decimal::from_atoms(total / divisor)),
             Decimal::ZERO,
         ));
     }
@@ -379,13 +483,289 @@ fn checked_neg(value: Decimal) -> Result<Decimal, AccountingError> {
     value.checked_neg().map_err(|_| AccountingError::Overflow)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstrumentPerformance {
+    instrument: InstrumentId,
+    quantity_unit: QuantityUnit,
+    accounting_model: AccountingModel,
+    economics: InstrumentEconomics,
+    average_cost: Option<Decimal>,
+    summary: PerformanceSummary,
+}
+
+impl InstrumentPerformance {
+    #[must_use]
+    pub const fn instrument(&self) -> &InstrumentId {
+        &self.instrument
+    }
+
+    #[must_use]
+    pub const fn accounting_model(&self) -> AccountingModel {
+        self.accounting_model
+    }
+
+    #[must_use]
+    pub const fn quantity_unit(&self) -> QuantityUnit {
+        self.quantity_unit
+    }
+
+    #[must_use]
+    pub const fn economics(&self) -> &InstrumentEconomics {
+        &self.economics
+    }
+
+    #[must_use]
+    pub const fn average_cost(&self) -> Option<Decimal> {
+        self.average_cost
+    }
+
+    #[must_use]
+    pub const fn summary(&self) -> PerformanceSummary {
+        self.summary
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MultiPerformanceSummary {
+    initial_cash: Decimal,
+    final_cash: Decimal,
+    realized_pnl: Decimal,
+    unrealized_pnl: Decimal,
+    total_fee: Decimal,
+    total_tax: Decimal,
+    fill_count: u64,
+    instruments: Box<[InstrumentPerformance]>,
+}
+
+impl MultiPerformanceSummary {
+    #[must_use]
+    pub const fn initial_cash(&self) -> Decimal {
+        self.initial_cash
+    }
+
+    #[must_use]
+    pub const fn final_cash(&self) -> Decimal {
+        self.final_cash
+    }
+
+    #[must_use]
+    pub const fn realized_pnl(&self) -> Decimal {
+        self.realized_pnl
+    }
+
+    #[must_use]
+    pub const fn unrealized_pnl(&self) -> Decimal {
+        self.unrealized_pnl
+    }
+
+    #[must_use]
+    pub const fn total_fee(&self) -> Decimal {
+        self.total_fee
+    }
+
+    #[must_use]
+    pub const fn total_tax(&self) -> Decimal {
+        self.total_tax
+    }
+
+    #[must_use]
+    pub const fn fill_count(&self) -> u64 {
+        self.fill_count
+    }
+
+    #[must_use]
+    pub const fn instruments(&self) -> &[InstrumentPerformance] {
+        &self.instruments
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InstrumentLedger {
+    quantity_unit: QuantityUnit,
+    model: AccountingModel,
+    ledger: Ledger,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MultiLedger {
+    initial_cash: Decimal,
+    cash: Decimal,
+    ledgers: BTreeMap<InstrumentId, InstrumentLedger>,
+}
+
+impl MultiLedger {
+    pub fn new(
+        initial_cash: Decimal,
+        configs: impl IntoIterator<Item = InstrumentLedgerConfig>,
+    ) -> Result<Self, AccountingError> {
+        if initial_cash.atoms() < 0 {
+            return Err(AccountingError::InvalidModel);
+        }
+        let mut ledgers = BTreeMap::new();
+        for config in configs {
+            if !model_matches_market(config.instrument(), config.model())
+                || config.quantity_unit() == QuantityUnit::SourceUnit
+            {
+                return Err(AccountingError::AccountingModelMismatch(
+                    config.instrument().clone(),
+                ));
+            }
+            validate_models(config.economics(), config.fee(), config.tax())?;
+            let instrument = config.instrument().clone();
+            let entry = InstrumentLedger {
+                quantity_unit: config.quantity_unit(),
+                model: config.model(),
+                ledger: Ledger::new_with_model(
+                    Decimal::ZERO,
+                    config.economics().clone(),
+                    config.fee(),
+                    config.tax(),
+                    config.model(),
+                ),
+            };
+            if ledgers.insert(instrument.clone(), entry).is_some() {
+                return Err(AccountingError::DuplicateInstrument(instrument));
+            }
+        }
+        if ledgers.is_empty() {
+            return Err(AccountingError::EmptyUniverse);
+        }
+        Ok(Self {
+            initial_cash,
+            cash: initial_cash,
+            ledgers,
+        })
+    }
+
+    pub fn apply_fill(
+        &mut self,
+        instrument: &InstrumentId,
+        fill: FillRecord,
+    ) -> Result<(), AccountingError> {
+        let entry = self
+            .ledgers
+            .get_mut(instrument)
+            .ok_or_else(|| AccountingError::UnknownInstrument(instrument.clone()))?;
+        if fill.quantity().unit() != entry.quantity_unit {
+            return Err(AccountingError::QuantityUnitMismatch {
+                expected: entry.quantity_unit,
+                actual: fill.quantity().unit(),
+            });
+        }
+        let mut next = entry.ledger.clone();
+        next.apply_fill(fill)?;
+        let cash_delta = checked_sub(next.cash(), entry.ledger.cash())?;
+        let next_cash = checked_add(self.cash, cash_delta)?;
+        entry.ledger = next;
+        self.cash = next_cash;
+        Ok(())
+    }
+
+    pub fn reconcile(&self) -> Result<(), AccountingError> {
+        let mut rebuilt_cash = self.initial_cash;
+        for entry in self.ledgers.values() {
+            if entry.ledger.accounting_model() != entry.model {
+                return Err(AccountingError::Reconciliation);
+            }
+            entry.ledger.reconcile()?;
+            rebuilt_cash = checked_add(rebuilt_cash, entry.ledger.cash())?;
+        }
+        if rebuilt_cash != self.cash {
+            return Err(AccountingError::Reconciliation);
+        }
+        Ok(())
+    }
+
+    pub fn performance(
+        &self,
+        final_marks: &BTreeMap<InstrumentId, Option<Decimal>>,
+    ) -> Result<MultiPerformanceSummary, AccountingError> {
+        let mut realized_pnl = Decimal::ZERO;
+        let mut unrealized_pnl = Decimal::ZERO;
+        let mut total_fee = Decimal::ZERO;
+        let mut total_tax = Decimal::ZERO;
+        let mut fill_count = 0_u64;
+        let mut instruments = Vec::with_capacity(self.ledgers.len());
+        for (instrument, entry) in &self.ledgers {
+            let mark = final_marks.get(instrument).copied().flatten();
+            let summary = entry.ledger.performance(mark)?;
+            if entry.ledger.position() != 0 && summary.unrealized_pnl.is_none() {
+                return Err(AccountingError::MissingFinalMark(instrument.clone()));
+            }
+            realized_pnl = checked_add(realized_pnl, summary.realized_pnl)?;
+            unrealized_pnl = checked_add(
+                unrealized_pnl,
+                summary.unrealized_pnl.unwrap_or(Decimal::ZERO),
+            )?;
+            total_fee = checked_add(total_fee, summary.total_fee)?;
+            total_tax = checked_add(total_tax, summary.total_tax)?;
+            fill_count = fill_count
+                .checked_add(summary.fill_count)
+                .ok_or(AccountingError::Overflow)?;
+            instruments.push(InstrumentPerformance {
+                instrument: instrument.clone(),
+                quantity_unit: entry.quantity_unit,
+                accounting_model: entry.model,
+                economics: entry.ledger.economics().clone(),
+                average_cost: entry.ledger.average_cost(),
+                summary,
+            });
+        }
+        Ok(MultiPerformanceSummary {
+            initial_cash: self.initial_cash,
+            final_cash: self.cash,
+            realized_pnl,
+            unrealized_pnl,
+            total_fee,
+            total_tax,
+            fill_count,
+            instruments: instruments.into_boxed_slice(),
+        })
+    }
+
+    #[must_use]
+    pub const fn initial_cash(&self) -> Decimal {
+        self.initial_cash
+    }
+
+    #[must_use]
+    pub const fn cash(&self) -> Decimal {
+        self.cash
+    }
+
+    pub fn instruments(&self) -> impl Iterator<Item = &InstrumentId> {
+        self.ledgers.keys()
+    }
+
+    #[must_use]
+    pub fn ledger(&self, instrument: &InstrumentId) -> Option<&Ledger> {
+        self.ledgers.get(instrument).map(|entry| &entry.ledger)
+    }
+}
+
+fn model_matches_market(instrument: &InstrumentId, model: AccountingModel) -> bool {
+    match instrument.market() {
+        MarketId::Taifex => model == AccountingModel::FuturesV1,
+        MarketId::Twse | MarketId::Tpex => model == AccountingModel::EquityV1,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AccountingError {
     InvalidModel,
     Overflow,
     PrecisionLoss,
     MissingCostBasis,
     Reconciliation,
+    EmptyUniverse,
+    DuplicateInstrument(InstrumentId),
+    UnknownInstrument(InstrumentId),
+    QuantityUnitMismatch {
+        expected: QuantityUnit,
+        actual: QuantityUnit,
+    },
+    AccountingModelMismatch(InstrumentId),
+    MissingFinalMark(InstrumentId),
 }
 
 impl fmt::Display for AccountingError {
@@ -398,7 +778,7 @@ impl Error for AccountingError {}
 
 #[cfg(test)]
 mod tests {
-    use market_types::{MatchTime, Price, Quantity, QuantityUnit};
+    use market_types::{InstrumentId, MarketId, MatchTime, Price, Quantity, QuantityUnit, Symbol};
     use strategy_api::OrderId;
 
     use super::*;
@@ -427,13 +807,17 @@ mod tests {
     }
 
     fn fill(side: OrderSide, price: &str, quantity: u64) -> FillRecord {
+        fill_in(side, price, quantity, QuantityUnit::TradingUnit)
+    }
+
+    fn fill_in(side: OrderSide, price: &str, quantity: u64, unit: QuantityUnit) -> FillRecord {
         FillRecord {
             order_id: OrderId::from_bytes([1; 32]),
             triggering_ordinal: 1,
             match_time: MatchTime::from_unix_microseconds(1),
             side,
             price: Price::parse(price).unwrap(),
-            quantity: Quantity::new(quantity, QuantityUnit::TradingUnit).unwrap(),
+            quantity: Quantity::new(quantity, unit).unwrap(),
         }
     }
 
@@ -484,5 +868,184 @@ mod tests {
         assert_eq!(ledger.cash(), "9995000".parse().unwrap());
         assert_eq!(ledger.realized_pnl(), "-5000".parse().unwrap());
         ledger.reconcile().unwrap();
+    }
+
+    #[test]
+    fn futures_cash_moves_only_on_realized_pnl_and_costs() {
+        let zero = model(ChargeSides::Both);
+        let mut ledger = Ledger::new_with_model(
+            Decimal::ZERO,
+            InstrumentEconomics {
+                units_per_trading_unit: 1,
+                multiplier: "200".parse().unwrap(),
+                provenance: "TAIFEX contract multiplier fixture".into(),
+            },
+            zero,
+            zero,
+            AccountingModel::FuturesV1,
+        );
+
+        ledger
+            .apply_fill(fill_in(OrderSide::Buy, "100", 1, QuantityUnit::Contract))
+            .unwrap();
+        assert_eq!(ledger.cash(), Decimal::ZERO);
+        assert_eq!(ledger.position(), 1);
+        assert_eq!(ledger.realized_pnl(), Decimal::ZERO);
+        assert_eq!(
+            ledger
+                .performance(Some("105".parse().unwrap()))
+                .unwrap()
+                .unrealized_pnl,
+            Some("1000".parse().unwrap())
+        );
+
+        ledger
+            .apply_fill(fill_in(OrderSide::Sell, "105", 1, QuantityUnit::Contract))
+            .unwrap();
+        assert_eq!(ledger.cash(), "1000".parse().unwrap());
+        assert_eq!(ledger.realized_pnl(), "1000".parse().unwrap());
+        assert_eq!(ledger.position(), 0);
+        assert_eq!(
+            ledger.performance(None).unwrap().unrealized_pnl,
+            Some(Decimal::ZERO)
+        );
+        ledger.reconcile().unwrap();
+    }
+
+    #[test]
+    fn futures_short_close_uses_signed_closed_quantity() {
+        let zero = model(ChargeSides::Both);
+        let mut ledger = Ledger::new_with_model(
+            Decimal::ZERO,
+            InstrumentEconomics {
+                units_per_trading_unit: 1,
+                multiplier: "200".parse().unwrap(),
+                provenance: "TAIFEX contract multiplier fixture".into(),
+            },
+            zero,
+            zero,
+            AccountingModel::FuturesV1,
+        );
+        ledger
+            .apply_fill(fill_in(OrderSide::Sell, "100", 1, QuantityUnit::Contract))
+            .unwrap();
+        ledger
+            .apply_fill(fill_in(OrderSide::Buy, "95", 1, QuantityUnit::Contract))
+            .unwrap();
+        assert_eq!(ledger.cash(), "1000".parse().unwrap());
+        assert_eq!(ledger.realized_pnl(), "1000".parse().unwrap());
+        assert_eq!(ledger.position(), 0);
+    }
+
+    #[test]
+    fn multi_ledger_reconciles_equity_and_futures_cash_separately() {
+        let twse = InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap());
+        let taifex = InstrumentId::new(MarketId::Taifex, Symbol::new("TXFH6").unwrap());
+        let zero = model(ChargeSides::Both);
+        let mut ledger = MultiLedger::new(
+            "1000000".parse().unwrap(),
+            [
+                InstrumentLedgerConfig::new(
+                    twse.clone(),
+                    QuantityUnit::TradingUnit,
+                    AccountingModel::EquityV1,
+                    InstrumentEconomics {
+                        units_per_trading_unit: 1000,
+                        multiplier: "1".parse().unwrap(),
+                        provenance: "TWSE trading unit fixture".into(),
+                    },
+                    zero,
+                    zero,
+                ),
+                InstrumentLedgerConfig::new(
+                    taifex.clone(),
+                    QuantityUnit::Contract,
+                    AccountingModel::FuturesV1,
+                    InstrumentEconomics {
+                        units_per_trading_unit: 1,
+                        multiplier: "200".parse().unwrap(),
+                        provenance: "TAIFEX contract multiplier fixture".into(),
+                    },
+                    zero,
+                    zero,
+                ),
+            ],
+        )
+        .unwrap();
+        ledger
+            .apply_fill(
+                &twse,
+                fill_in(OrderSide::Buy, "100", 1, QuantityUnit::TradingUnit),
+            )
+            .unwrap();
+        ledger
+            .apply_fill(
+                &taifex,
+                fill_in(OrderSide::Buy, "100", 1, QuantityUnit::Contract),
+            )
+            .unwrap();
+        ledger
+            .apply_fill(
+                &taifex,
+                fill_in(OrderSide::Sell, "105", 1, QuantityUnit::Contract),
+            )
+            .unwrap();
+        ledger
+            .apply_fill(
+                &twse,
+                fill_in(OrderSide::Sell, "110", 1, QuantityUnit::TradingUnit),
+            )
+            .unwrap();
+
+        assert_eq!(ledger.cash(), "1011000".parse().unwrap());
+        ledger.reconcile().unwrap();
+        let marks = BTreeMap::from([(twse.clone(), None), (taifex.clone(), None)]);
+        let performance = ledger.performance(&marks).unwrap();
+        assert_eq!(performance.final_cash(), ledger.cash());
+        assert_eq!(performance.realized_pnl(), "11000".parse().unwrap());
+        assert_eq!(performance.instruments().len(), 2);
+        assert_eq!(performance.instruments()[0].instrument(), &twse);
+        assert_eq!(
+            performance.instruments()[0].accounting_model(),
+            AccountingModel::EquityV1
+        );
+        assert_eq!(performance.instruments()[1].instrument(), &taifex);
+        assert_eq!(
+            performance.instruments()[1].accounting_model(),
+            AccountingModel::FuturesV1
+        );
+    }
+
+    #[test]
+    fn multi_ledger_requires_a_mark_for_open_positions() {
+        let instrument = InstrumentId::new(MarketId::Taifex, Symbol::new("TXFH6").unwrap());
+        let zero = model(ChargeSides::Both);
+        let mut ledger = MultiLedger::new(
+            Decimal::ZERO,
+            [InstrumentLedgerConfig::new(
+                instrument.clone(),
+                QuantityUnit::Contract,
+                AccountingModel::FuturesV1,
+                InstrumentEconomics {
+                    units_per_trading_unit: 1,
+                    multiplier: "200".parse().unwrap(),
+                    provenance: "TAIFEX contract multiplier fixture".into(),
+                },
+                zero,
+                zero,
+            )],
+        )
+        .unwrap();
+        ledger
+            .apply_fill(
+                &instrument,
+                fill_in(OrderSide::Buy, "100", 1, QuantityUnit::Contract),
+            )
+            .unwrap();
+        let marks = BTreeMap::from([(instrument.clone(), None)]);
+        assert!(matches!(
+            ledger.performance(&marks),
+            Err(AccountingError::MissingFinalMark(actual)) if actual == instrument
+        ));
     }
 }

@@ -11,8 +11,9 @@ use data_sync::{
     TeralionCredential, TeralionQuery, TeralionSync,
 };
 use execution_sim::{
-    ChargeModel, ChargeSides, EvidenceMode, FillModel, InstrumentEconomics, Ledger, MultiSimulator,
-    QuantityPolicy, RoundingPolicy, Simulator,
+    AccountingModel, ChargeModel, ChargeSides, EvidenceMode, FillModel, InstrumentEconomics,
+    InstrumentLedgerConfig, Ledger, MultiLedger, MultiSimulator, QuantityPolicy, RoundingPolicy,
+    Simulator,
 };
 use m2_config::{M2PlanBundle, load, plan};
 use m3_config::{
@@ -670,9 +671,48 @@ fn execute_m3_backtest(path: &Path, output: &Path) -> Result<String, M2CommandEr
                 )
             },
         ))?;
+    let ledger = MultiLedger::new(
+        simulation.initial_cash().amount(),
+        bundle
+            .execution
+            .config()
+            .instrument_economics()
+            .iter()
+            .map(|economics| {
+                let model = match economics.instrument().market() {
+                    MarketId::Taifex => AccountingModel::FuturesV1,
+                    MarketId::Twse | MarketId::Tpex => AccountingModel::EquityV1,
+                };
+                InstrumentLedgerConfig::new(
+                    economics.instrument().clone(),
+                    economics.quantity_unit(),
+                    model,
+                    InstrumentEconomics {
+                        units_per_trading_unit: economics.units_per_trading_unit(),
+                        multiplier: economics.multiplier(),
+                        provenance: economics.provenance().into(),
+                    },
+                    charge(simulation.fee_model()),
+                    charge(simulation.tax_model()),
+                )
+            }),
+    )?;
+    let allow_midpoint_fallback = match simulation.marking_policy() {
+        run_planner::MarkingPolicyConfig::LastObservableV1 {
+            allow_midpoint_fallback,
+        } => allow_midpoint_fallback,
+    };
     let mut factory = data_sync::LocalCacheFactory::new_partitioned(config.effective().data_root());
-    let completed =
-        m2_runner::run_multi_backtest(core, strategy, replay, &mut factory, &schedule, simulator)?;
+    let completed = m2_runner::run_multi_backtest(
+        core,
+        strategy,
+        replay,
+        &mut factory,
+        &schedule,
+        simulator,
+        ledger,
+        allow_midpoint_fallback,
+    )?;
     let mut source_lineage = Vec::new();
     let mut cache_lineage = Vec::new();
     for partition in bundle.execution.partitions() {
@@ -703,10 +743,13 @@ fn execute_m3_backtest(path: &Path, output: &Path) -> Result<String, M2CommandEr
         &cache_identity,
     )?;
     Ok(format!(
-        "backtest=strategy_simulated\nevents={}\norders={}\nfills={}\noutput={}",
+        "backtest=complete\nevents={}\norders={}\nfills={}\nfinal_cash_atoms={}\nrealized_pnl_atoms={}\nunrealized_pnl_atoms={}\noutput={}",
         completed.replay.summary().event_count(),
         completed.simulator.order_count(),
         completed.simulator.fill_count(),
+        completed.performance.final_cash().atoms(),
+        completed.performance.realized_pnl().atoms(),
+        completed.performance.unrealized_pnl().atoms(),
         output.display()
     ))
 }
@@ -795,6 +838,7 @@ pub enum M2CommandError {
     Context(strategy_api::ContextError),
     Strategy(strategy_api::DeclarationError),
     Simulation(execution_sim::SimulationError),
+    Accounting(execution_sim::AccountingError),
     Backtest(m2_runner::BacktestError),
     MultiBacktest(m2_runner::MultiBacktestError),
     Artifact(m2_runner::ArtifactError),
@@ -829,9 +873,11 @@ impl M2CommandError {
             | Self::Artifact(_)
             | Self::CacheMissing => 20,
             Self::Transport(_) | Self::Sync(_) | Self::MissingCredential => 30,
-            Self::Replay(_) | Self::Backtest(_) | Self::MultiBacktest(_) | Self::Simulation(_) => {
-                50
-            }
+            Self::Replay(_)
+            | Self::Backtest(_)
+            | Self::MultiBacktest(_)
+            | Self::Simulation(_)
+            | Self::Accounting(_) => 50,
             Self::Partition(_) | Self::Io(_) | Self::ReplayContextWindow(_) | Self::Other(_) => 1,
         }
     }
@@ -862,6 +908,7 @@ convert!(State, market_state::SessionSegmentIdError);
 convert!(Context, strategy_api::ContextError);
 convert!(Strategy, strategy_api::DeclarationError);
 convert!(Simulation, execution_sim::SimulationError);
+convert!(Accounting, execution_sim::AccountingError);
 convert!(Backtest, m2_runner::BacktestError);
 convert!(MultiBacktest, m2_runner::MultiBacktestError);
 convert!(Artifact, m2_runner::ArtifactError);

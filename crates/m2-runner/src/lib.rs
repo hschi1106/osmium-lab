@@ -1,6 +1,9 @@
 use std::{collections::BTreeMap, error::Error, fmt};
 
-use execution_sim::{Ledger, MultiSimulator, PerformanceSummary, Simulator};
+use execution_sim::{
+    Ledger, MultiLedger, MultiPerformanceSummary, MultiSimulator, PerformanceSummary, Simulator,
+};
+use market_state::LastTrade;
 use market_types::{Decimal, DomainEvent, InstrumentId};
 use replay_engine::{
     CompletedReplay, CoreCommit, EventStream, ReplayCore, ReplayPlan, ReplayStreamFactory,
@@ -95,8 +98,11 @@ pub struct CompletedMultiBacktest {
     pub replay: CompletedReplay,
     pub strategy_output: StrategyOutput,
     pub simulator: MultiSimulator,
+    pub ledger: MultiLedger,
+    pub performance: MultiPerformanceSummary,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run_multi_backtest<S: Strategy, F: ReplayStreamFactory>(
     mut core: ReplayCore,
     mut strategy: S,
@@ -104,6 +110,8 @@ pub fn run_multi_backtest<S: Strategy, F: ReplayStreamFactory>(
     factory: &mut F,
     schedule: &MultiSessionSchedule,
     mut simulator: MultiSimulator,
+    mut ledger: MultiLedger,
+    allow_midpoint_fallback: bool,
 ) -> Result<CompletedMultiBacktest, MultiBacktestError> {
     let declaration = strategy.declaration();
     let core_instruments = core
@@ -113,6 +121,7 @@ pub fn run_multi_backtest<S: Strategy, F: ReplayStreamFactory>(
     if declaration.universe() != core_instruments.as_slice()
         || schedule.instruments().cloned().collect::<Vec<_>>() != core_instruments
         || simulator.instruments().cloned().collect::<Vec<_>>() != core_instruments
+        || ledger.instruments().cloned().collect::<Vec<_>>() != core_instruments
     {
         return Err(MultiBacktestError::Declaration);
     }
@@ -147,6 +156,7 @@ pub fn run_multi_backtest<S: Strategy, F: ReplayStreamFactory>(
             &mut current_segments,
             &mut last_contexts,
             &mut simulator,
+            &mut ledger,
             &mut output,
         )
         .map_err(|error| error.to_string().into_boxed_str())
@@ -190,6 +200,15 @@ pub fn run_multi_backtest<S: Strategy, F: ReplayStreamFactory>(
         )?;
     }
     let states = core.states().map(|state| state.view()).collect::<Vec<_>>();
+    let marks = states
+        .iter()
+        .map(|state| {
+            (
+                state.instrument().clone(),
+                final_mark(*state, allow_midpoint_fallback),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
     let mut sink = StrategyOutputSink::new();
     strategy
         .finalize(
@@ -201,6 +220,12 @@ pub fn run_multi_backtest<S: Strategy, F: ReplayStreamFactory>(
         sink.into_finalize_records()
             .map_err(|error| MultiBacktestError::Strategy(error.to_string()))?,
     );
+    ledger
+        .reconcile()
+        .map_err(|error| MultiBacktestError::Accounting(error.to_string()))?;
+    let performance = ledger
+        .performance(&marks)
+        .map_err(|error| MultiBacktestError::Accounting(error.to_string()))?;
     let replay = core
         .complete()
         .map_err(|error| MultiBacktestError::Replay(error.to_string()))?;
@@ -208,6 +233,8 @@ pub fn run_multi_backtest<S: Strategy, F: ReplayStreamFactory>(
         replay,
         strategy_output: output,
         simulator,
+        ledger,
+        performance,
     })
 }
 
@@ -224,6 +251,7 @@ fn process_multi_event<S: Strategy>(
         (replay_engine::EventOccurrence, strategy_api::TradingContext),
     >,
     simulator: &mut MultiSimulator,
+    ledger: &mut MultiLedger,
     output: &mut StrategyOutput,
 ) -> Result<(), MultiBacktestError> {
     let segment = schedule
@@ -288,11 +316,22 @@ fn process_multi_event<S: Strategy>(
                 .map_err(|error| MultiBacktestError::Simulation(error.to_string()))?,
         );
     }
+    let previous_fill_count = simulator
+        .fills_for(event.instrument())
+        .map_or(0, <[execution_sim::FillRecord]>::len);
     feedback.extend(
         simulator
             .evaluate(event, commit.occurrence(), &trading)
             .map_err(|error| MultiBacktestError::Simulation(error.to_string()))?,
     );
+    let fills = simulator
+        .fills_for(event.instrument())
+        .ok_or(MultiBacktestError::Declaration)?;
+    for fill in fills[previous_fill_count..].iter().cloned() {
+        ledger
+            .apply_fill(event.instrument(), fill)
+            .map_err(|error| MultiBacktestError::Accounting(error.to_string()))?;
+    }
     process_multi_feedback(
         strategy,
         commit.occurrence(),
@@ -307,6 +346,27 @@ fn process_multi_event<S: Strategy>(
         (commit.occurrence().clone(), trading),
     );
     Ok(())
+}
+
+fn final_mark(
+    state: market_state::MarketStateView<'_>,
+    allow_midpoint_fallback: bool,
+) -> Option<Decimal> {
+    if let LastTrade::Known(trade) = state.last_trade() {
+        return Some(trade.price().as_decimal());
+    }
+    if !allow_midpoint_fallback {
+        return None;
+    }
+    let (Some(bid), Some(ask)) = (state.best_bid(), state.best_ask()) else {
+        return None;
+    };
+    let sum = bid
+        .price()
+        .as_decimal()
+        .atoms()
+        .checked_add(ask.price().as_decimal().atoms())?;
+    (sum % 2 == 0).then(|| Decimal::from_atoms(sum / 2))
 }
 
 fn process_multi_feedback<S: Strategy>(
@@ -572,6 +632,7 @@ pub enum MultiBacktestError {
     Context(String),
     Strategy(String),
     Simulation(String),
+    Accounting(String),
     Sequence,
     IntentAfterEnd,
 }
@@ -595,8 +656,8 @@ impl Error for BacktestError {}
 #[cfg(test)]
 mod tests {
     use execution_sim::{
-        ChargeModel, ChargeSides, EvidenceMode, FillModel, InstrumentEconomics, QuantityPolicy,
-        RoundingPolicy,
+        AccountingModel, ChargeModel, ChargeSides, EvidenceMode, FillModel, InstrumentEconomics,
+        InstrumentLedgerConfig, MultiLedger, QuantityPolicy, RoundingPolicy,
     };
     use market_state::{
         MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
@@ -796,6 +857,34 @@ mod tests {
             },
         )])
         .unwrap();
+        let ledger = MultiLedger::new(
+            Decimal::parse("1000000").unwrap(),
+            [InstrumentLedgerConfig::new(
+                instrument.clone(),
+                QuantityUnit::Contract,
+                AccountingModel::FuturesV1,
+                InstrumentEconomics {
+                    units_per_trading_unit: 1,
+                    multiplier: Decimal::parse("200").unwrap(),
+                    provenance: "test TAIFEX multiplier".into(),
+                },
+                ChargeModel {
+                    rate: Decimal::ZERO,
+                    sides: ChargeSides::Both,
+                    minimum: Decimal::ZERO,
+                    precision: 0,
+                    rounding: RoundingPolicy::Down,
+                },
+                ChargeModel {
+                    rate: Decimal::ZERO,
+                    sides: ChargeSides::Sell,
+                    minimum: Decimal::ZERO,
+                    precision: 0,
+                    rounding: RoundingPolicy::Down,
+                },
+            )],
+        )
+        .unwrap();
         let completed = run_multi_backtest(
             core,
             strategy,
@@ -803,6 +892,8 @@ mod tests {
             &mut MultiFactory { events },
             &schedule,
             simulator,
+            ledger,
+            false,
         )
         .unwrap();
         assert_eq!(completed.replay.summary().event_count(), 3);
@@ -812,8 +903,20 @@ mod tests {
         let output = root.path().join("m3-run");
         publish_multi_backtest(&output, &completed, &[6; 32], "source", "cache").unwrap();
         let inspected = inspect_run(&output).unwrap();
-        assert_eq!(inspected.status, "strategy_simulated");
+        assert_eq!(inspected.status, "successful");
         assert_eq!(inspected.order_count, 2);
         assert_eq!(inspected.fill_count, 2);
+        assert_eq!(
+            std::fs::read(output.join("warnings.yaml")).unwrap(),
+            b"warnings: []\n"
+        );
+        assert!(
+            std::fs::read(output.join("ledger.bin"))
+                .unwrap()
+                .starts_with(b"OSLEDGR1")
+        );
+        let performance = std::fs::read_to_string(output.join("performance.yaml")).unwrap();
+        assert!(performance.contains("accounting_version: 2"));
+        assert!(performance.contains("Taifex:TXFH6"));
     }
 }

@@ -9,11 +9,11 @@ position accounting、P&L、feedback、reconciliation 與 canonical artifacts。
 execution_sim_version       = 1
 order_schema_version        = 1
 fill_model_version          = 1
-ledger_schema_version       = 1
+ledger_schema_version       = 2
 position_accounting_version = 1
 canonical_order_version     = 1
 canonical_fill_version      = 1
-canonical_ledger_version    = 1
+canonical_ledger_version    = 2
 result_schema_version       = 1
 ```
 
