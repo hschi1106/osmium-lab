@@ -9,7 +9,10 @@ use std::{
 use market_types::{
     CANONICAL_EVENT_VERSION, DomainEvent, EVENT_SCHEMA_VERSION, MARKET_TYPES_VERSION, MatchTime,
 };
-use replay_engine::{ORDERING_RULE_VERSION, OrderingKey, order_events};
+use replay_engine::{
+    EventStream, ORDERING_RULE_VERSION, OrderingKey, ReplayStreamBinding, ReplayStreamFactory,
+    order_events,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use twse_normalizer::{MAPPING_NAME, MAPPING_VERSION, NormalizerConfig, TwseNormalizer};
@@ -344,6 +347,52 @@ impl CacheReader {
     }
 }
 
+impl EventStream for CacheReader {
+    type Error = CacheReadError;
+
+    fn next_event(&mut self) -> Result<Option<DomainEvent>, Self::Error> {
+        self.next_record()
+            .map(|record| record.map(CacheRecord::into_event))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LocalCacheFactory {
+    data_root: PathBuf,
+}
+
+impl LocalCacheFactory {
+    #[must_use]
+    pub fn new(data_root: impl Into<PathBuf>) -> Self {
+        Self {
+            data_root: data_root.into(),
+        }
+    }
+}
+
+impl ReplayStreamFactory for LocalCacheFactory {
+    type Stream = CacheReader;
+    type Error = CacheReadError;
+
+    fn open(&mut self, binding: &ReplayStreamBinding) -> Result<Self::Stream, Self::Error> {
+        let cache_identity = hex(binding.cache_identity());
+        let source_revision = hex(binding.source_revision_identity());
+        let reader = CacheReader::open_bound(
+            self.data_root.join("derived/cache").join(&cache_identity),
+            &source_revision,
+        )?;
+        let descriptor = reader.descriptor();
+        if descriptor.cache_identity != cache_identity
+            || descriptor.instrument_market != binding.instrument().market().discriminant()
+            || descriptor.instrument_symbol != binding.instrument().symbol().as_str()
+            || descriptor.trading_date_epoch_days != binding.trading_date().as_epoch_days()
+        {
+            return Err(CacheReadError::BindingMismatch);
+        }
+        Ok(reader)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CacheRecord {
     ordinal: u64,
@@ -465,6 +514,7 @@ pub enum CacheReadError {
     Ordering(String),
     OrderingRegression,
     CoverageMismatch,
+    BindingMismatch,
     PayloadChecksum,
     BoundsMismatch,
     TrailingBytes,

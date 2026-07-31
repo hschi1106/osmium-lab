@@ -9,8 +9,8 @@ use market_types::{
 };
 
 use crate::{
-    OrderingError, OrderingKey, ReplayEventStreamChecksum, checksum::ReplayEventStreamHasher,
-    order_events,
+    EventStream, OrderingError, OrderingKey, ReplayEventStreamChecksum, ReplayPlan,
+    ReplayStreamFactory, checksum::ReplayEventStreamHasher, order_events,
 };
 
 pub const REPLAY_ENGINE_VERSION: u16 = 1;
@@ -162,6 +162,37 @@ impl ReplayCore {
             self.apply_ordered(event)?;
         }
         Ok(())
+    }
+
+    /// Replays a bounded event stream without materializing the full period.
+    pub fn replay_stream<S: EventStream>(&mut self, stream: &mut S) -> Result<(), ReplayError> {
+        while let Some(event) = stream
+            .next_event()
+            .map_err(|error| ReplayError::Stream(error.to_string().into_boxed_str()))?
+        {
+            self.apply_ordered(&event)?;
+        }
+        Ok(())
+    }
+
+    /// Opens only the stream frozen into the M2 replay plan and consumes it offline.
+    pub fn replay_frozen<F: ReplayStreamFactory>(
+        &mut self,
+        plan: &ReplayPlan,
+        factory: &mut F,
+    ) -> Result<(), ReplayError> {
+        let binding = plan.binding();
+        let state = self
+            .states
+            .get(binding.instrument())
+            .ok_or(ReplayError::PlanOutsideUniverse)?;
+        if state.trading_date() != binding.trading_date() {
+            return Err(ReplayError::PlanTradingDateMismatch);
+        }
+        let mut stream = factory
+            .open(binding)
+            .map_err(|error| ReplayError::StreamOpen(error.to_string().into_boxed_str()))?;
+        self.replay_stream(&mut stream)
     }
 
     /// Applies one already-ordered event. Any failure leaves this event uncommitted.
@@ -319,6 +350,10 @@ pub enum ReplayError {
     EventOrdinalOverflow,
     StateTransition(StateTransitionError),
     FinalStateEncoding(FinalStateEncodingError),
+    PlanOutsideUniverse,
+    PlanTradingDateMismatch,
+    StreamOpen(Box<str>),
+    Stream(Box<str>),
 }
 
 impl fmt::Display for ReplayError {
@@ -349,6 +384,14 @@ impl fmt::Display for ReplayError {
             Self::FinalStateEncoding(error) => {
                 write!(formatter, "final state encoding failed: {error}")
             }
+            Self::PlanOutsideUniverse => {
+                formatter.write_str("replay plan binding is outside initialized universe")
+            }
+            Self::PlanTradingDateMismatch => {
+                formatter.write_str("replay plan binding trading date does not match state")
+            }
+            Self::StreamOpen(error) => write!(formatter, "event stream open failed: {error}"),
+            Self::Stream(error) => write!(formatter, "event stream failed: {error}"),
         }
     }
 }
