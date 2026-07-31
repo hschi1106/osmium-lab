@@ -123,6 +123,38 @@ impl MarketStateProfile {
         .expect("built-in TWSE market-state profile is valid")
     }
 
+    pub fn taifex_futures() -> Self {
+        Self::new(
+            MarketId::Taifex,
+            vec![
+                SourceFormatRule::new(
+                    SourceFormatId::new("I020").expect("TAIFEX format is non-empty"),
+                    vec![EventKind::TradeBatch],
+                )
+                .expect("TAIFEX trade profile has accepted event kinds"),
+                SourceFormatRule::new(
+                    SourceFormatId::new("I022").expect("TAIFEX format is non-empty"),
+                    vec![EventKind::IndicativeOpeningAuction],
+                )
+                .expect("TAIFEX opening profile has accepted event kinds"),
+                SourceFormatRule::new(
+                    SourceFormatId::new("I080").expect("TAIFEX format is non-empty"),
+                    vec![EventKind::BookSnapshot],
+                )
+                .expect("TAIFEX book profile has accepted event kinds"),
+                SourceFormatRule::new(
+                    SourceFormatId::new("I082").expect("TAIFEX format is non-empty"),
+                    vec![EventKind::BookSnapshot],
+                )
+                .expect("TAIFEX reference book profile has accepted event kinds"),
+            ],
+            CumulativeVolumePolicy::Unconstrained,
+            AnnotationPolicy::NoneOnly,
+            1,
+        )
+        .expect("built-in TAIFEX market-state profile is valid")
+    }
+
     #[must_use]
     pub const fn market(&self) -> MarketId {
         self.market

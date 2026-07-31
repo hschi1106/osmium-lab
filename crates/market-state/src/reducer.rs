@@ -71,6 +71,11 @@ impl MarketStateReducer {
     }
 
     #[must_use]
+    pub fn taifex_futures() -> Self {
+        Self::new(MarketStateProfile::taifex_futures())
+    }
+
+    #[must_use]
     pub const fn profile(&self) -> &MarketStateProfile {
         &self.profile
     }

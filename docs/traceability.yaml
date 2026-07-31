@@ -36,10 +36,11 @@ milestone_status:
     specification: complete
     source_evidence: complete
     fixtures: complete
-    implementation: not_started
+    implementation: in_progress
     evidence: docs/verification/evidence/m3/source-selection-2026-07-31.yaml
     pending:
-      - TAIFEX wire parser and normalizer implementation
+      - TAIFEX cache builder, session/calendar integration and multi-stream replay
+      - TAIFEX multiplier/accounting acceptance
   M4:
     implementation: not_started
 
@@ -214,7 +215,7 @@ interface_trace:
   - path: docs/interfaces/taifex.md
     status: complete
     mapping_name: TeralionTaifexFutures
-    mapping_version: 1
+    mapping_version: 2
     evidence_scope: TAIFEX TXFH6/CDFH6/CAFH6 2026-07-20 committed fixtures
     requirements:
       - DATA-01
@@ -683,6 +684,7 @@ requirements:
     implementation_paths:
       - crates/market-types/src/event.rs
       - crates/normalizer/twse/src/lib.rs
+      - crates/normalizer/taifex/src/lib.rs
       - crates/m1-runner/src/lib.rs
     lifecycle:
       specification: complete
@@ -771,6 +773,7 @@ requirements:
       - crates/market-state/src/model.rs
       - crates/market-state/src/reducer.rs
       - crates/market-state/src/canonical.rs
+      - crates/market-state/src/profile.rs
     lifecycle:
       specification: complete
       design: partial
@@ -913,6 +916,7 @@ requirements:
       - docs/verification/evidence/m2/refreshed-2026-07-31.yaml
     implementation_paths:
       - crates/normalizer/twse/src/lib.rs
+      - crates/normalizer/taifex/src/lib.rs
       - crates/replay-engine/src/engine.rs
       - crates/m1-runner/src/lib.rs
       - crates/data-sync/src/verify.rs
