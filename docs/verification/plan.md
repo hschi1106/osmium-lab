@@ -315,6 +315,19 @@ cargo test --workspace --release
 fixture／acceptance runner 可額外提供 focused command，但不得取代 workspace
 tests。CI network-disabled job 必須執行標有 `M1-T050` 至 `M1-T054` 的 suite。
 
+repository 提供的完整 M1 acceptance harness 會先執行上述 debug／release checks，
+再以 OS sandbox 或 network-disabled container 連續執行兩次 release replay，
+比對完整 artifact bytes，並以 atomic rename 發布 evidence：
+
+```sh
+tools/run_m1_acceptance.sh \
+  --output target/m1-acceptance
+```
+
+macOS 的 `auto` runner 使用 `sandbox-exec`；Linux 使用 Docker
+`--network none`。container image 可以在進入 network-disabled runtime 前準備，
+但 replay process 本身不得具有網路能力或 `TERALION_API_KEY`。
+
 文件階段使用：
 
 ```sh
