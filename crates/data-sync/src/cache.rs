@@ -519,6 +519,7 @@ impl EventStream for CacheReader {
 pub struct LocalCacheFactory {
     data_root: PathBuf,
     partitioned: bool,
+    opened: Vec<ReplayStreamBinding>,
 }
 
 impl LocalCacheFactory {
@@ -527,6 +528,7 @@ impl LocalCacheFactory {
         Self {
             data_root: data_root.into(),
             partitioned: false,
+            opened: Vec::new(),
         }
     }
 
@@ -535,7 +537,13 @@ impl LocalCacheFactory {
         Self {
             data_root: data_root.into(),
             partitioned: true,
+            opened: Vec::new(),
         }
+    }
+
+    #[must_use]
+    pub fn opened_bindings(&self) -> &[ReplayStreamBinding] {
+        &self.opened
     }
 }
 
@@ -564,6 +572,18 @@ impl ReplayStreamFactory for LocalCacheFactory {
             || descriptor.trading_date_epoch_days != binding.trading_date().as_epoch_days()
         {
             return Err(CacheReadError::BindingMismatch);
+        }
+        self.opened.push(binding.clone());
+        if let Ok(path) = std::env::var("OSMIUM_STREAM_OPEN_AUDIT") {
+            let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+            writeln!(
+                file,
+                "market={:?} symbol={} trading_date={} descriptor={}",
+                binding.instrument().market(),
+                binding.instrument().symbol(),
+                binding.trading_date(),
+                hex(binding.descriptor_id().as_bytes()),
+            )?;
         }
         Ok(reader)
     }

@@ -645,7 +645,9 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "strategy-api",
+ "taifex-normalizer",
  "tempfile",
+ "twse-normalizer",
 ]
 
 [[package]]

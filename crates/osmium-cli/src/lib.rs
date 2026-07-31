@@ -17,6 +17,7 @@ pub const USAGE: &str = "\
 Usage:
   osmium replay --fixture <fixture-root> --output <output-directory>
   osmium plan|sync|verify|replay|backtest|run --config <file> [--output <directory>]
+  osmium cache prepare --config <file>
   osmium inspect --run <run-directory>
 
 plan accepts M2 config_version 1 and M3 config_version 2. The M1 fixture root must contain metadata.yaml, regular-quotes/, and
@@ -97,6 +98,15 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<ParsedComm
             return Err(CliError::usage("unexpected inspect option"));
         }
         return Ok(ParsedCommand::Inspect(PathBuf::from(run)));
+    }
+    if command == "cache" {
+        let subcommand = args
+            .next()
+            .ok_or_else(|| CliError::usage("cache requires prepare"))?;
+        if subcommand != "prepare" {
+            return Err(CliError::usage("cache requires prepare"));
+        }
+        return parse_m2(M2CommandKind::CachePrepare, args);
     }
     if let Some(kind) = match command.to_str() {
         Some("plan") => Some(M2CommandKind::Plan),
@@ -366,6 +376,24 @@ mod tests {
                 "--orders".into()
             ])
             .is_err()
+        );
+    }
+
+    #[test]
+    fn cache_prepare_is_a_first_class_config_command() {
+        assert_eq!(
+            parse_args([
+                "cache".into(),
+                "prepare".into(),
+                "--config".into(),
+                "config/m3-taifex-three.yaml".into(),
+            ])
+            .unwrap(),
+            ParsedCommand::M2(M2Command {
+                kind: M2CommandKind::CachePrepare,
+                config: "config/m3-taifex-three.yaml".into(),
+                output: None,
+            })
         );
     }
 }
