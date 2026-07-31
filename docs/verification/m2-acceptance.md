@@ -5,7 +5,9 @@
 本文件記錄 M2 `TWSE / 2330 / 2026-07-27 / regular` reference slice 的實際驗收，
 並以 [M2 offline backtest](../increments/M2-offline-backtest.md) 與
 [verification plan](plan.md) 為判定基準。詳細 machine-readable 結果位於
-[`evidence/m2/local-2026-07-31.yaml`](evidence/m2/local-2026-07-31.yaml)。
+[`evidence/m2/refreshed-2026-07-31.yaml`](evidence/m2/refreshed-2026-07-31.yaml)。
+原始 `local-2026-07-31.yaml` 保留為 accounting correction 前的歷史 evidence，
+不回寫其 checksum。
 
 ```text
 acceptance_contract_version = 1
@@ -48,12 +50,17 @@ offline acceptance 使用 `sandbox-exec` 的 `deny network*` policy，並移除
 | fills | 2 |
 | final position | 0 trading units |
 | final cash atoms | `9981363000000000000000000` |
+| realized P&L atoms | `-5000000000000000000000` |
 
 acceptance strategy 發出 pre-open limit、market buy/sell 與 resting limit intents。
 execution coordinator 只讓較早 occurrence 建立的 pending order 使用後續 evidence，
 normal EOF 取消未完成 Day orders。market/limit、rejection、partial fill、allocation、
 slippage、fee/tax 與 reconciliation 的其他固定 branches 由 workspace contract tests
 覆蓋。
+
+`a7dcb90` 修正 realized P&L 的 economic quantity scaling 後，reference backtest
+重新執行。event、state、strategy、order、fill、final cash 與 position 不變；
+ledger 及 run manifest checksum 依修正後的 `-5000` TWD realized P&L 更新。
 
 ## 4. Determinism and recovery
 

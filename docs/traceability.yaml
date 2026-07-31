@@ -31,7 +31,7 @@ milestone_status:
     implementation: complete
     formal_acceptance: complete
     completion_quality: strict
-    evidence: docs/verification/evidence/m2/local-2026-07-31.yaml
+    evidence: docs/verification/evidence/m2/refreshed-2026-07-31.yaml
   M3:
     implementation: not_started
   M4:
@@ -75,7 +75,8 @@ document_sets:
     plan: docs/verification/plan.md
     acceptance: docs/verification/acceptance.md
     m2_acceptance: docs/verification/m2-acceptance.md
-    m2_local_evidence: docs/verification/evidence/m2/local-2026-07-31.yaml
+    m2_initial_evidence: docs/verification/evidence/m2/local-2026-07-31.yaml
+    m2_current_evidence: docs/verification/evidence/m2/refreshed-2026-07-31.yaml
     m1_formal_evidence: docs/verification/evidence/m1/formal-2026-07-31/acceptance-report.yaml
     fixture_provenance: docs/verification/fixture-provenance.md
     performance: docs/verification/performance.md
@@ -445,7 +446,7 @@ requirements:
       - docs/increments/M2-offline-backtest.md
       - docs/verification/m2-acceptance.md
     verification_evidence:
-      - docs/verification/evidence/m2/local-2026-07-31.yaml
+      - docs/verification/evidence/m2/refreshed-2026-07-31.yaml
     implementation_paths:
       - crates/data-sync/src/query.rs
       - crates/data-sync/src/cursor.rs
@@ -487,7 +488,7 @@ requirements:
       - docs/increments/M2-offline-backtest.md
       - docs/verification/m2-acceptance.md
     verification_evidence:
-      - docs/verification/evidence/m2/local-2026-07-31.yaml
+      - docs/verification/evidence/m2/refreshed-2026-07-31.yaml
     implementation_paths:
       - crates/data-sync/src/storage.rs
       - crates/data-sync/src/verify.rs
@@ -524,7 +525,7 @@ requirements:
       - docs/increments/M2-offline-backtest.md
       - docs/verification/m2-acceptance.md
     verification_evidence:
-      - docs/verification/evidence/m2/local-2026-07-31.yaml
+      - docs/verification/evidence/m2/refreshed-2026-07-31.yaml
     implementation_paths:
       - crates/data-sync/src/verify.rs
       - crates/run-planner/src/partition.rs
@@ -562,7 +563,7 @@ requirements:
       - docs/increments/M2-offline-backtest.md
       - docs/verification/m2-acceptance.md
     verification_evidence:
-      - docs/verification/evidence/m2/local-2026-07-31.yaml
+      - docs/verification/evidence/m2/refreshed-2026-07-31.yaml
     implementation_paths:
       - crates/data-sync/src/cache.rs
       - crates/replay-engine/src/stream.rs
@@ -606,7 +607,7 @@ requirements:
       - docs/increments/M2-offline-backtest.md
       - docs/verification/m2-acceptance.md
     verification_evidence:
-      - docs/verification/evidence/m2/local-2026-07-31.yaml
+      - docs/verification/evidence/m2/refreshed-2026-07-31.yaml
     implementation_paths:
       - crates/data-sync/src/storage.rs
       - crates/m2-config/src/lib.rs
@@ -792,7 +793,7 @@ requirements:
     verification_evidence:
       - docs/verification/evidence/m1/local-2026-07-31.yaml
       - fixtures/teralion/twse/2330/2026-07-27/golden/strategy-output.blake3
-      - docs/verification/evidence/m2/local-2026-07-31.yaml
+      - docs/verification/evidence/m2/refreshed-2026-07-31.yaml
     implementation_paths:
       - crates/replay-engine/src/engine.rs
       - crates/strategy-api/src/runner.rs
@@ -838,7 +839,7 @@ requirements:
       - docs/increments/M2-offline-backtest.md
       - docs/verification/m2-acceptance.md
     verification_evidence:
-      - docs/verification/evidence/m2/local-2026-07-31.yaml
+      - docs/verification/evidence/m2/refreshed-2026-07-31.yaml
     implementation_paths:
       - crates/replay-engine/src/stream.rs
       - crates/data-sync/src/cache.rs
@@ -886,7 +887,7 @@ requirements:
     verification_evidence:
       - docs/verification/evidence/m1/local-2026-07-31.yaml
       - fixtures/teralion/twse/2330/2026-07-27/golden/warnings.yaml
-      - docs/verification/evidence/m2/local-2026-07-31.yaml
+      - docs/verification/evidence/m2/refreshed-2026-07-31.yaml
     implementation_paths:
       - crates/normalizer/twse/src/lib.rs
       - crates/replay-engine/src/engine.rs
@@ -938,7 +939,7 @@ requirements:
     verification_evidence:
       - docs/verification/evidence/m1/local-2026-07-31.yaml
       - fixtures/teralion/twse/2330/2026-07-27/golden/strategy-output.blake3
-      - docs/verification/evidence/m2/local-2026-07-31.yaml
+      - docs/verification/evidence/m2/refreshed-2026-07-31.yaml
     implementation_paths:
       - crates/strategy-api/src/strategy.rs
       - crates/strategy-api/src/context.rs
@@ -984,7 +985,7 @@ requirements:
       - docs/increments/M2-offline-backtest.md
       - docs/verification/m2-acceptance.md
     verification_evidence:
-      - docs/verification/evidence/m2/local-2026-07-31.yaml
+      - docs/verification/evidence/m2/refreshed-2026-07-31.yaml
     implementation_paths:
       - crates/execution-sim/src/lib.rs
       - crates/m2-runner/src/lib.rs
@@ -1021,7 +1022,7 @@ requirements:
       - docs/increments/M2-offline-backtest.md
       - docs/verification/m2-acceptance.md
     verification_evidence:
-      - docs/verification/evidence/m2/local-2026-07-31.yaml
+      - docs/verification/evidence/m2/refreshed-2026-07-31.yaml
     implementation_paths:
       - crates/execution-sim/src/accounting.rs
       - crates/m2-runner/src/artifacts.rs
@@ -1058,7 +1059,7 @@ requirements:
     supporting_documents: []
     verification_evidence:
       - docs/verification/evidence/m1/cli-local-2026-07-31.yaml
-      - docs/verification/evidence/m2/local-2026-07-31.yaml
+      - docs/verification/evidence/m2/refreshed-2026-07-31.yaml
     implementation_paths:
       - crates/osmium-cli/src/lib.rs
       - crates/osmium-cli/src/main.rs
@@ -1106,7 +1107,7 @@ requirements:
       - docs/verification/evidence/m1/local-2026-07-31.yaml
       - docs/verification/evidence/m1/cli-local-2026-07-31.yaml
       - fixtures/teralion/twse/2330/2026-07-27/golden/run-summary.yaml
-      - docs/verification/evidence/m2/local-2026-07-31.yaml
+      - docs/verification/evidence/m2/refreshed-2026-07-31.yaml
     implementation_paths:
       - crates/replay-engine/src/checksum.rs
       - crates/market-state/src/canonical.rs
@@ -1157,7 +1158,7 @@ requirements:
     verification_evidence:
       - docs/verification/evidence/m1/local-2026-07-31.yaml
       - fixtures/teralion/twse/2330/2026-07-27/golden/run-summary.yaml
-      - docs/verification/evidence/m2/local-2026-07-31.yaml
+      - docs/verification/evidence/m2/refreshed-2026-07-31.yaml
     implementation_paths:
       - crates/replay-engine/src/checksum.rs
       - crates/market-state/src/canonical.rs
@@ -1198,7 +1199,7 @@ requirements:
       - docs/increments/M2-offline-backtest.md
       - docs/verification/m2-acceptance.md
     verification_evidence:
-      - docs/verification/evidence/m2/local-2026-07-31.yaml
+      - docs/verification/evidence/m2/refreshed-2026-07-31.yaml
     implementation_paths:
       - crates/data-sync/src/cache.rs
       - crates/m2-runner/src/lib.rs
@@ -1241,7 +1242,7 @@ requirements:
     verification_evidence:
       - docs/verification/evidence/m1/local-2026-07-31.yaml
       - fixtures/teralion/twse/2330/2026-07-27/metadata.yaml
-      - docs/verification/evidence/m2/local-2026-07-31.yaml
+      - docs/verification/evidence/m2/refreshed-2026-07-31.yaml
     implementation_paths:
       - crates/market-types/src/event.rs
       - crates/replay-engine/src/ordering.rs
