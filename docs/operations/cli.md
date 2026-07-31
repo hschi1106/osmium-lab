@@ -2,16 +2,17 @@
 
 ## 1. 文件目的
 
-本文件定義 `osmium` binary 的 M1 fixture replay 與 M2
-`plan -> sync -> verify -> cache prepare -> replay/backtest -> inspect` 操作契約。
+本文件定義 `osmium` binary 的 M1 fixture replay、M2
+`plan -> sync -> verify -> cache prepare -> replay/backtest -> inspect` 與 M3
+partitioned multi-instrument offline 操作契約。
 
 ```text
-cli_contract_version    = 2
+cli_contract_version    = 3
 run_config_version      = 1
 execution_plan_version  = 1
 run_manifest_version    = 1
 binary                  = osmium
-current_scope           = M1 fixture replay + M2 TWSE 2330 offline backtest
+current_scope           = M1 fixture replay + M2 TWSE 2330 + M3 TAIFEX multi-instrument offline backtest
 ```
 
 本文固定 command spelling、config shape、stage side effects、exit status 與 artifacts。
@@ -298,6 +299,28 @@ HTTP request count = 0
 
 invalid cache 不在原目錄修補；建立全新 cache identity或先隔離 invalid artifact。
 
+### 7.1 M3 partitioned fixture preparation
+
+M3 的 committed fixture 只提供 offline source preparation tool，不把 repository
+fixture 自動視為 live source：
+
+```sh
+cargo run -p m3-config --bin m3_fixture_data -- \
+  --config config/m3-taifex-three.yaml \
+  --fixtures fixtures/teralion \
+  --data-root target/m3-taifex-data
+```
+
+tool 會以與 online sync 相同的 `TeralionSync` cursor state machine，將每個 selected
+JSONL shard 包成 fixture response、驗證 TAIFEX `book/close/stats/trade` kinds、發布
+partition source revision，接著建立 source-bound replay cache。它拒絕覆寫既有 data
+root；需要重建時使用新的空 data root。
+
+`config/m3-taifex-multi.yaml` 的四商品 run 另外要求
+`fixtures/teralion/twse/2330/2026-07-20`；目前 repository 只提交該日 TWSE daily
+instrument discovery，沒有 tick fixture，因此 tool 應回報 missing fixture，不能
+用 `2026-07-27` M1 slice 或 synthetic records 填補。
+
 ## 8. `replay`
 
 ### 8.1 M2 config mode
@@ -319,6 +342,11 @@ config replay：
 
 若 cache missing 且 plan action 是 offline rebuild，使用者先執行 `cache prepare`；
 `replay` 不在 runtime 邊讀 source 邊 fallback。
+
+M3 config replay/backtest 會依 frozen `ReplayPlan` 只開啟每個 selected
+instrument/date partition；`LocalCacheFactory` 可在 `OSMIUM_STREAM_OPEN_AUDIT` 指定
+檔案記錄實際 opened bindings。多商品 merge 只保留各 stream 的 current head，不將
+所有 source records 載入記憶體。
 
 ### 8.2 M1 fixture mode
 
@@ -364,6 +392,10 @@ cargo run --release -p osmium-cli -- backtest \
 
 reference M2 acceptance 必須是 `Strict` successful。`ExplicitDegraded` 使用不同
 completion quality/result identity，且不允許 corrupt source。
+
+M3 backtest 對每個 instrument 建立隔離 simulator/ledger，TAIFEX 使用
+`FuturesV1` multiplier accounting，TWSE 使用 `EquityV1`；跨商品事件只共享
+deterministic replay clock，不共享 fill eligibility、position 或 queue state。
 
 output 必須是不存在的新 directory；不提供 `--force`。existing path 回傳 usage/
 config error，避免混合兩次 run。

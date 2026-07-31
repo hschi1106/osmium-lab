@@ -1,16 +1,16 @@
-# M1／M2 Verification Plan
+# M1／M2／M3 Verification Plan
 
 ## 1. 文件目的
 
-本文件定義 M1「TWSE 2330 regular-market deterministic replay vertical slice」及
-M2「Teralion 真實資料準備與離線 backtest」的驗證方法、test ID、fixture policy、
-golden artifacts 與執行順序。它是測試契約，不是測試已通過的證據；實際結果由
-M1 [Acceptance](acceptance.md)、後續 M2 acceptance register 及 machine-readable
-CI evidence 登錄。
+本文件定義 M1「TWSE 2330 regular-market deterministic replay vertical slice」、
+M2「Teralion 真實資料準備與離線 backtest」及 M3「TAIFEX 三商品與多商品離線
+backtest」的驗證方法、test ID、fixture policy、golden artifacts 與執行順序。它是
+測試契約，不是測試已通過的證據；實際結果由 M1/M2 acceptance、
+[M3 acceptance](m3-acceptance.md) 及 machine-readable CI evidence 登錄。
 
 ```text
-verification_plan_version = 2
-scope                     = M1 + M2
+verification_plan_version = 3
+scope                     = M1 + M2 + M3
 ```
 
 依據：
@@ -736,3 +736,52 @@ M2 verification完成需要：
 - M1 fixture replay regression仍通過。
 - acceptance/traceability登錄實際 code/evidence paths。
 - 沒有 secret、`Failed`、`Blocked`或未解釋的 `NotRun`。
+
+## 22. M3 commands 與 evidence
+
+M3 以 `config_version: 2` materialize 每個 instrument／trading date partition。
+三商品 offline preparation 使用 committed fixture adapter：
+
+```sh
+cargo run -p m3-config --bin m3_fixture_data -- \
+  --config config/m3-taifex-three.yaml \
+  --fixtures fixtures/teralion \
+  --data-root target/m3-taifex-data
+
+target/debug/osmium plan --config config/m3-taifex-three.yaml
+target/debug/osmium verify --config config/m3-taifex-three.yaml
+target/debug/osmium cache prepare --config config/m3-taifex-three.yaml
+target/debug/osmium replay --config config/m3-taifex-three.yaml
+target/debug/osmium backtest --config config/m3-taifex-three.yaml --output target/m3-run
+target/debug/osmium inspect --run target/m3-run
+```
+
+正式 harness：
+
+```sh
+tools/run_m3_acceptance.sh \
+  --output docs/verification/evidence/m3/formal-<UTC-date> \
+  --allow-blocked
+```
+
+M3 machine-readable evidence 至少包含：fixture／daily checksums、source revision、
+cache descriptor、event/state/strategy/order/fill/ledger checksums、opened stream audit、
+multiplier/accounting trace、network-disabled execution、corruption rejection、10 次
+rerun、三個 discovery permutations、cache rebuild、debug/release comparison 與
+performance baseline。四商品 evidence 缺少任何一個 shared-date TWSE tick fixture 時，
+status 必須是 `Blocked`，不得以三商品結果升格為 `Passed`。
+
+## 23. M3 exit criteria
+
+M3 verification only closes when all M3-AC-01..17 are `Passed` in
+[`m3-acceptance.md`](m3-acceptance.md)，且：
+
+- 三份 TAIFEX fixtures 與 daily instruments 的 authorization、selection、checksum、
+  source mapping 與 secret scan 可追溯。
+- TAIFEX `book/close/stats/trade` query kinds 與 `taifex_fut` market validator 通過。
+- 三個 TAIFEX partition source/cache 與四商品 shared-date source/cache 都可離線建立。
+- multi-stream ordering、state、strategy、fill isolation、segment cancellation 與
+  futures multiplier accounting 有相同 run identity。
+- cache hit/rebuild、debug/release、repeat/permutation 與 corruption checks 無 warning。
+- `docs/traceability.yaml`、CLI/local-data/performance 文件與 formal report 已更新，
+  且沒有未解釋的 `Blocked`／`Partial`／`NotRun`。
