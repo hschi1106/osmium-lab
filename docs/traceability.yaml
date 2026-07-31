@@ -33,11 +33,12 @@ milestone_status:
     completion_quality: strict
     evidence: docs/verification/evidence/m2/refreshed-2026-07-31.yaml
   M3:
-    specification: in_progress
+    specification: complete
+    source_evidence: complete
     implementation: not_started
+    evidence: docs/verification/evidence/m3/source-selection-2026-07-31.yaml
     pending:
-      - authorized TAIFEX fixture
-      - exact symbols for three reference session profiles and one common trading date
+      - TAIFEX fixture redistribution approval and extraction
       - TAIFEX interface mapping
   M4:
     implementation: not_started
@@ -82,6 +83,7 @@ document_sets:
     m2_acceptance: docs/verification/m2-acceptance.md
     m2_initial_evidence: docs/verification/evidence/m2/local-2026-07-31.yaml
     m2_current_evidence: docs/verification/evidence/m2/refreshed-2026-07-31.yaml
+    m3_source_selection: docs/verification/evidence/m3/source-selection-2026-07-31.yaml
     m1_formal_evidence: docs/verification/evidence/m1/formal-2026-07-31/acceptance-report.yaml
     fixture_provenance: docs/verification/fixture-provenance.md
     performance: docs/verification/performance.md
