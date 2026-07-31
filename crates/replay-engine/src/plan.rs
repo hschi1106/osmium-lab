@@ -85,7 +85,7 @@ impl ReplayStreamBinding {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplayPlan {
     upstream_plan_identity: [u8; 32],
-    binding: ReplayStreamBinding,
+    bindings: Box<[ReplayStreamBinding]>,
     identity: ReplayPlanIdentity,
 }
 
@@ -100,20 +100,64 @@ impl ReplayPlan {
                 0 => ReplayPlanError::EmptyBindings,
                 count => ReplayPlanError::M2RequiresSingleBinding(count),
             })?;
+        Self::build_single(upstream_plan_identity, binding)
+    }
+
+    pub fn new_multi(
+        upstream_plan_identity: [u8; 32],
+        bindings: Vec<ReplayStreamBinding>,
+    ) -> Result<Self, ReplayPlanError> {
+        if bindings.is_empty() {
+            return Err(ReplayPlanError::EmptyBindings);
+        }
+        Self::build_multi(upstream_plan_identity, bindings)
+    }
+
+    fn build_single(
+        upstream_plan_identity: [u8; 32],
+        binding: ReplayStreamBinding,
+    ) -> Result<Self, ReplayPlanError> {
         let mut canonical = Vec::new();
         canonical.extend_from_slice(b"OSRP");
         canonical.extend_from_slice(&REPLAY_PLAN_VERSION.to_be_bytes());
         canonical.extend_from_slice(&upstream_plan_identity);
-        canonical.extend_from_slice(binding.descriptor_id.as_bytes());
-        canonical.push(binding.instrument.market().discriminant());
-        append_bytes(binding.instrument.symbol().as_bytes(), &mut canonical)?;
-        canonical.extend_from_slice(&binding.trading_date.to_canonical_bytes());
-        canonical.extend_from_slice(&binding.source_revision_identity);
-        canonical.extend_from_slice(&binding.cache_identity);
+        append_binding(&binding, &mut canonical)?;
         let identity = ReplayPlanIdentity(*blake3::hash(&canonical).as_bytes());
         Ok(Self {
             upstream_plan_identity,
-            binding,
+            bindings: vec![binding].into_boxed_slice(),
+            identity,
+        })
+    }
+
+    fn build_multi(
+        upstream_plan_identity: [u8; 32],
+        mut bindings: Vec<ReplayStreamBinding>,
+    ) -> Result<Self, ReplayPlanError> {
+        bindings.sort_by(|left, right| {
+            left.instrument
+                .cmp(&right.instrument)
+                .then_with(|| left.trading_date.cmp(&right.trading_date))
+                .then_with(|| left.descriptor_id.cmp(&right.descriptor_id))
+                .then_with(|| left.cache_identity.cmp(&right.cache_identity))
+        });
+        if bindings.windows(2).any(|pair| {
+            pair[0].instrument == pair[1].instrument && pair[0].trading_date == pair[1].trading_date
+        }) {
+            return Err(ReplayPlanError::DuplicateLogicalStream);
+        }
+        let mut canonical = Vec::new();
+        canonical.extend_from_slice(b"OSRP");
+        canonical.extend_from_slice(&REPLAY_PLAN_VERSION.to_be_bytes());
+        canonical.extend_from_slice(&upstream_plan_identity);
+        append_len(bindings.len(), &mut canonical)?;
+        for binding in &bindings {
+            append_binding(binding, &mut canonical)?;
+        }
+        let identity = ReplayPlanIdentity(*blake3::hash(&canonical).as_bytes());
+        Ok(Self {
+            upstream_plan_identity,
+            bindings: bindings.into_boxed_slice(),
             identity,
         })
     }
@@ -130,8 +174,35 @@ impl ReplayPlan {
 
     #[must_use]
     pub const fn binding(&self) -> &ReplayStreamBinding {
-        &self.binding
+        &self.bindings[0]
     }
+
+    #[must_use]
+    pub const fn bindings(&self) -> &[ReplayStreamBinding] {
+        &self.bindings
+    }
+}
+
+fn append_binding(
+    binding: &ReplayStreamBinding,
+    output: &mut Vec<u8>,
+) -> Result<(), ReplayPlanError> {
+    output.extend_from_slice(binding.descriptor_id.as_bytes());
+    output.push(binding.instrument.market().discriminant());
+    append_bytes(binding.instrument.symbol().as_bytes(), output)?;
+    output.extend_from_slice(&binding.trading_date.to_canonical_bytes());
+    output.extend_from_slice(&binding.source_revision_identity);
+    output.extend_from_slice(&binding.cache_identity);
+    Ok(())
+}
+
+fn append_len(length: usize, output: &mut Vec<u8>) -> Result<(), ReplayPlanError> {
+    output.extend_from_slice(
+        &u32::try_from(length)
+            .map_err(|_| ReplayPlanError::CanonicalLength)?
+            .to_be_bytes(),
+    );
+    Ok(())
 }
 
 fn append_bytes(value: &[u8], output: &mut Vec<u8>) -> Result<(), ReplayPlanError> {
@@ -145,6 +216,7 @@ fn append_bytes(value: &[u8], output: &mut Vec<u8>) -> Result<(), ReplayPlanErro
 pub enum ReplayPlanError {
     EmptyBindings,
     M2RequiresSingleBinding(usize),
+    DuplicateLogicalStream,
     CanonicalLength,
 }
 
@@ -157,6 +229,9 @@ impl fmt::Display for ReplayPlanError {
                     formatter,
                     "M2 replay plan requires one binding, got {count}"
                 )
+            }
+            Self::DuplicateLogicalStream => {
+                formatter.write_str("replay plan contains duplicate instrument/date streams")
             }
             Self::CanonicalLength => formatter.write_str("replay plan canonical field is too long"),
         }
