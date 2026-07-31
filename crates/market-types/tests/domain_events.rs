@@ -2,8 +2,8 @@ use market_types::{
     BookError, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventError,
     EventPayload, IndicativeAuction, InstantTrend, InstrumentId, LimitPosition, MarketAnnotations,
     MarketId, MatchTime, MatchingMethod, Observation, Price, Quantity, QuantityUnit, QuoteSnapshot,
-    SourceFormatId, Symbol, TradeBatch, TradeOrder, TradePrint, TradePrintKind, TradingDate,
-    TwseQuoteAnnotations, Volume,
+    SourceFormatId, Symbol, TpexQuoteAnnotations, TradeBatch, TradeOrder, TradePrint,
+    TradePrintKind, TradingDate, TwseQuoteAnnotations, Volume,
 };
 
 fn level(price: &str, quantity: u64, unit: QuantityUnit) -> BookLevel {
@@ -143,6 +143,39 @@ fn twse_annotation_typed_views_preserve_raw_semantics() {
 }
 
 #[test]
+fn tpex_annotation_typed_views_keep_a_market_specific_variant() {
+    let annotations = TpexQuoteAnnotations::new(0x84, 0b00_00_00_01);
+    assert_eq!(annotations.status_flags_raw(), 0x84);
+    assert!(annotations.status().trial());
+    assert!(annotations.status().closing_marker());
+    assert_eq!(
+        annotations.limits().instant_trend(),
+        InstantTrend::VolatilityInterruptionDown
+    );
+
+    let snapshot = QuoteSnapshot::new(
+        empty_book(),
+        Observation::NoObservation,
+        Observation::Set(Volume::new(0, QuantityUnit::TradingUnit)),
+        MarketAnnotations::TpexQuote(annotations),
+    )
+    .unwrap();
+    let event = DomainEvent::new(
+        InstrumentId::new(MarketId::Tpex, Symbol::new("6488").unwrap()),
+        TradingDate::parse("2026-07-20").unwrap(),
+        SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
+        MatchTime::parse("2026-07-20T13:30:00+08:00").unwrap(),
+        None,
+        EventPayload::QuoteSnapshot(snapshot),
+    );
+    let canonical = event.to_canonical_bytes().unwrap();
+    assert_eq!(
+        DomainEvent::from_canonical_bytes(&canonical).unwrap(),
+        event
+    );
+}
+
+#[test]
 fn canonical_quote_frame_has_the_documented_field_order() {
     let snapshot = QuoteSnapshot::new(
         empty_book(),
@@ -162,8 +195,8 @@ fn canonical_quote_frame_has_the_documented_field_order() {
 
     let mut expected = Vec::new();
     expected.extend_from_slice(b"OSME");
-    expected.extend_from_slice(&2_u16.to_be_bytes());
-    expected.extend_from_slice(&2_u16.to_be_bytes());
+    expected.extend_from_slice(&3_u16.to_be_bytes());
+    expected.extend_from_slice(&3_u16.to_be_bytes());
     expected.push(1);
     expected.extend_from_slice(&1_u32.to_be_bytes());
     expected.push(b'A');

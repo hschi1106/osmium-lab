@@ -151,6 +151,7 @@ dependencies = [
  "strategy-api",
  "taifex-normalizer",
  "tempfile",
+ "tpex-normalizer",
  "twse-normalizer",
  "zstd",
 ]
@@ -647,6 +648,7 @@ dependencies = [
  "strategy-api",
  "taifex-normalizer",
  "tempfile",
+ "tpex-normalizer",
  "twse-normalizer",
 ]
 
@@ -705,6 +707,7 @@ dependencies = [
  "serde_json",
  "strategy-api",
  "taifex-normalizer",
+ "tpex-normalizer",
  "twse-normalizer",
 ]
 
@@ -1287,6 +1290,15 @@ name = "tower-service"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
+
+[[package]]
+name = "tpex-normalizer"
+version = "0.1.0"
+dependencies = [
+ "market-types",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "tracing"
