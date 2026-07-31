@@ -1,6 +1,7 @@
 mod cursor;
 mod query;
 mod storage;
+mod verify;
 
 pub use cursor::{
     CursorCheckpoint, CursorError, CursorState, CursorStateMachine, PageCommitReceipt, PendingPage,
@@ -13,4 +14,7 @@ pub use query::{
 pub use storage::{
     CompressionPolicy, ObjectKind, PageMetadata, PublishedRevision, SourceManifest, StagedObject,
     StagedPage, StagingError, StagingRevision, ZSTD_COMPRESSION_LEVEL,
+};
+pub use verify::{
+    LocalSourceRepository, SourceInspection, SyncDisposition, VerificationError, VerificationReport,
 };
