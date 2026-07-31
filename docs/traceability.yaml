@@ -39,7 +39,7 @@ milestone_status:
     implementation: not_started
     evidence: docs/verification/evidence/m3/source-selection-2026-07-31.yaml
     pending:
-      - TAIFEX interface mapping
+      - TAIFEX wire parser and normalizer implementation
   M4:
     implementation: not_started
 
@@ -200,6 +200,22 @@ interface_trace:
     mapping_name: TeralionTwseQuote
     mapping_version: 3
     evidence_scope: TWSE 2330 2026-07-27 local raw acquisition
+    requirements:
+      - DATA-01
+      - DATA-02
+      - DATA-03
+      - DATA-05
+      - REPLAY-01
+      - REPLAY-02
+      - REPLAY-03
+      - REPLAY-06
+      - NFR-01
+      - NFR-03
+  - path: docs/interfaces/taifex.md
+    status: complete
+    mapping_name: TeralionTaifexFutures
+    mapping_version: 1
+    evidence_scope: TAIFEX TXFH6/CDFH6/CAFH6 2026-07-20 committed fixtures
     requirements:
       - DATA-01
       - DATA-02
