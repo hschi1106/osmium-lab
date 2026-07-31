@@ -76,10 +76,10 @@ domain type 只表達來源 interface 已證實的內容：
 每個 event stream、replay cache 與 run manifest 必須能識別：
 
 ```text
-market_types_version       = 1
-event_schema_version       = 1
-canonical_event_version    = 1
-ordering_rule_version      = 2
+market_types_version       = 2
+event_schema_version       = 2
+canonical_event_version    = 2
+ordering_rule_version      = 3
 normalizer_mapping_name    = market-interface-specific name
 normalizer_mapping_version = market-interface-specific integer
 ```
@@ -559,9 +559,11 @@ file line、worker ordinal、`received_at` 或自行產生的 sequence 一律禁
 | `QuoteSnapshot` | 10 | `QuoteSnapshot` |
 | `BookSnapshot` | 20 | `BookSnapshot` |
 | `TradeBatch` | 30 | `TradeBatch` |
+| `IndicativeOpeningAuction` | 40 | `IndicativeOpeningAuction` |
+| `IndicativeClosingAuction` | 50 | `IndicativeClosingAuction` |
 
-discriminant 與 ADR-0001 `event_kind_rank` 共用固定值。第一版不分配 standalone
-status event discriminant。
+discriminant 與 ADR-0001 `event_kind_rank` 共用固定值。auction event 不使用
+`TradePrintKind::Regular`，也不提供 standalone status event。
 
 ### 9.3 `QuoteSnapshot`
 
@@ -613,6 +615,23 @@ TradeBatch {
 
 同一 source record 提供的 trades、cumulative volume 與 annotations 必須保留在
 同一 `TradeBatch`，state version 只增加一次。
+
+### 9.6 `IndicativeAuction`
+
+```text
+IndicativeAuction {
+    price: Observation<Price>
+    quantity: Observation<Quantity>
+    book: Observation<CompleteBookSnapshot>
+    cumulative_volume: Observation<Volume>
+    annotations: MarketAnnotations
+}
+```
+
+`IndicativeOpeningAuction` 與 `IndicativeClosingAuction` 使用相同 payload。這些
+events 進入 timeline 與 strategy callback，但不更新 actual trade／cumulative
+volume，也不提供 execution fill evidence。TWSE trial intermediate 沒有 book；trial
+final 可帶 complete book。
 
 ## 10. TWSE intermediate print
 

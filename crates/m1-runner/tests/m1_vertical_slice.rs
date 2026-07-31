@@ -6,12 +6,12 @@ use std::{
 use m1_runner::{ArtifactExportError, M1FixtureInput};
 
 const NORMALIZED_EVENTS_BLAKE3: &str =
-    "7e37ff0ad4a8b15b4c569b295c0f03f26bb6c0f32db1493edac71620e85a28df";
+    "fbcc03d53d541c7033211f2d93811ffe619b2943fe1f459836983d951db7f85c";
 const EVENT_STREAM_BLAKE3: &str =
-    "0cecf1f6c3c6a8422955183fe383e787612efee3a4c4a7961d7faa6ee9e1de56";
-const FINAL_STATE_BLAKE3: &str = "02f256fc1007ce41e56200a4f82fc0f0cb504ee29afdf7262307a232862e7ea0";
+    "7c06b170b06425a52a23c7ca3bb055c993163807837e88ea6207bbdccf7e17c8";
+const FINAL_STATE_BLAKE3: &str = "c243c4852da585412e4b62c78b1ef3535c5c9e6e61480d590e77ce58de174db2";
 const STRATEGY_OUTPUT_BLAKE3: &str =
-    "763a5cb305a7ebbe86ea463e4091e90346421273e61b2f40f0c8ba4247690917";
+    "6adb1736bc66e848162710ac73b10b7281c47d2a99e514de100cacd01e3d9c2a";
 
 fn fixture_directory() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -63,10 +63,12 @@ fn m1_vertical_slice_reports_complete_local_run() {
     assert_eq!(summary.outside_replay_window_count, 1);
     assert_eq!(summary.known_skipped_count, 0);
     assert_eq!(summary.normalized_event_count, 73_795);
-    assert_eq!(summary.quote_snapshot_count, 73_792);
+    assert_eq!(summary.quote_snapshot_count, 73_435);
     assert_eq!(summary.trade_batch_count, 3);
+    assert_eq!(summary.indicative_opening_auction_count, 180);
+    assert_eq!(summary.indicative_closing_auction_count, 177);
     assert_eq!(summary.callback_count, 73_795);
-    assert_eq!(summary.strategy_output_record_count, 147_590);
+    assert_eq!(summary.strategy_output_record_count, 147_410);
     assert_eq!(summary.warning_count, 0);
     assert!(artifacts.warnings().is_empty());
     assert_eq!(

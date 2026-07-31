@@ -359,8 +359,8 @@ fn initial_market_state_canonical_frame_matches_the_documented_layout() {
     let state = MarketState::new(instrument("2330"), date());
     let mut expected = Vec::new();
     expected.extend_from_slice(b"OSMS");
-    expected.extend_from_slice(&1_u16.to_be_bytes());
-    expected.extend_from_slice(&1_u16.to_be_bytes());
+    expected.extend_from_slice(&2_u16.to_be_bytes());
+    expected.extend_from_slice(&2_u16.to_be_bytes());
     expected.push(MarketId::Twse.discriminant());
     expected.extend_from_slice(&4_u32.to_be_bytes());
     expected.extend_from_slice(b"2330");

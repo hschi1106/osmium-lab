@@ -52,7 +52,7 @@ fn snapshot_maps_exact_numeric_lexemes_and_null_deal() {
         (bids, asks),
         "null",
         0,
-        (128, 0),
+        (16, 0),
     );
     let report = normalizer().normalize_json_lines([line]).unwrap();
 
@@ -85,6 +85,40 @@ fn snapshot_maps_exact_numeric_lexemes_and_null_deal() {
     );
     assert_eq!(snapshot.trade(), &Observation::NoObservation);
     assert_eq!(snapshot.cumulative_volume().as_set().unwrap().value(), 0);
+}
+
+#[test]
+fn trial_quotes_become_opening_and_closing_auction_events() {
+    let (bids, asks) = complete_book();
+    let opening = quote(
+        "STOCK_SNAPSHOT",
+        "2026-07-27T08:55:00+08:00",
+        false,
+        (bids, asks),
+        r#"{"price":100,"quantity":2}"#,
+        0,
+        (128, 0),
+    );
+    let closing = quote(
+        "STOCK_SNAPSHOT",
+        "2026-07-27T13:25:00+08:00",
+        false,
+        (bids, asks),
+        r#"{"price":101,"quantity":3}"#,
+        0,
+        (128, 0),
+    );
+    let report = normalizer()
+        .normalize_json_lines([opening, closing])
+        .unwrap();
+    assert!(matches!(
+        report.events()[0].payload(),
+        EventPayload::IndicativeOpeningAuction(_)
+    ));
+    assert!(matches!(
+        report.events()[1].payload(),
+        EventPayload::IndicativeClosingAuction(_)
+    ));
 }
 
 #[test]

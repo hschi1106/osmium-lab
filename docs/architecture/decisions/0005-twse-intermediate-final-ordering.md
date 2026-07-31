@@ -3,8 +3,8 @@
 - 狀態：Accepted
 - 決策日期：2026-07-30
 - 適用契約：`TeralionTwseQuote`、`OrderingRule`
-- TWSE mapping version：`2`
-- ordering rule version：`2`
+- TWSE mapping version：`4`
+- ordering rule version：`3`
 - 主要需求：`REPLAY-01`、`REPLAY-02`、`REPLAY-03`、`REPLAY-04`、`REPLAY-06`、
   `NFR-01`、`NFR-03`
 
@@ -163,7 +163,9 @@ rank 固定為：
 | --- | ---: |
 | 非 TWSE `STOCK_REALTIME` event | `0` |
 | TWSE `STOCK_REALTIME` `TradeBatch`，且所有 prints 都是 `Intermediate` | `10` |
+| TWSE trial `STOCK_REALTIME` intermediate auction event | `10` |
 | TWSE `STOCK_REALTIME` `QuoteSnapshot` final record | `20` |
+| TWSE trial `STOCK_REALTIME` final auction event | `20` |
 
 phase rank 必須由 canonical event 的 `market`、`source_format`、event kind 與 trade
 kind 純函式重建，不加入新的 mutable metadata，也不進 `CanonicalEvent` bytes。

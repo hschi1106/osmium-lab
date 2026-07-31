@@ -10,8 +10,8 @@ use crate::{
     UnavailableReason,
 };
 
-pub const CANONICAL_MARKET_STATE_VERSION: u16 = 1;
-pub const CANONICAL_FINAL_STATE_SET_VERSION: u16 = 1;
+pub const CANONICAL_MARKET_STATE_VERSION: u16 = 2;
+pub const CANONICAL_FINAL_STATE_SET_VERSION: u16 = 2;
 
 impl MarketState {
     pub fn to_canonical_bytes(&self) -> Result<Vec<u8>, CanonicalEncodingError> {
@@ -190,6 +190,7 @@ fn append_event_ref(
 ) -> Result<(), CanonicalEncodingError> {
     bytes.extend_from_slice(&event.match_time().as_unix_microseconds().to_be_bytes());
     append_bytes(event.source_format().as_bytes(), bytes)?;
+    bytes.push(event.source_phase());
     bytes.push(event.event_kind().discriminant());
     append_optional_u64(event.source_sequence(), bytes);
     bytes.extend_from_slice(event.event_fingerprint().as_bytes());

@@ -26,7 +26,7 @@ pub use canonical::{
 pub use decimal::{Decimal, DecimalError};
 pub use event::{
     BookSnapshot, CANONICAL_EVENT_VERSION, CanonicalDecodingError, DomainEvent,
-    EVENT_SCHEMA_VERSION, EventError, EventFingerprint, EventKind, EventPayload,
+    EVENT_SCHEMA_VERSION, EventError, EventFingerprint, EventKind, EventPayload, IndicativeAuction,
     MARKET_TYPES_VERSION, QuoteSnapshot, TradeBatch,
 };
 pub use instrument::InstrumentId;

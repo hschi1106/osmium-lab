@@ -5,7 +5,7 @@ use market_types::{
     Symbol, TradePrintKind,
 };
 
-pub const ORDERING_RULE_VERSION: u16 = 2;
+pub const ORDERING_RULE_VERSION: u16 = 3;
 
 /// Fully materialized version-2 deterministic event ordering key.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -129,6 +129,14 @@ fn source_phase_rank(event: &DomainEvent) -> Result<u8, OrderingError> {
                     .all(|trade| trade.print_kind() == TradePrintKind::Intermediate) =>
         {
             Ok(10)
+        }
+        EventPayload::IndicativeOpeningAuction(auction)
+        | EventPayload::IndicativeClosingAuction(auction) => {
+            Ok(if auction.book().as_set().is_some() {
+                20
+            } else {
+                10
+            })
         }
         EventPayload::BookSnapshot(_) | EventPayload::TradeBatch(_) => {
             Err(OrderingError::InvalidTwseRealtimeShape)

@@ -108,13 +108,16 @@ event schema 必須具有明確版本。版本不相容時，系統必須拒絕�
 | `QuoteSnapshot` | 完整最佳五檔，以及同一 source tick 中可用的成交、累計量與 flags |
 | `BookSnapshot` | 完整最佳五檔，以及可由同一 snapshot 直接取得的一檔 |
 | `TradeBatch` | 同一 source tick 中的一筆或多筆成交，以及可用的累計資訊 |
+| `IndicativeOpeningAuction` | 開盤試算的 indicative price／quantity／book；不是 actual trade |
+| `IndicativeClosingAuction` | 收盤試算的 indicative price／quantity／book；不是 actual trade |
 
 不屬於此集合的來源資料不得臨時建立未版本化 event kind。新增 event kind 必須先
 更新需求或設計、event schema version、normalizer fixture tests 及 traceability。
 
 第一版不提供 standalone status event。來源 tick 的 flags／status 是該
-`QuoteSnapshot`、`BookSnapshot` 或 `TradeBatch` 的 annotations，必須與原始
-observation 原子更新。
+`QuoteSnapshot`、`BookSnapshot`、`TradeBatch` 或 auction event 的 annotations，必須
+與原始 observation 原子更新。auction event 不得被當作 actual trade、cumulative
+volume 或 fill evidence。
 
 ### REPLAY-01.3 Source fidelity
 

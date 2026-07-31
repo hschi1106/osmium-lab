@@ -100,7 +100,7 @@ strategy output bytes 全部相同；只有 summary 文字相同不算。
 
 ### M1-AC-04：相同 `match_time` 的 deterministic tie-break
 
-**要求：** 相同 `match_time` 的 occurrence 依 `ordering_rule_version = 2`
+**要求：** 相同 `match_time` 的 occurrence 依 `ordering_rule_version = 3`
 排列；realtime intermediate 必須在 final 前，duplicate 不被 collapse。
 
 | Test IDs | Required evidence | Status |
