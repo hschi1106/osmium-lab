@@ -258,6 +258,20 @@ strategy_checksum=$(tr -d '[:space:]' <"$staging/runs/run-a/strategy-output.blak
 orders_checksum=$(tr -d '[:space:]' <"$staging/runs/run-a/orders.blake3")
 fills_checksum=$(tr -d '[:space:]' <"$staging/runs/run-a/fills.blake3")
 ledger_checksum=$(tr -d '[:space:]' <"$staging/runs/run-a/ledger.blake3")
+cat >"$staging/test-results/artifact-checksums.yaml" <<EOF
+event_stream_blake3: $event_checksum
+final_state_blake3: $state_checksum
+strategy_output_blake3: $strategy_checksum
+orders_blake3: $orders_checksum
+fills_blake3: $fills_checksum
+ledger_blake3: $ledger_checksum
+events: $event_count
+orders: $(awk '/^orders:/ {print $2; exit}' "$staging/runs/run-a/run-summary.yaml")
+fills: $(awk '/^fills:/ {print $2; exit}' "$staging/runs/run-a/run-summary.yaml")
+final_cash_atoms: $(awk '/^final_cash_atoms:/ {print $2; exit}' "$staging/runs/run-a/run-summary.yaml")
+realized_pnl_atoms: $(awk '/^realized_pnl_atoms:/ {print $2; exit}' "$staging/runs/run-a/run-summary.yaml")
+unrealized_pnl_atoms: $(awk '/^unrealized_pnl_atoms:/ {print $2; exit}' "$staging/runs/run-a/run-summary.yaml")
+EOF
 cat >"$staging/acceptance-report.yaml" <<EOF
 acceptance_contract_version: 1
 verification_plan_version: 3
@@ -313,10 +327,10 @@ acceptance:
   M3-AC-07: { status: Blocked, evidence: test-results/four-instrument-gate.yaml }
   M3-AC-08: { status: Passed, evidence: test-results/stream-open-audit.log }
   M3-AC-09: { status: Passed, evidence: workspace-debug.log }
-  M3-AC-10: { status: Passed, evidence: workspace-debug.log + run-a/fills.bin }
-  M3-AC-11: { status: Passed, evidence: workspace-debug.log + run-a/orders.bin }
-  M3-AC-12: { status: Passed, evidence: run-a/ledger.bin + config/m3-taifex-three.yaml }
-  M3-AC-13: { status: Passed, evidence: run-a/ledger.bin + run-a/performance.yaml }
+  M3-AC-10: { status: Passed, evidence: test-results/artifact-checksums.yaml }
+  M3-AC-11: { status: Passed, evidence: test-results/artifact-checksums.yaml }
+  M3-AC-12: { status: Passed, evidence: test-results/artifact-checksums.yaml + config/m3-taifex-three.yaml }
+  M3-AC-13: { status: Passed, evidence: test-results/artifact-checksums.yaml + test-results/performance.yaml }
   M3-AC-14: { status: Passed, evidence: plan.log + verify.log + replay-a-open.log + inspect-a.log }
   M3-AC-15: { status: Partial, evidence: test-results/repeated-runs.log + test-results/discovery-permutations.log }
   M3-AC-16: { status: Passed, evidence: test-results/corruption.log }
@@ -328,6 +342,10 @@ blockers:
     evidence: test-results/four-instrument-gate.yaml
 approver: tools/run_m3_acceptance.sh
 EOF
+
+# Source/cache and repeated run directories are derived and intentionally not committed.
+# The report, test logs and canonical artifact checksums are the durable evidence.
+rm -rf "$staging/data" "$staging/rebuild-data" "$staging/runs"
 
 mv "$staging" "$output_path"
 trap - EXIT HUP INT TERM

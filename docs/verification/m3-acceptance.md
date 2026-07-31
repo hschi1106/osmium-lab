@@ -22,6 +22,10 @@ machine-readable 結果由
 docs/verification/evidence/m3/formal-<UTC-date>/acceptance-report.yaml
 ```
 
+source/cache 與 repeated run directories 是可重建的 derived artifacts，harness
+完成後會清除；durable evidence 保留 acceptance report、test logs、stream-open audit、
+performance summary、corruption result 與 canonical artifact checksums。
+
 ## 2. Entry gates
 
 | gate | 狀態 | 證據 |
