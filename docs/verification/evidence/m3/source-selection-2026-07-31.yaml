@@ -1,0 +1,314 @@
+evidence_schema_version: 1
+milestone: M3
+evidence_kind: source_selection
+status: passed_with_redistribution_gate_open
+observed_at: "2026-07-31"
+
+selection:
+  exchange_trading_date: "2026-07-20"
+  timezone: Asia/Taipei
+  companion_instrument:
+    market: twse
+    symbol: "2330"
+    daily_instrument_sha256: 46dd821baf2c8c579db3ee5a36ef297271a59e90ddeaa9c56da0d4ba37aeb318
+  instruments:
+    - profile: index_futures_after_hours
+      symbol: TXFH6
+      teralion_market: taifex_fut
+      teralion_kind: index
+      expiry: "2026-08"
+      official_product_code: TX
+      official_name: 臺股期貨
+      sessions:
+        - after_hours
+        - regular
+      economics:
+        value: 200
+        unit: TWD_per_index_point_per_contract
+        source: TAIFEX 臺股期貨契約規格
+      daily_instrument_sha256: 028fd889a99b04a85b73f5a301beb8c8672f0f579ac657d00a30913bb289e55a
+    - profile: stock_futures_after_hours
+      symbol: CDFH6
+      teralion_market: taifex_fut
+      teralion_kind: equity
+      expiry: "2026-08"
+      official_product_code: CD
+      official_name: 台積電期貨
+      underlying_symbol: "2330"
+      sessions:
+        - after_hours
+        - regular
+      economics:
+        value: 2000
+        unit: shares_per_contract
+        source: TAIFEX 股票期貨／ETF期貨契約規格與交易標的一覽
+      daily_instrument_sha256: e81d0663dbb038748305c01626b10f778068f78dd163c7bb5c595465c164455d
+    - profile: stock_futures_regular_only
+      symbol: CAFH6
+      teralion_market: taifex_fut
+      teralion_kind: equity
+      expiry: "2026-08"
+      official_product_code: CA
+      official_name: 南亞期貨
+      underlying_symbol: "1303"
+      sessions:
+        - regular
+      economics:
+        value: 2000
+        unit: shares_per_contract
+        source: TAIFEX 股票期貨／ETF期貨契約規格與交易標的一覽
+      daily_instrument_sha256: 8f51514e903ffb6ecf971556c6a016683a0cf47129d318fc825d9015763d7211
+
+date_selection:
+  selected_reason:
+    - Teralion coverage 同時包含 taifex_fut 與 twse bucket
+    - 三個 exact symbols 都有指定日期的 daily instrument
+    - 兩個盤後商品都有午夜前後的完整 cursor chain
+    - 三個商品都有 regular source
+  rejected_candidates:
+    - exchange_trading_date: "2026-07-27"
+      reason: 兩個盤後商品都缺少前一適用日午夜前的 records，無法滿足跨日完整性 gate
+    - exchange_trading_date: "2026-07-28"
+      reason: symbol-level source 完整，但 store-wide coverage response 缺少 taifex_fut bucket
+
+teralion_coverage:
+  query:
+    start: "2026-07-20"
+    end: "2026-07-20"
+  terminal_cursor_reached: true
+  response_sha256: d73004057ab64eba006506565b9593ae11945aaf9ffc03769380a8e0e5d53638
+  buckets:
+    taifex_fut:
+      symbols: 3091
+      ticks: 21066553
+    twse:
+      symbols: 30758
+      ticks: 132673640
+  taifex_instrument_collection:
+    count: 1759
+    terminal_cursor_reached: true
+    response_sha256: 552ffc0d83e6518700d96624499b827ccfa1845b84ea1d22a489136e723983b2
+
+local_acquisition:
+  provider: Teralion
+  source_product: teralion-feed-archive
+  tool: tools/acquire_m3_evidence.sh
+  tool_commit: d23aa1a
+  local_path: raw/teralion/taifex/2026-07-20/evidence
+  filter_clock: received_at
+  requested_source_kinds:
+    - book
+    - close
+    - stats
+    - trade
+  cursor_complete: true
+  partition_count: 5
+  page_count: 156
+  record_count: 769214
+  checksum_entry_count: 176
+  checksum_manifest_sha256: e1ca3a441485886fdd4f70a1c450f99c02a1ff362469e49eaa45abc1111c3d1a
+  checksum_verification: passed
+  secret_scan:
+    status: passed
+    findings: 0
+    forbidden_keys:
+      - authorization
+      - api_key
+      - cookie
+      - password
+      - secret
+      - token
+
+partitions:
+  - symbol: TXFH6
+    segment: after_hours
+    received_at_window:
+      start: "2026-07-17T14:55:00+08:00"
+      end: "2026-07-18T05:05:00+08:00"
+    page_count: 79
+    record_count: 391872
+    calendar_date_counts:
+      "2026-07-17": 262021
+      "2026-07-18": 129851
+    observed_match_time:
+      first: "2026-07-17T14:55:02.654000+08:00"
+      last: "2026-07-18T05:03:50.183000+08:00"
+    source_types:
+      book: 335153
+      close: 52
+      stats: 10142
+      trade: 46525
+    source_formats:
+      I020: 45767
+      I021: 696
+      I022: 59
+      I023: 3
+      I030: 10142
+      I070: 2
+      I072: 50
+      I080: 335094
+      I082: 59
+    summary_sha256: 6eb1900139e5a19dd5c52690f40605b6e97b2ae86c4c4021597df2ce011be5d0
+  - symbol: TXFH6
+    segment: regular
+    received_at_window:
+      start: "2026-07-20T08:40:00+08:00"
+      end: "2026-07-20T13:50:00+08:00"
+    page_count: 39
+    record_count: 192667
+    observed_match_time:
+      first: "2026-07-20T08:40:00+08:00"
+      last: "2026-07-20T13:48:28.726000+08:00"
+    source_types:
+      book: 133843
+      close: 1
+      stats: 3663
+      trade: 55160
+    source_formats:
+      I020: 54653
+      I021: 444
+      I022: 60
+      I023: 3
+      I030: 3663
+      I070: 1
+      I080: 133783
+      I082: 60
+    summary_sha256: 5475e253f167bd6b9ed554b6d3dedbbd3c8d1d319596829e63afb2765eb813b8
+  - symbol: CDFH6
+    segment: after_hours
+    received_at_window:
+      start: "2026-07-17T17:20:00+08:00"
+      end: "2026-07-18T05:05:00+08:00"
+    page_count: 14
+    record_count: 67866
+    calendar_date_counts:
+      "2026-07-17": 47541
+      "2026-07-18": 20325
+    observed_match_time:
+      first: "2026-07-17T17:20:00+08:00"
+      last: "2026-07-18T05:04:57.659000+08:00"
+    source_types:
+      book: 58499
+      close: 20
+      stats: 7333
+      trade: 2014
+    source_formats:
+      I020: 1883
+      I021: 68
+      I022: 60
+      I023: 3
+      I030: 7333
+      I070: 3
+      I072: 17
+      I080: 58439
+      I082: 60
+    summary_sha256: 487b3739707b3946baaf216179df1c2fd905661f940778c6e9d1bdb6253e5fb6
+  - symbol: CDFH6
+    segment: regular
+    received_at_window:
+      start: "2026-07-20T08:40:00+08:00"
+      end: "2026-07-20T13:50:00+08:00"
+    page_count: 16
+    record_count: 77510
+    observed_match_time:
+      first: "2026-07-20T08:40:00+08:00"
+      last: "2026-07-20T13:47:11.193000+08:00"
+    source_types:
+      book: 68077
+      close: 1
+      stats: 3621
+      trade: 5811
+    source_formats:
+      I020: 5697
+      I021: 51
+      I022: 60
+      I023: 3
+      I030: 3621
+      I070: 1
+      I080: 68017
+      I082: 60
+    summary_sha256: 353ff7327404a5dd39ae0482f49dc3661810f8b9e33d32b72e25aff4e44a8b0b
+  - symbol: CAFH6
+    segment: regular
+    received_at_window:
+      start: "2026-07-20T08:40:00+08:00"
+      end: "2026-07-20T13:50:00+08:00"
+    page_count: 8
+    record_count: 39299
+    observed_match_time:
+      first: "2026-07-20T08:40:00+08:00"
+      last: "2026-07-20T13:47:10.442000+08:00"
+    source_types:
+      book: 29736
+      close: 1
+      stats: 3411
+      trade: 6151
+    source_formats:
+      I020: 6045
+      I021: 43
+      I022: 60
+      I023: 3
+      I030: 3411
+      I070: 1
+      I080: 29676
+      I082: 60
+    summary_sha256: 456d14240dc21265c8148a0e15aa0a2716f7fdd4299547d3574bdb1244c2161c
+
+fixture_suitability:
+  complete_five_level_book_records:
+    TXFH6: 468996
+    CDFH6: 126576
+    CAFH6: 29736
+  multi_trade_batch_records:
+    TXFH6: 8583
+    CDFH6: 88
+    CAFH6: 57
+  maximum_trades_per_batch:
+    TXFH6: 27
+    CDFH6: 3
+    CAFH6: 3
+  duplicate_match_time_values:
+    TXFH6: 16254
+    CDFH6: 1714
+    CAFH6: 662
+  raw_close_and_stats_present: true
+
+metadata_gaps:
+  teralion_daily_instrument_null_fields:
+    - multiplier
+    - currency
+    - underlying
+  teralion_daily_instrument_empty_string_fields:
+    - name
+    - root
+  policy:
+    - 不由 symbol pattern 補值
+    - economics 由明示 TAIFEX 官方來源及 config 提供
+    - Teralion 缺漏欄位保持 unknown
+
+official_sources:
+  reviewed_at: "2026-07-31"
+  references:
+    - purpose: TX sessions and TWD 200 multiplier
+      url: https://www.taifex.com.tw/cht/2/tX?menuid1=12
+    - purpose: stock futures sessions and standard 2000-share contract unit
+      url: https://www.taifex.com.tw/cht/2/sTF
+    - purpose: CD after-hours applicability and CA non-applicability
+      url: https://www.taifex.com.tw/cht/2/stockLists
+    - purpose: after-hours trading-date ownership
+      url: https://www.taifex.com.tw/file/taifex/event/cht/AfterHoursTrading/afterhourstrading_pamphlet.pdf
+
+authorization:
+  local_acquisition_and_analysis:
+    status: authorized_by_repository_owner_request
+    scope: local gitignored raw evidence
+  fixture_redistribution:
+    status: pending
+    reason: M1 approval does not cover new TAIFEX payload
+    blocks:
+      - committing extracted TAIFEX fixture payload
+      - marking M3-AC-01 passed
+    does_not_block:
+      - reviewing local raw source
+      - documenting sanitized counts and checksums
+      - implementing interface mapping against local source

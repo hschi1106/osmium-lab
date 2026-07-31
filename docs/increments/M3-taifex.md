@@ -18,17 +18,21 @@ reference_profiles         = [
   stock_futures_after_hours,
   stock_futures_regular_only
 ]
-reference_symbols          = pending three authorized fixture identities
-reference_trading_date     = pending common-date coverage evidence
+reference_symbols          = [TXFH6, CDFH6, CAFH6]
+reference_trading_date     = 2026-07-20
 companion_instrument       = TWSE 2330
 acceptance_universe_size   = 4
+source_evidence            = docs/verification/evidence/m3/source-selection-2026-07-31.yaml
+fixture_redistribution     = Pending
 ```
 
-三個 `reference_symbols` 必須使用 Teralion 實際回傳的 exact symbols，不得依
-TAIFEX 商品代碼慣例猜測。reference trading date 原則上選擇 `2026-07-27`，以重用
-M2 的 TWSE `2330` 資料；若 Teralion coverage、TAIFEX calendar 或合法 fixtures
-無法支持該日，必須先以小型文件 commit 固定另一個兩市場及三種 profiles 都有
-完整資料的已結束交易日。
+三個 `reference_symbols` 是 Teralion `2026-07-20` daily instrument collection
+實際回傳的 exact symbols，不是依 TAIFEX 商品代碼慣例推測。原先偏好的
+`2026-07-27` 缺少兩個 after-hours profiles 的午夜前 records；`2026-07-28`
+雖有 symbol-level payload，store-wide coverage 卻缺少 `taifex_fut` bucket。
+因此依 entry gate 改選第一個同時具 coverage、跨午夜 source、三個 regular
+partitions 與 TWSE `2330` metadata 的 `2026-07-20`。選擇證據見
+[M3 source selection evidence](../verification/evidence/m3/source-selection-2026-07-31.yaml)。
 
 本文件不定義尚未由 fixture 證實的 JSON 欄位或 `format` mapping。實際 wire
 contract 必須在 [TAIFEX interface](../interfaces/taifex.md)由真實 tick 與官方文件
@@ -253,6 +257,30 @@ secret scan result
 
 不得提交 credential、authorization header、full cursor、signed URL 或未獲准
 散布的原始資料。
+
+### 6.4 Phase 1 frozen selection
+
+| Profile | Exact symbol | Teralion metadata | Official identity | Sessions | Economics |
+| --- | --- | --- | --- | --- | --- |
+| 股價指數期貨 | `TXFH6` | `kind=index`、`expiry=2026-08` | 臺股期貨 `TX` | `after_hours` + `regular` | TWD 200／指數點／口 |
+| 股票期貨（盤後適用） | `CDFH6` | `kind=equity`、`expiry=2026-08` | 台積電期貨 `CD`、underlying `2330` | `after_hours` + `regular` | 2,000 shares／口 |
+| 股票期貨（日盤限定） | `CAFH6` | `kind=equity`、`expiry=2026-08` | 南亞期貨 `CA`、underlying `1303` | `regular` | 2,000 shares／口 |
+
+Teralion daily instrument 的 `multiplier`、`currency` 與 `underlying` 在三個
+reference instruments 都是 `null`；M3 不得把上表的 official identity 寫回成
+來源實際提供的欄位。economics 必須由帶 TAIFEX reference provenance 的 explicit
+config 提供，並在 plan identity 保存。
+
+local gitignored acquisition 已完成五個 partitions、156 個 cursor pages 與 769,214
+筆 records，checksum manifest 及 secret scan 通過。兩個 after-hours partitions
+各自包含 `2026-07-17` 午夜前及 `2026-07-18` 午夜後 records；三個 instruments
+都包含完整五檔、multi-trade batch、相同 `match_time` occurrences 及 raw
+`close`／`stats`。
+
+這項 evidence 關閉 exact symbol、date、coverage 與 local acquisition gate，但不
+授權將新 TAIFEX payload 提交至 repository。既有 M1 redistribution approval 只涵蓋
+TWSE `2330`；TAIFEX fixture extraction／commit 前仍須取得明確 approval 並將
+selection、removal、checksum 與 redistribution scope 寫入 fixture metadata。
 
 ## 7. Trading date 與 SessionPlan
 
