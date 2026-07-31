@@ -35,10 +35,10 @@ milestone_status:
   M3:
     specification: complete
     source_evidence: complete
+    fixtures: complete
     implementation: not_started
     evidence: docs/verification/evidence/m3/source-selection-2026-07-31.yaml
     pending:
-      - TAIFEX fixture redistribution approval and extraction
       - TAIFEX interface mapping
   M4:
     implementation: not_started

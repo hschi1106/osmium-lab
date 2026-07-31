@@ -1,7 +1,7 @@
 evidence_schema_version: 1
 milestone: M3
 evidence_kind: source_selection
-status: passed_with_redistribution_gate_open
+status: passed
 observed_at: "2026-07-31"
 
 selection:
@@ -273,6 +273,38 @@ fixture_suitability:
     CAFH6: 662
   raw_close_and_stats_present: true
 
+committed_fixture:
+  root: fixtures/teralion/taifex
+  fixture_kind: approved_recorded_page_subset
+  symbol_count: 3
+  shard_count: 17
+  record_count: 74214
+  byte_count: 38238714
+  concatenation_order: symbol、segment directory 與 shard filename ascending
+  sha256: 10972c8a6ee8e58704c3fdbbbcd6d95f37ac8eb4a4519dcdb14429492275ddaf
+  extraction_tool: tools/extract_m3_fixtures.rs
+  extraction_tool_commit: ce445f7
+  deterministic_reextraction: passed_byte_for_byte
+  secret_scan:
+    status: passed
+    findings: 0
+  instruments:
+    TXFH6:
+      record_count: 29539
+      byte_count: 15055801
+      sha256: 87cbb978629267d4e0689d30d5d9c77b79207bbfa08029d0792bc257fd7c62b1
+      metadata: fixtures/teralion/taifex/TXFH6/2026-07-20/metadata.yaml
+    CDFH6:
+      record_count: 30376
+      byte_count: 16071177
+      sha256: 9ff5ebb78cbf287b17e25174f6eb7c25c59ffa9dbf9bf2b6b76855fabcbba0a2
+      metadata: fixtures/teralion/taifex/CDFH6/2026-07-20/metadata.yaml
+    CAFH6:
+      record_count: 14299
+      byte_count: 7111736
+      sha256: 68992c94466a296c14b35699035b8999eafaab631589d91a2a633ec95df80906
+      metadata: fixtures/teralion/taifex/CAFH6/2026-07-20/metadata.yaml
+
 metadata_gaps:
   teralion_daily_instrument_null_fields:
     - multiplier
@@ -303,12 +335,10 @@ authorization:
     status: authorized_by_repository_owner_request
     scope: local gitignored raw evidence
   fixture_redistribution:
-    status: pending
-    reason: M1 approval does not cover new TAIFEX payload
-    blocks:
-      - committing extracted TAIFEX fixture payload
-      - marking M3-AC-01 passed
-    does_not_block:
-      - reviewing local raw source
-      - documenting sanitized counts and checksums
-      - implementing interface mapping against local source
+    status: approved
+    scope: selected 74214 TXFH6、CDFH6 與 CAFH6 records，僅供 private repository hschi1106/osmium-lab internal use
+    basis: repository-owner authorization
+    approval_reference: user authorization recorded in M3 phase 1 completion turn
+    approved_by: repository owner/admin
+    approved_at: "2026-07-31T05:37:39Z"
+    expiry_or_review_date: null
