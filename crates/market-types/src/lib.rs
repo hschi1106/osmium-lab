@@ -1,5 +1,6 @@
 mod annotations;
 mod book;
+mod canonical;
 mod decimal;
 mod event;
 mod instrument;
@@ -19,11 +20,13 @@ pub use annotations::{
     TwseQuoteAnnotations, TwseStatus,
 };
 pub use book::{BOOK_DEPTH, BookError, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot};
+pub use canonical::{
+    CanonicalEncodingError, CanonicalValue, append_bytes, append_length, append_optional_u64,
+};
 pub use decimal::{Decimal, DecimalError};
 pub use event::{
-    BookSnapshot, CANONICAL_EVENT_VERSION, CanonicalEncodingError, DomainEvent,
-    EVENT_SCHEMA_VERSION, EventError, EventFingerprint, EventPayload, MARKET_TYPES_VERSION,
-    QuoteSnapshot, TradeBatch,
+    BookSnapshot, CANONICAL_EVENT_VERSION, DomainEvent, EVENT_SCHEMA_VERSION, EventError,
+    EventFingerprint, EventKind, EventPayload, MARKET_TYPES_VERSION, QuoteSnapshot, TradeBatch,
 };
 pub use instrument::InstrumentId;
 pub use market::{MarketId, MarketIdError};

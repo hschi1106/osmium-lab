@@ -1,7 +1,9 @@
 [workspace]
 members = [
+    "crates/market-state",
     "crates/market-types",
     "crates/normalizer/twse",
+    "crates/replay-engine",
 ]
 resolver = "2"
 

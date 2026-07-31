@@ -1,8 +1,9 @@
 use std::{error::Error, fmt};
 
 use crate::{
-    CompleteBookSnapshot, InstrumentId, MarketAnnotations, MatchTime, Observation, QuantityUnit,
-    SourceFormatId, TradeError, TradeOrder, TradePrint, TradingDate, UnknownValue, Volume,
+    CanonicalEncodingError, CanonicalValue, CompleteBookSnapshot, InstrumentId, MarketAnnotations,
+    MatchTime, Observation, QuantityUnit, SourceFormatId, TradeError, TradeOrder, TradePrint,
+    TradingDate, Volume, append_bytes, append_length, append_optional_u64,
     trade::validate_trade_units,
 };
 
@@ -142,11 +143,31 @@ pub enum EventPayload {
 impl EventPayload {
     #[must_use]
     pub const fn discriminant(&self) -> u8 {
+        self.kind().discriminant()
+    }
+
+    #[must_use]
+    pub const fn kind(&self) -> EventKind {
         match self {
-            Self::QuoteSnapshot(_) => 10,
-            Self::BookSnapshot(_) => 20,
-            Self::TradeBatch(_) => 30,
+            Self::QuoteSnapshot(_) => EventKind::QuoteSnapshot,
+            Self::BookSnapshot(_) => EventKind::BookSnapshot,
+            Self::TradeBatch(_) => EventKind::TradeBatch,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u8)]
+pub enum EventKind {
+    QuoteSnapshot = 10,
+    BookSnapshot = 20,
+    TradeBatch = 30,
+}
+
+impl EventKind {
+    #[must_use]
+    pub const fn discriminant(self) -> u8 {
+        self as u8
     }
 }
 
@@ -218,17 +239,11 @@ impl DomainEvent {
         bytes.extend_from_slice(&CANONICAL_EVENT_VERSION.to_be_bytes());
         bytes.extend_from_slice(&EVENT_SCHEMA_VERSION.to_be_bytes());
         bytes.push(self.instrument.market().discriminant());
-        encode_bytes(self.instrument.symbol().as_bytes(), &mut bytes)?;
+        append_bytes(self.instrument.symbol().as_bytes(), &mut bytes)?;
         bytes.extend_from_slice(&self.trading_date.to_canonical_bytes());
-        encode_bytes(self.source_format.as_bytes(), &mut bytes)?;
+        append_bytes(self.source_format.as_bytes(), &mut bytes)?;
         bytes.extend_from_slice(&self.match_time.as_unix_microseconds().to_be_bytes());
-        match self.source_sequence {
-            None => bytes.push(0),
-            Some(sequence) => {
-                bytes.push(1);
-                bytes.extend_from_slice(&sequence.to_be_bytes());
-            }
-        }
+        append_optional_u64(self.source_sequence, &mut bytes);
         bytes.push(self.payload.discriminant());
         encode_payload(&self.payload, &mut bytes)?;
         Ok(bytes)
@@ -281,23 +296,6 @@ impl Error for EventError {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CanonicalEncodingError {
-    LengthOverflow,
-}
-
-impl fmt::Display for CanonicalEncodingError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::LengthOverflow => {
-                formatter.write_str("canonical string, byte value, or vector exceeds u32 length")
-            }
-        }
-    }
-}
-
-impl Error for CanonicalEncodingError {}
-
 fn validate_snapshot_units(
     book: &CompleteBookSnapshot,
     trade: &Observation<TradePrint>,
@@ -336,102 +334,24 @@ fn encode_payload(
 ) -> Result<(), CanonicalEncodingError> {
     match payload {
         EventPayload::QuoteSnapshot(snapshot) => {
-            encode_book(snapshot.book(), bytes);
-            encode_observation(snapshot.trade(), bytes, encode_trade)?;
-            encode_observation(snapshot.cumulative_volume(), bytes, |volume, bytes| {
-                encode_volume(*volume, bytes);
-                Ok(())
-            })?;
-            encode_annotations(snapshot.annotations(), bytes);
+            snapshot.book().append_canonical(bytes)?;
+            snapshot.trade().append_canonical(bytes)?;
+            snapshot.cumulative_volume().append_canonical(bytes)?;
+            snapshot.annotations().append_canonical(bytes)?;
         }
         EventPayload::BookSnapshot(snapshot) => {
-            encode_book(snapshot.book(), bytes);
-            encode_annotations(snapshot.annotations(), bytes);
+            snapshot.book().append_canonical(bytes)?;
+            snapshot.annotations().append_canonical(bytes)?;
         }
         EventPayload::TradeBatch(batch) => {
-            encode_len(batch.trades().len(), bytes)?;
+            append_length(batch.trades().len(), bytes)?;
             for trade in batch.trades() {
-                encode_trade(trade, bytes)?;
+                trade.append_canonical(bytes)?;
             }
             bytes.push(batch.trade_order().discriminant());
-            encode_observation(batch.cumulative_volume(), bytes, |volume, bytes| {
-                encode_volume(*volume, bytes);
-                Ok(())
-            })?;
-            encode_annotations(batch.annotations(), bytes);
+            batch.cumulative_volume().append_canonical(bytes)?;
+            batch.annotations().append_canonical(bytes)?;
         }
     }
-    Ok(())
-}
-
-fn encode_book(book: &CompleteBookSnapshot, bytes: &mut Vec<u8>) {
-    for side in [book.bids(), book.asks()] {
-        for slot in side.slots() {
-            match slot {
-                None => bytes.push(0),
-                Some(level) => {
-                    bytes.push(1);
-                    bytes.extend_from_slice(&level.price().to_canonical_bytes());
-                    bytes.extend_from_slice(&level.displayed_quantity().to_canonical_bytes());
-                }
-            }
-        }
-    }
-}
-
-fn encode_trade(trade: &TradePrint, bytes: &mut Vec<u8>) -> Result<(), CanonicalEncodingError> {
-    bytes.extend_from_slice(&trade.price().to_canonical_bytes());
-    bytes.extend_from_slice(&trade.quantity().to_canonical_bytes());
-    bytes.push(trade.print_kind().discriminant());
-    Ok(())
-}
-
-fn encode_volume(volume: Volume, bytes: &mut Vec<u8>) {
-    bytes.extend_from_slice(&volume.to_canonical_bytes());
-}
-
-fn encode_annotations(annotations: &MarketAnnotations, bytes: &mut Vec<u8>) {
-    bytes.push(annotations.discriminant());
-    if let MarketAnnotations::TwseQuote(annotation) = annotations {
-        bytes.push(annotation.status_flags_raw());
-        bytes.push(annotation.limit_flags_raw());
-    }
-}
-
-fn encode_observation<T>(
-    observation: &Observation<T>,
-    bytes: &mut Vec<u8>,
-    encode_value: impl FnOnce(&T, &mut Vec<u8>) -> Result<(), CanonicalEncodingError>,
-) -> Result<(), CanonicalEncodingError> {
-    bytes.push(observation.discriminant());
-    match observation {
-        Observation::Set(value) => encode_value(value, bytes)?,
-        Observation::Unknown(value) => encode_unknown(value, bytes)?,
-        Observation::NoObservation | Observation::Clear => {}
-    }
-    Ok(())
-}
-
-fn encode_unknown(value: &UnknownValue, bytes: &mut Vec<u8>) -> Result<(), CanonicalEncodingError> {
-    bytes.push(value.discriminant());
-    match value {
-        UnknownValue::Unsigned(value) => bytes.extend_from_slice(&value.to_be_bytes()),
-        UnknownValue::Signed(value) => bytes.extend_from_slice(&value.to_be_bytes()),
-        UnknownValue::Decimal(value) => bytes.extend_from_slice(&value.to_canonical_bytes()),
-        UnknownValue::Text(value) => encode_bytes(value.as_bytes(), bytes)?,
-        UnknownValue::Bytes(value) => encode_bytes(value, bytes)?,
-    }
-    Ok(())
-}
-
-fn encode_bytes(value: &[u8], bytes: &mut Vec<u8>) -> Result<(), CanonicalEncodingError> {
-    encode_len(value.len(), bytes)?;
-    bytes.extend_from_slice(value);
-    Ok(())
-}
-
-fn encode_len(length: usize, bytes: &mut Vec<u8>) -> Result<(), CanonicalEncodingError> {
-    let length = u32::try_from(length).map_err(|_| CanonicalEncodingError::LengthOverflow)?;
-    bytes.extend_from_slice(&length.to_be_bytes());
     Ok(())
 }
