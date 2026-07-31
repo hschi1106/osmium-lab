@@ -2,6 +2,8 @@ mod cache;
 mod cursor;
 mod query;
 mod storage;
+mod sync;
+mod transport;
 mod verify;
 
 pub use cache::{
@@ -20,6 +22,8 @@ pub use storage::{
     CompressionPolicy, ObjectKind, PageMetadata, PublishedRevision, SourceManifest, StagedObject,
     StagedPage, StagingError, StagingRevision, ZSTD_COMPRESSION_LEVEL,
 };
+pub use sync::{PagedSyncReport, SyncError, TeralionSync};
+pub use transport::{FeedArchiveTransport, TERALION_BASE_URL};
 pub use verify::{
     LocalSourceRepository, SourceInspection, SyncDisposition, VerificationError, VerificationReport,
 };
