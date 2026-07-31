@@ -152,7 +152,7 @@ impl StrategyOutputSink {
         Ok(())
     }
 
-    pub(crate) fn into_event_records(
+    pub fn into_event_records(
         self,
         occurrence: &EventOccurrence,
     ) -> Result<Vec<StrategyOutputRecord>, StrategyOutputEncodingError> {
@@ -174,7 +174,7 @@ impl StrategyOutputSink {
             .collect()
     }
 
-    pub(crate) fn into_finalize_records(
+    pub fn into_finalize_records(
         self,
     ) -> Result<Vec<StrategyOutputRecord>, StrategyOutputEncodingError> {
         self.pending
@@ -207,7 +207,7 @@ pub struct StrategyOutput {
 }
 
 impl StrategyOutput {
-    pub(crate) const fn new(
+    pub const fn new(
         identity: StrategyIdentity,
         canonical_params_checksum: CanonicalParamsChecksum,
     ) -> Self {
@@ -218,7 +218,7 @@ impl StrategyOutput {
         }
     }
 
-    pub(crate) fn extend(&mut self, records: Vec<StrategyOutputRecord>) {
+    pub fn extend(&mut self, records: Vec<StrategyOutputRecord>) {
         self.records.extend(records);
     }
 

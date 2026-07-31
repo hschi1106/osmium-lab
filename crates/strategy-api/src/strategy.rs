@@ -14,7 +14,7 @@ pub struct StrategyInitializationContext<'a> {
 }
 
 impl<'a> StrategyInitializationContext<'a> {
-    pub(crate) const fn new(declaration: &'a StrategyDeclaration) -> Self {
+    pub const fn new(declaration: &'a StrategyDeclaration) -> Self {
         Self { declaration }
     }
 
@@ -52,7 +52,7 @@ pub struct StrategyEventContext<'event> {
 }
 
 impl<'event> StrategyEventContext<'event> {
-    pub(crate) const fn new(
+    pub const fn new(
         occurrence: &'event EventOccurrence,
         event: &'event DomainEvent,
         market_state: MarketStateView<'event>,
@@ -99,7 +99,7 @@ pub struct StrategyFinalizeContext<'state> {
 }
 
 impl<'state> StrategyFinalizeContext<'state> {
-    pub(crate) fn new(
+    pub fn new(
         clock: ReplayClock,
         states: impl IntoIterator<Item = MarketStateView<'state>>,
     ) -> Self {

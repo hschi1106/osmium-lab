@@ -145,6 +145,7 @@ impl Simulator {
 
     pub fn submit(
         &mut self,
+        strategy_id: &str,
         occurrence: &EventOccurrence,
         trading: &TradingContext,
         output_sequence: u32,
@@ -178,6 +179,7 @@ impl Simulator {
             .map_err(|error| SimulationError::Canonical(error.to_string()))?;
         let mut identity = Vec::new();
         identity.extend_from_slice(b"OSOR");
+        identity.extend_from_slice(strategy_id.as_bytes());
         identity.extend_from_slice(occurrence.event_fingerprint().as_bytes());
         identity.extend_from_slice(&occurrence.run_event_ordinal().to_be_bytes());
         identity.extend_from_slice(&output_sequence.to_be_bytes());

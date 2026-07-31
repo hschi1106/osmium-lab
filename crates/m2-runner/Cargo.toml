@@ -1,0 +1,15 @@
+[package]
+name = "m2-runner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+execution-sim = { path = "../execution-sim" }
+market-state = { path = "../market-state" }
+market-types = { path = "../market-types" }
+replay-engine = { path = "../replay-engine" }
+strategy-api = { path = "../strategy-api" }
+
+[lints]
+workspace = true
