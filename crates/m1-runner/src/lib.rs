@@ -3,7 +3,8 @@ use std::{
     fmt,
     fs::{self, File},
     io::{BufRead, BufReader},
-    path::Path,
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 use market_state::{
@@ -31,6 +32,7 @@ use twse_normalizer::{
 pub const M1_RUN_SUMMARY_VERSION: u16 = 1;
 pub const CANONICAL_NORMALIZED_EVENT_SET_VERSION: u16 = 1;
 const NORMALIZED_EVENT_SET_MAGIC: &[u8; 4] = b"OSNE";
+static ARTIFACT_EXPORT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone)]
 pub struct M1FixtureInput {
@@ -191,6 +193,103 @@ impl M1RunArtifacts {
     pub const fn summary(&self) -> &M1RunSummary {
         &self.summary
     }
+
+    /// Writes the complete replay artifact set through a staging directory.
+    ///
+    /// The destination must not already exist. A successful rename publishes the
+    /// complete set atomically; failed staging output is removed best-effort.
+    pub fn export(
+        &self,
+        output_directory: &Path,
+        fixture_metadata: &Path,
+        fixture_set_checksum: &Path,
+    ) -> Result<(), ArtifactExportError> {
+        if output_directory.exists() {
+            return Err(ArtifactExportError::OutputExists(
+                output_directory.to_path_buf(),
+            ));
+        }
+        let name = output_directory
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .ok_or(ArtifactExportError::InvalidOutputDirectory)?;
+        let parent = output_directory
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent).map_err(|source| ArtifactExportError::io(parent, source))?;
+        let sequence = ARTIFACT_EXPORT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let staging = parent.join(format!(
+            ".{name}.osmium-staging-{}-{sequence}",
+            std::process::id()
+        ));
+        fs::create_dir(&staging).map_err(|source| ArtifactExportError::io(&staging, source))?;
+
+        let result = self
+            .write_staging_artifacts(&staging, fixture_metadata, fixture_set_checksum)
+            .and_then(|()| {
+                fs::rename(&staging, output_directory)
+                    .map_err(|source| ArtifactExportError::io(output_directory, source))
+            });
+        if result.is_err() {
+            let _ = fs::remove_dir_all(&staging);
+        }
+        result
+    }
+
+    fn write_staging_artifacts(
+        &self,
+        staging: &Path,
+        fixture_metadata: &Path,
+        fixture_set_checksum: &Path,
+    ) -> Result<(), ArtifactExportError> {
+        let fixture_set_checksum_text = fs::read_to_string(fixture_set_checksum)
+            .map_err(|source| ArtifactExportError::io(fixture_set_checksum, source))?;
+        let fixture_set_checksum_value = fixture_set_checksum_text.trim();
+        if fixture_set_checksum_value.len() != 64
+            || !fixture_set_checksum_value
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(ArtifactExportError::InvalidFixtureSetChecksum);
+        }
+        copy_artifact(fixture_metadata, &staging.join("fixture-metadata.yaml"))?;
+        copy_artifact(fixture_set_checksum, &staging.join("fixture-set.sha256"))?;
+        write_artifact(
+            &staging.join("normalized-events.bin"),
+            &self.normalized_events,
+        )?;
+        write_artifact(
+            &staging.join("event-stream.blake3"),
+            format!(
+                "{}\n",
+                encode_hex(self.summary.event_stream_checksum.as_bytes())
+            )
+            .as_bytes(),
+        )?;
+        write_artifact(
+            &staging.join("final-state.blake3"),
+            format!("{}\n", encode_hex(&self.summary.final_state_checksum)).as_bytes(),
+        )?;
+        write_artifact(&staging.join("strategy-output.bin"), &self.strategy_output)?;
+        write_artifact(
+            &staging.join("strategy-output.blake3"),
+            format!(
+                "{}\n",
+                encode_hex(self.summary.strategy_output_checksum.as_bytes())
+            )
+            .as_bytes(),
+        )?;
+        write_artifact(
+            &staging.join("warnings.yaml"),
+            warnings_yaml(&self.warnings).as_bytes(),
+        )?;
+        write_artifact(
+            &staging.join("run-summary.yaml"),
+            self.summary.to_yaml(fixture_set_checksum_value).as_bytes(),
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -259,6 +358,189 @@ pub struct M1RunSummary {
     pub final_state_checksum: [u8; 32],
     pub normalized_events_checksum: NormalizedEventsChecksum,
     pub strategy_output_checksum: StrategyOutputChecksum,
+}
+
+impl M1RunSummary {
+    #[must_use]
+    pub fn to_yaml(self, fixture_set_sha256: &str) -> String {
+        format!(
+            concat!(
+                "run_summary_version: {run_summary_version}\n",
+                "outcome: passed\n",
+                "\n",
+                "versions:\n",
+                "  mapping: {mapping_version}\n",
+                "  market_types: {market_types_version}\n",
+                "  event_schema: {event_schema_version}\n",
+                "  canonical_event: {canonical_event_version}\n",
+                "  normalized_event_set: {normalized_event_set_version}\n",
+                "  ordering_rule: {ordering_rule_version}\n",
+                "  replay_engine: {replay_engine_version}\n",
+                "  replay_event_stream: {replay_event_stream_version}\n",
+                "  market_state: {market_state_version}\n",
+                "  state_reducer: {state_reducer_version}\n",
+                "  final_state_set: {final_state_set_version}\n",
+                "  strategy_api: {strategy_api_version}\n",
+                "  strategy_output: {strategy_output_version}\n",
+                "\n",
+                "counts:\n",
+                "  input_records: {input_record_count}\n",
+                "  outside_replay_window: {outside_replay_window_count}\n",
+                "  known_skipped: {known_skipped_count}\n",
+                "  normalized_events: {normalized_event_count}\n",
+                "  quote_snapshots: {quote_snapshot_count}\n",
+                "  trade_batches: {trade_batch_count}\n",
+                "  strategy_callbacks: {callback_count}\n",
+                "  strategy_output_records: {strategy_output_record_count}\n",
+                "  warnings: {warning_count}\n",
+                "\n",
+                "checksums:\n",
+                "  fixture_set_sha256: {fixture_set_sha256}\n",
+                "  normalized_events_blake3: {normalized_events_checksum}\n",
+                "  event_stream_blake3: {event_stream_checksum}\n",
+                "  final_state_blake3: {final_state_checksum}\n",
+                "  strategy_output_blake3: {strategy_output_checksum}\n",
+            ),
+            run_summary_version = self.run_summary_version,
+            mapping_version = self.mapping_version,
+            market_types_version = self.market_types_version,
+            event_schema_version = self.event_schema_version,
+            canonical_event_version = self.canonical_event_version,
+            normalized_event_set_version = self.normalized_event_set_version,
+            ordering_rule_version = self.ordering_rule_version,
+            replay_engine_version = self.replay_engine_version,
+            replay_event_stream_version = self.replay_event_stream_version,
+            market_state_version = self.market_state_version,
+            state_reducer_version = self.state_reducer_version,
+            final_state_set_version = self.final_state_set_version,
+            strategy_api_version = self.strategy_api_version,
+            strategy_output_version = self.strategy_output_version,
+            input_record_count = self.input_record_count,
+            outside_replay_window_count = self.outside_replay_window_count,
+            known_skipped_count = self.known_skipped_count,
+            normalized_event_count = self.normalized_event_count,
+            quote_snapshot_count = self.quote_snapshot_count,
+            trade_batch_count = self.trade_batch_count,
+            callback_count = self.callback_count,
+            strategy_output_record_count = self.strategy_output_record_count,
+            warning_count = self.warning_count,
+            fixture_set_sha256 = fixture_set_sha256,
+            normalized_events_checksum = encode_hex(self.normalized_events_checksum.as_bytes()),
+            event_stream_checksum = encode_hex(self.event_stream_checksum.as_bytes()),
+            final_state_checksum = encode_hex(&self.final_state_checksum),
+            strategy_output_checksum = encode_hex(self.strategy_output_checksum.as_bytes()),
+        )
+    }
+}
+
+#[derive(Debug)]
+pub enum ArtifactExportError {
+    InvalidOutputDirectory,
+    InvalidFixtureSetChecksum,
+    OutputExists(PathBuf),
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+}
+
+impl ArtifactExportError {
+    fn io(path: &Path, source: std::io::Error) -> Self {
+        Self::Io {
+            path: path.to_path_buf(),
+            source,
+        }
+    }
+}
+
+impl fmt::Display for ArtifactExportError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidOutputDirectory => {
+                formatter.write_str("artifact output directory must have a final path component")
+            }
+            Self::InvalidFixtureSetChecksum => {
+                formatter.write_str("fixture-set checksum must be exactly 64 hexadecimal digits")
+            }
+            Self::OutputExists(path) => {
+                write!(
+                    formatter,
+                    "artifact output directory already exists: {}",
+                    path.display()
+                )
+            }
+            Self::Io { path, source } => {
+                write!(
+                    formatter,
+                    "artifact I/O failed at {}: {source}",
+                    path.display()
+                )
+            }
+        }
+    }
+}
+
+impl Error for ArtifactExportError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Io { source, .. } => Some(source),
+            Self::InvalidOutputDirectory
+            | Self::InvalidFixtureSetChecksum
+            | Self::OutputExists(_) => None,
+        }
+    }
+}
+
+fn write_artifact(path: &Path, bytes: &[u8]) -> Result<(), ArtifactExportError> {
+    fs::write(path, bytes).map_err(|source| ArtifactExportError::io(path, source))
+}
+
+fn copy_artifact(source: &Path, destination: &Path) -> Result<(), ArtifactExportError> {
+    fs::copy(source, destination)
+        .map(|_| ())
+        .map_err(|error| ArtifactExportError::io(source, error))
+}
+
+fn warnings_yaml(warnings: &[M1Warning]) -> String {
+    let mut yaml = String::from("warnings_version: 1\n");
+    if warnings.is_empty() {
+        yaml.push_str("warnings: []\n");
+        return yaml;
+    }
+    yaml.push_str("warnings:\n");
+    for warning in warnings {
+        let (kind, raw) = match warning.kind() {
+            WarningKind::ReservedStatusBits(raw) => ("reserved_status_bits", Some(raw)),
+            WarningKind::ReservedTradeLimit => ("reserved_trade_limit", None),
+            WarningKind::ReservedBestBidLimit => ("reserved_best_bid_limit", None),
+            WarningKind::ReservedBestAskLimit => ("reserved_best_ask_limit", None),
+            WarningKind::ReservedInstantTrend => ("reserved_instant_trend", None),
+        };
+        yaml.push_str("  - kind: ");
+        yaml.push_str(kind);
+        yaml.push('\n');
+        if let Some(raw) = raw {
+            yaml.push_str(&format!("    raw: {raw}\n"));
+        }
+        match warning.match_time() {
+            Some(match_time) => yaml.push_str(&format!(
+                "    match_time_unix_microseconds: {}\n",
+                match_time.as_unix_microseconds()
+            )),
+            None => yaml.push_str("    match_time_unix_microseconds: null\n"),
+        }
+    }
+    yaml
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
 }
 
 pub fn canonical_normalized_events(events: Vec<DomainEvent>) -> Result<Vec<u8>, M1RunError> {

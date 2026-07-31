@@ -4,6 +4,7 @@ members = [
     "crates/market-state",
     "crates/market-types",
     "crates/normalizer/twse",
+    "crates/osmium-cli",
     "crates/replay-engine",
     "crates/strategy-api",
 ]
