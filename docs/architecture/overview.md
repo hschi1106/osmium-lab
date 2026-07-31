@@ -453,10 +453,15 @@ derived artifact 的相容性由其直接輸入與相關版本決定。能由 co
 - 多 stream deterministic merge
 - futures multiplier 與 accounting
 
-### M4：市場擴充
+### M4：TPEx
 
-依實際 fixture 逐一加入 TPEx、warrants、options mappings，不改變核心 replay、
-strategy 或 simulation 邊界。
+以實際 fixture 加入一個 TPEx regular-equity profile，不改變核心 replay、strategy
+或 simulation 邊界。
+
+### M5：市場擴充
+
+在 M4 完成後，依實際 fixture 逐一加入 warrants 與 options mappings；每個 instrument
+kind 各自固定 contract metadata、session、economics 與 acceptance evidence。
 
 ## 12. 架構驗證
 

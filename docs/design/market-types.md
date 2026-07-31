@@ -994,7 +994,7 @@ M2 沿用 M1 已驗證的 `TeralionTwseQuote` mapping version 3 與
 `OrderingRule` version 2，將相同 normalization 套用至 verified local source 與
 replay cache。
 
-### 16.3 M3／M4
+### 16.3 M3／M4／M5
 
 TAIFEX、TPEx、warrant 與 option 只能在各 interface 由真實 fixture 固定後：
 
@@ -1003,6 +1003,9 @@ TAIFEX、TPEx、warrant 與 option 只能在各 interface 由真實 fixture 固�
   與 instrument metadata。
 - 增加 mapping／canonical golden vectors。
 - review event／canonical compatibility。
+
+M4 只承接 TPEx regular-equity；warrant 與 option 的 contract metadata、economics
+與 market rule version 由 M5 分別驗收。
 
 ## 17. Traceability
 

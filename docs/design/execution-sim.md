@@ -740,7 +740,8 @@ accounting 或 reconciliation invariant failure 則使 run failed。
 | --- | --- |
 | M2 | 單一 TWSE 2330 account、Market/Limit Day、TopOfBook/TradePrint、AverageCostV1、TWD ledger |
 | M3 | TAIFEX economics、跨 segment order policy及 multi-instrument portfolio |
-| M4 | market-specific fee/tax/economics extensions；不改變 no-lookahead boundary |
+| M4 | TPEx market-specific fee/tax/economics extension；不改變 no-lookahead boundary |
+| M5 | warrant／option contract economics extensions；不改變 no-lookahead boundary |
 
 新增模型必須用新 identity/version與獨立 golden evidence；不得修改 V1 semantics 來
 提高歷史 fill rate。

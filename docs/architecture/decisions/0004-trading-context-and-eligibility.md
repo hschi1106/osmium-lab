@@ -442,7 +442,8 @@ price／quantity fill model 是不同責任。
   closing、phase gate 與 origin-event boundary；緩跌／緩漲需補 fixture evidence。
 - M3：由 TAIFEX interface 以真實 fixture 定義 regular／after-hours 的 matching
   與 order-entry rules，不共用 TWSE flags。
-- M4：TPEx、warrant、option 各自加入 market rule version 與 fixtures。
+- M4：TPEx 加入 market rule version 與 fixture。
+- M5：warrant、option 各自加入 contract rule version 與 fixtures。
 
 ## 14. Traceability
 

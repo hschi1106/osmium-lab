@@ -45,7 +45,17 @@ milestone_status:
       - docs/verification/m3-acceptance.md
       - docs/verification/evidence/m3/formal-2026-08-01-complete/acceptance-report.yaml
   M4:
+    reference_scope: one TPEx regular-equity symbol and trading date
+    specification: complete
+    fixtures: not_started
     implementation: not_started
+    formal_acceptance: not_run
+  M5:
+    reference_scope: warrants and options, delivered as independently accepted sub-scopes
+    specification: complete
+    fixtures: not_started
+    implementation: not_started
+    formal_acceptance: not_run
 
 field_meaning:
   planned_milestones: 預定交付範圍，不代表目前已實作
@@ -80,7 +90,8 @@ document_sets:
     M1: docs/increments/M1-twse-replay.md
     M2: docs/increments/M2-offline-backtest.md
     M3: docs/increments/M3-taifex.md
-    M4: docs/increments/M4-market-expansion.md
+    M4: docs/increments/M4-tpex.md
+    M5: docs/increments/M5-market-expansion.md
   verification:
     plan: docs/verification/plan.md
     acceptance: docs/verification/acceptance.md
@@ -90,7 +101,7 @@ document_sets:
     m3_source_selection: docs/verification/evidence/m3/source-selection-2026-07-31.yaml
     m3_acceptance: docs/verification/m3-acceptance.md
     m3_performance: docs/verification/performance.md
-    m3_formal_evidence: docs/verification/evidence/m3/formal-2026-08-01/acceptance-report.yaml
+    m3_formal_evidence: docs/verification/evidence/m3/formal-2026-08-01-complete/acceptance-report.yaml
     m1_formal_evidence: docs/verification/evidence/m1/formal-2026-07-31/acceptance-report.yaml
     fixture_provenance: docs/verification/fixture-provenance.md
     performance: docs/verification/performance.md
@@ -498,7 +509,10 @@ requirements:
         scope: 擴充 TAIFEX futures 與跨日 trading date 的取得
       - milestone: M4
         role: extension
-        scope: 擴充 TPEx、權證與選擇權
+        scope: 擴充 TPEx regular equity source 與 mapping
+      - milestone: M5
+        role: extension
+        scope: 擴充權證與選擇權 source 與 mapping
     planned_design_documents:
       - docs/architecture/decisions/0003-session-windows-and-strategy-activation.md
       - docs/interfaces/teralion.md
@@ -541,7 +555,10 @@ requirements:
         scope: 支援 TAIFEX 跨日 partition
       - milestone: M4
         role: extension
-        scope: 擴充其他 market 與商品種類
+        scope: 支援 TPEx partition、source/cache 與 regular session
+      - milestone: M5
+        role: extension
+        scope: 支援 warrant／option partition、contract metadata 與 source/cache
     planned_design_documents:
       - docs/design/data-sync.md
       - docs/operations/local-data.md
@@ -656,7 +673,10 @@ requirements:
         scope: 驗證 TAIFEX trading date、multiplier 缺漏與明確補值
       - milestone: M4
         role: extension
-        scope: 擴充權證及選擇權的到期日、履約價與買賣權別
+        scope: 固定 TPEx quantity unit、currency 與 market metadata provenance
+      - milestone: M5
+        role: extension
+        scope: 擴充權證及選擇權的 underlying、到期日、履約價與買賣權別
     planned_design_documents:
       - docs/architecture/decisions/0003-session-windows-and-strategy-activation.md
       - docs/interfaces/teralion.md
@@ -700,7 +720,10 @@ requirements:
         scope: 加入 TAIFEX-specific TradeBatch 與 BookSnapshot mapping
       - milestone: M4
         role: extension
-        scope: 加入 TPEx、權證與選擇權 mappings
+        scope: 加入 TPEx quote／trade mappings
+      - milestone: M5
+        role: extension
+        scope: 加入 warrant／option mappings
     planned_design_documents:
       - docs/architecture/decisions/0005-twse-intermediate-final-ordering.md
       - docs/design/market-types.md

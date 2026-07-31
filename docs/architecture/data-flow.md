@@ -570,8 +570,13 @@ TAIFEX stream┘
 
 ### M4
 
-新增 normalizer、interface fixture 與 metadata mapping；既有 source、event、replay、
-strategy 及 result flows 不改變。
+新增 TPEx normalizer、interface fixture 與 metadata mapping；既有 source、event、
+replay、strategy 及 result flows 不改變。
+
+### M5
+
+新增 warrant／option normalizer 與 contract metadata mapping；沿用同一 source、event、
+replay、strategy 及 result flow，未驗證的 format 不進入 generic path。
 
 ## 16. 驗證重點
 

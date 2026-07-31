@@ -540,7 +540,7 @@ M1 由 `M1-AC-07`、`M1-AC-08` 及 `M1-AC-09` 提供不含 degraded mode 的證�
 
 | Requirement | 主要驗證層級 | M1 證據 | 後續證據 |
 | --- | --- | --- | --- |
-| REPLAY-01 | fixture unit／golden tests | M1-AC-01、02、08、09 | M3 TAIFEX、M4 market formats |
+| REPLAY-01 | fixture unit／golden tests | M1-AC-01、02、08、09 | M3 TAIFEX、M4 TPEx、M5 warrant／option formats |
 | REPLAY-02 | unit／property／system tests | M1-AC-03、04 | M3 multi-symbol merge |
 | REPLAY-03 | reducer unit tests | M1-AC-02、05、06、09 | M3 trade／book state |
 | REPLAY-04 | strategy integration tests | M1-AC-06 | M2 order intent、M3 multi-symbol |
