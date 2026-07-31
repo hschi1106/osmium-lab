@@ -1,0 +1,7 @@
+   Compiling bitflags v2.13.1
+   Compiling tower-http v0.6.11
+   Compiling reqwest v0.12.28
+   Compiling data-sync v0.1.0 ($REPOSITORY/crates/data-sync)
+   Compiling m2-config v0.1.0 ($REPOSITORY/crates/m2-config)
+   Compiling osmium-cli v0.1.0 ($REPOSITORY/crates/osmium-cli)
+    Finished `release` profile [optimized] target(s) in 4.04s
