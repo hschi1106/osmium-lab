@@ -17,7 +17,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use twse_normalizer::{MAPPING_NAME, MAPPING_VERSION, NormalizerConfig, TwseNormalizer};
 
-use crate::{LocalSourceRepository, ObjectKind, VerificationReport};
+use crate::{
+    LocalSourceRepository, ObjectKind, PartitionRepositoryError, VerificationReport,
+    cache_partition_root,
+};
+use run_planner::SourcePartitionKey;
 
 const CACHE_MAGIC: &[u8; 9] = b"OSMCACHE1";
 pub const CACHE_FORMAT_VERSION: u16 = 1;
@@ -38,6 +42,8 @@ pub struct CacheDescriptor {
     pub event_schema_version: u16,
     pub canonical_event_version: u16,
     pub ordering_rule_version: u16,
+    #[serde(default)]
+    pub partition_identity: Option<String>,
     pub normalizer_mapping_name: String,
     pub normalizer_mapping_version: u16,
 }
@@ -173,6 +179,7 @@ impl CacheBuilder {
             event_schema_version: EVENT_SCHEMA_VERSION,
             canonical_event_version: CANONICAL_EVENT_VERSION,
             ordering_rule_version: ORDERING_RULE_VERSION,
+            partition_identity: None,
             normalizer_mapping_name: MAPPING_NAME.to_owned(),
             normalizer_mapping_version: MAPPING_VERSION,
         };
@@ -193,6 +200,74 @@ impl CacheBuilder {
             path: published_path,
             descriptor,
         })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PartitionCacheCatalog {
+    data_root: PathBuf,
+}
+
+impl PartitionCacheCatalog {
+    #[must_use]
+    pub fn new(data_root: impl Into<PathBuf>) -> Self {
+        Self {
+            data_root: data_root.into(),
+        }
+    }
+
+    pub fn root_for(&self, key: &SourcePartitionKey) -> Result<PathBuf, CacheCatalogError> {
+        cache_partition_root(&self.data_root, key).map_err(CacheCatalogError::Layout)
+    }
+
+    pub fn find(
+        &self,
+        key: &SourcePartitionKey,
+        source_revision_identity: &str,
+    ) -> Result<Option<PartitionCacheEntry>, CacheCatalogError> {
+        let root = self.root_for(key)?;
+        if !root.is_dir() {
+            return Ok(None);
+        }
+        let mut paths = fs::read_dir(&root)?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        paths.sort();
+        let partition_identity = hex(key.identity().as_bytes());
+        for path in paths {
+            let descriptor_path = path.join("descriptor.yaml");
+            if !descriptor_path.is_file() {
+                continue;
+            }
+            let descriptor: CacheDescriptor =
+                serde_json::from_slice(&fs::read(descriptor_path)?)
+                    .map_err(|error| CacheCatalogError::Descriptor(error.to_string()))?;
+            if descriptor.source_revision_identity == source_revision_identity
+                && descriptor.partition_identity.as_deref() == Some(partition_identity.as_str())
+            {
+                return Ok(Some(PartitionCacheEntry { path, descriptor }));
+            }
+        }
+        Ok(None)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PartitionCacheEntry {
+    path: PathBuf,
+    descriptor: CacheDescriptor,
+}
+
+impl PartitionCacheEntry {
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    #[must_use]
+    pub const fn descriptor(&self) -> &CacheDescriptor {
+        &self.descriptor
     }
 }
 
@@ -481,6 +556,27 @@ pub enum CacheBuildError {
     EventTooLarge,
     BuildAlreadyExists,
     CacheAlreadyExists(String),
+}
+
+#[derive(Debug)]
+pub enum CacheCatalogError {
+    Io(io::Error),
+    Layout(PartitionRepositoryError),
+    Descriptor(String),
+}
+
+impl fmt::Display for CacheCatalogError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+impl Error for CacheCatalogError {}
+
+impl From<io::Error> for CacheCatalogError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
 }
 
 impl fmt::Display for CacheBuildError {

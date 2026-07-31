@@ -37,6 +37,15 @@ pub struct SourceInspection {
 }
 
 impl SourceInspection {
+    pub(crate) fn corrupt(diagnostic: impl Into<Box<str>>) -> Self {
+        Self {
+            state: SourceState::Corrupt {
+                reason: CorruptReason::ReferenceMismatch,
+            },
+            report: None,
+            diagnostic: Some(diagnostic.into()),
+        }
+    }
     #[must_use]
     pub const fn state(&self) -> SourceState {
         self.state
@@ -78,24 +87,35 @@ impl SyncDisposition {
 
 #[derive(Debug, Clone)]
 pub struct LocalSourceRepository {
-    data_root: PathBuf,
+    source_root: PathBuf,
+    staging_root: PathBuf,
 }
 
 impl LocalSourceRepository {
     #[must_use]
     pub fn new(data_root: impl Into<PathBuf>) -> Self {
+        let data_root = data_root.into();
         Self {
-            data_root: data_root.into(),
+            source_root: data_root.join("source"),
+            staging_root: data_root.join("staging"),
+        }
+    }
+
+    #[must_use]
+    pub fn at_source_root(source_root: impl Into<PathBuf>) -> Self {
+        let source_root = source_root.into();
+        Self {
+            staging_root: source_root.join("staging"),
+            source_root,
         }
     }
 
     #[must_use]
     pub fn inspect(&self) -> SourceInspection {
-        let current_path = self.data_root.join("source/current.yaml");
+        let current_path = self.source_root.join("current.yaml");
         if !current_path.exists() {
             let building = self
-                .data_root
-                .join("staging")
+                .staging_root
                 .read_dir()
                 .is_ok_and(|mut entries| entries.next().is_some());
             return SourceInspection {
@@ -142,11 +162,11 @@ impl LocalSourceRepository {
     }
 
     pub fn verify_current(&self) -> Result<VerificationReport, VerificationError> {
-        let revision_text = fs::read_to_string(self.data_root.join("source/current.yaml"))?;
+        let revision_text = fs::read_to_string(self.source_root.join("current.yaml"))?;
         let revision_text = revision_text.trim();
         let revision_bytes =
             decode_hex_32(revision_text).ok_or(VerificationError::InvalidCurrentPointer)?;
-        let revision_path = self.data_root.join("source/revisions").join(revision_text);
+        let revision_path = self.source_root.join("revisions").join(revision_text);
         let manifest_path = revision_path.join("manifest.yaml");
         let manifest_bytes = fs::read(&manifest_path)?;
         let manifest: SourceManifest = serde_json::from_slice(&manifest_bytes)
