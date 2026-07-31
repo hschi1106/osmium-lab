@@ -3,7 +3,7 @@ use std::{error::Error, fmt};
 use market_types::{CanonicalEncodingError, Decimal, append_bytes};
 use replay_engine::EventOccurrence;
 
-use crate::{CanonicalParamsChecksum, StrategyIdentity};
+use crate::{CanonicalParamsChecksum, OrderIntent, OrderIntentError, StrategyIdentity};
 
 pub const CANONICAL_STRATEGY_OUTPUT_VERSION: u16 = 1;
 const STRATEGY_OUTPUT_MAGIC: &[u8; 4] = b"OSSO";
@@ -96,9 +96,11 @@ impl StrategyOutputRecord {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct StrategyOutputSink {
     pending: Vec<(Box<str>, IndicatorValue)>,
+    intents: Vec<OrderIntent>,
+    order_intents_enabled: bool,
 }
 
 impl StrategyOutputSink {
@@ -106,7 +108,35 @@ impl StrategyOutputSink {
     pub const fn new() -> Self {
         Self {
             pending: Vec::new(),
+            intents: Vec::new(),
+            order_intents_enabled: false,
         }
+    }
+
+    #[must_use]
+    pub const fn with_order_intents() -> Self {
+        Self {
+            pending: Vec::new(),
+            intents: Vec::new(),
+            order_intents_enabled: true,
+        }
+    }
+
+    pub fn emit_order_intent(&mut self, intent: OrderIntent) -> Result<(), OrderIntentError> {
+        if !self.order_intents_enabled {
+            return Err(OrderIntentError);
+        }
+        self.intents.push(intent);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn intents(&self) -> &[OrderIntent] {
+        &self.intents
+    }
+
+    pub fn take_intents(&mut self) -> Vec<OrderIntent> {
+        std::mem::take(&mut self.intents)
     }
 
     pub fn emit_indicator(
@@ -160,6 +190,12 @@ impl StrategyOutputSink {
                 })
             })
             .collect()
+    }
+}
+
+impl Default for StrategyOutputSink {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
