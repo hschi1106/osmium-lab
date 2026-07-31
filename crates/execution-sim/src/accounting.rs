@@ -86,8 +86,13 @@ impl Ledger {
             OrderSide::Sell => -quantity,
         };
         let price = fill.price().as_decimal();
-        let (position, average_cost, realized_delta) =
-            transition_position(self.position, self.average_cost, signed_quantity, price)?;
+        let (position, average_cost, realized_delta) = transition_position(
+            self.position,
+            self.average_cost,
+            signed_quantity,
+            price,
+            &self.economics,
+        )?;
         let cash_delta = match fill.side() {
             OrderSide::Buy => checked_neg(checked_add(checked_add(notional, fee)?, tax)?)?,
             OrderSide::Sell => checked_sub(checked_sub(notional, fee)?, tax)?,
@@ -300,6 +305,7 @@ fn transition_position(
     average: Option<Decimal>,
     delta: i128,
     price: Decimal,
+    economics: &InstrumentEconomics,
 ) -> Result<(i128, Option<Decimal>, Decimal), AccountingError> {
     let next = position
         .checked_add(delta)
@@ -323,19 +329,14 @@ fn transition_position(
             Decimal::ZERO,
         ));
     }
-    let closed = position.unsigned_abs().min(delta.unsigned_abs()) as i128;
+    let closed = position.unsigned_abs().min(delta.unsigned_abs());
     let average = average.ok_or(AccountingError::MissingCostBasis)?;
     let difference = if position > 0 {
         checked_sub(price, average)?
     } else {
         checked_sub(average, price)?
     };
-    let realized = Decimal::from_atoms(
-        difference
-            .atoms()
-            .checked_mul(closed)
-            .ok_or(AccountingError::Overflow)?,
-    );
+    let realized = scale_by_quantity(difference, closed, economics)?;
     let next_average = if next == 0 {
         None
     } else if next.signum() != position.signum() {
@@ -462,5 +463,26 @@ mod tests {
                 .unrealized_pnl,
             Some("5".parse().unwrap())
         );
+    }
+
+    #[test]
+    fn realized_pnl_uses_economic_quantity() {
+        let mut ledger = Ledger::new(
+            "10000000".parse().unwrap(),
+            InstrumentEconomics {
+                units_per_trading_unit: 1000,
+                multiplier: "1".parse().unwrap(),
+                provenance: "TWSE trading unit regression".into(),
+            },
+            model(ChargeSides::Both),
+            model(ChargeSides::Sell),
+        );
+        ledger.apply_fill(fill(OrderSide::Buy, "2335", 1)).unwrap();
+        ledger.apply_fill(fill(OrderSide::Sell, "2330", 1)).unwrap();
+
+        assert_eq!(ledger.position(), 0);
+        assert_eq!(ledger.cash(), "9995000".parse().unwrap());
+        assert_eq!(ledger.realized_pnl(), "-5000".parse().unwrap());
+        ledger.reconcile().unwrap();
     }
 }
