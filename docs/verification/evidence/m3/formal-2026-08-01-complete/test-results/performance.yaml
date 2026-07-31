@@ -1,0 +1,10 @@
+dataset=taifex-three
+events=69002
+source_bytes=1789952
+cache_bytes=18694144
+elapsed_seconds=0
+four_instrument:
+  events: 170870
+  source_bytes: 3723264
+  cache_bytes: 52391936
+  elapsed_seconds: 2

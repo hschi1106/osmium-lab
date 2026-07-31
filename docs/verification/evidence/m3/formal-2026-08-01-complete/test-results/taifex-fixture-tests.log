@@ -1,0 +1,12 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running tests/fixtures.rs (target/debug/deps/fixtures-6c3a6e3c8359bacc)
+
+running 6 tests
+test unknown_format_reports_the_format_identity ... ok
+test i020_continuation_is_rejected_in_the_current_source_boundary ... ok
+test timeline_quantities_use_contract_units ... ok
+test skips_keep_exchange_specific_reasons ... ok
+test i022_zero_zero_is_a_no_observation_opening_event ... ok
+test all_m3_futures_fixtures_normalize_with_opening_events_only ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.80s

@@ -1,0 +1,11 @@
+M3 fixture integrity: passed
+symbols=3
+shards=17
+records=74214
+sha256=10972c8a6ee8e58704c3fdbbbcd6d95f37ac8eb4a4519dcdb14429492275ddaf
+M3 fixture secret scan: passed
+TWSE fixture integrity: passed
+symbols=1
+shards=22
+records=101869
+TWSE fixture secret scan: passed
