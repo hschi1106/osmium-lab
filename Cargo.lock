@@ -101,11 +101,13 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "market-types",
+ "replay-engine",
  "run-planner",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
+ "twse-normalizer",
  "zstd",
 ]
 

@@ -1,10 +1,11 @@
 use std::{error::Error, fmt};
 
 use crate::{
-    CanonicalEncodingError, CanonicalValue, CompleteBookSnapshot, InstrumentId, MarketAnnotations,
-    MatchTime, Observation, QuantityUnit, SourceFormatId, TradeError, TradeOrder, TradePrint,
-    TradingDate, Volume, append_bytes, append_length, append_optional_u64,
-    trade::validate_trade_units,
+    BookLevel, BookSide, BookSideKind, CanonicalEncodingError, CanonicalValue,
+    CompleteBookSnapshot, Decimal, InstrumentId, MarketAnnotations, MarketId, MatchTime,
+    Observation, Price, Quantity, QuantityUnit, SourceFormatId, Symbol, TradeError, TradeOrder,
+    TradePrint, TradePrintKind, TradingDate, TwseQuoteAnnotations, UnknownValue, Volume,
+    append_bytes, append_length, append_optional_u64, trade::validate_trade_units,
 };
 
 pub const MARKET_TYPES_VERSION: u16 = 1;
@@ -249,10 +250,250 @@ impl DomainEvent {
         Ok(bytes)
     }
 
+    /// Decodes and validates one complete version-1 canonical event frame.
+    pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, CanonicalDecodingError> {
+        let mut parser = CanonicalParser::new(bytes);
+        if parser.take(4)? != CANONICAL_MAGIC
+            || parser.u16()? != CANONICAL_EVENT_VERSION
+            || parser.u16()? != EVENT_SCHEMA_VERSION
+        {
+            return Err(CanonicalDecodingError::UnsupportedHeader);
+        }
+        let market = MarketId::from_discriminant(parser.u8()?)
+            .map_err(|_| CanonicalDecodingError::InvalidValue)?;
+        let symbol =
+            Symbol::new(parser.string()?).map_err(|_| CanonicalDecodingError::InvalidValue)?;
+        let trading_date = TradingDate::from_epoch_days(parser.i32()?);
+        let source_format = SourceFormatId::new(parser.string()?)
+            .map_err(|_| CanonicalDecodingError::InvalidValue)?;
+        let match_time = MatchTime::from_unix_microseconds(parser.i64()?);
+        let source_sequence = match parser.u8()? {
+            0 => None,
+            1 => Some(parser.u64()?),
+            _ => return Err(CanonicalDecodingError::InvalidValue),
+        };
+        let payload = match parser.u8()? {
+            10 => EventPayload::QuoteSnapshot(
+                QuoteSnapshot::new(
+                    parser.book()?,
+                    parser.observation(CanonicalParser::trade)?,
+                    parser.observation(CanonicalParser::volume)?,
+                    parser.annotations()?,
+                )
+                .map_err(|_| CanonicalDecodingError::InvalidValue)?,
+            ),
+            20 => {
+                EventPayload::BookSnapshot(BookSnapshot::new(parser.book()?, parser.annotations()?))
+            }
+            30 => {
+                let count = parser.u32()? as usize;
+                let mut trades = Vec::with_capacity(count);
+                for _ in 0..count {
+                    trades.push(parser.trade()?);
+                }
+                let order = match parser.u8()? {
+                    0 => TradeOrder::Unspecified,
+                    1 => TradeOrder::SourceOrdered,
+                    _ => return Err(CanonicalDecodingError::InvalidValue),
+                };
+                EventPayload::TradeBatch(
+                    TradeBatch::new(
+                        trades,
+                        order,
+                        parser.observation(CanonicalParser::volume)?,
+                        parser.annotations()?,
+                    )
+                    .map_err(|_| CanonicalDecodingError::InvalidValue)?,
+                )
+            }
+            _ => return Err(CanonicalDecodingError::InvalidValue),
+        };
+        if !parser.is_finished() {
+            return Err(CanonicalDecodingError::TrailingBytes);
+        }
+        Ok(Self::new(
+            InstrumentId::new(market, symbol),
+            trading_date,
+            source_format,
+            match_time,
+            source_sequence,
+            payload,
+        ))
+    }
+
     /// Computes BLAKE3-256 over the canonical event frame.
     pub fn fingerprint(&self) -> Result<EventFingerprint, CanonicalEncodingError> {
         let bytes = self.to_canonical_bytes()?;
         Ok(EventFingerprint(*blake3::hash(&bytes).as_bytes()))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CanonicalDecodingError {
+    Truncated,
+    UnsupportedHeader,
+    InvalidUtf8,
+    InvalidValue,
+    TrailingBytes,
+}
+
+impl fmt::Display for CanonicalDecodingError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "canonical event decoding failed: {self:?}")
+    }
+}
+
+impl Error for CanonicalDecodingError {}
+
+struct CanonicalParser<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> CanonicalParser<'a> {
+    const fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn take(&mut self, length: usize) -> Result<&'a [u8], CanonicalDecodingError> {
+        let end = self
+            .offset
+            .checked_add(length)
+            .ok_or(CanonicalDecodingError::Truncated)?;
+        let value = self
+            .bytes
+            .get(self.offset..end)
+            .ok_or(CanonicalDecodingError::Truncated)?;
+        self.offset = end;
+        Ok(value)
+    }
+
+    fn array<const N: usize>(&mut self) -> Result<[u8; N], CanonicalDecodingError> {
+        self.take(N)?
+            .try_into()
+            .map_err(|_| CanonicalDecodingError::Truncated)
+    }
+
+    fn u8(&mut self) -> Result<u8, CanonicalDecodingError> {
+        Ok(self.array::<1>()?[0])
+    }
+
+    fn u16(&mut self) -> Result<u16, CanonicalDecodingError> {
+        Ok(u16::from_be_bytes(self.array()?))
+    }
+
+    fn u32(&mut self) -> Result<u32, CanonicalDecodingError> {
+        Ok(u32::from_be_bytes(self.array()?))
+    }
+
+    fn i32(&mut self) -> Result<i32, CanonicalDecodingError> {
+        Ok(i32::from_be_bytes(self.array()?))
+    }
+
+    fn u64(&mut self) -> Result<u64, CanonicalDecodingError> {
+        Ok(u64::from_be_bytes(self.array()?))
+    }
+
+    fn i64(&mut self) -> Result<i64, CanonicalDecodingError> {
+        Ok(i64::from_be_bytes(self.array()?))
+    }
+
+    fn i128(&mut self) -> Result<i128, CanonicalDecodingError> {
+        Ok(i128::from_be_bytes(self.array()?))
+    }
+
+    fn bytes(&mut self) -> Result<&'a [u8], CanonicalDecodingError> {
+        let length = self.u32()? as usize;
+        self.take(length)
+    }
+
+    fn string(&mut self) -> Result<&'a str, CanonicalDecodingError> {
+        std::str::from_utf8(self.bytes()?).map_err(|_| CanonicalDecodingError::InvalidUtf8)
+    }
+
+    fn price(&mut self) -> Result<Price, CanonicalDecodingError> {
+        Price::new(Decimal::from_atoms(self.i128()?))
+            .map_err(|_| CanonicalDecodingError::InvalidValue)
+    }
+
+    fn quantity(&mut self) -> Result<Quantity, CanonicalDecodingError> {
+        let unit = QuantityUnit::from_discriminant(self.u8()?)
+            .map_err(|_| CanonicalDecodingError::InvalidValue)?;
+        Quantity::new(self.u64()?, unit).map_err(|_| CanonicalDecodingError::InvalidValue)
+    }
+
+    fn volume(&mut self) -> Result<Volume, CanonicalDecodingError> {
+        let unit = QuantityUnit::from_discriminant(self.u8()?)
+            .map_err(|_| CanonicalDecodingError::InvalidValue)?;
+        Ok(Volume::new(self.u64()?, unit))
+    }
+
+    fn trade(&mut self) -> Result<TradePrint, CanonicalDecodingError> {
+        let price = self.price()?;
+        let quantity = self.quantity()?;
+        let kind = match self.u8()? {
+            0 => TradePrintKind::Regular,
+            1 => TradePrintKind::Intermediate,
+            _ => return Err(CanonicalDecodingError::InvalidValue),
+        };
+        Ok(TradePrint::new(price, quantity, kind))
+    }
+
+    fn book(&mut self) -> Result<CompleteBookSnapshot, CanonicalDecodingError> {
+        let bids = self.book_side(BookSideKind::Bid)?;
+        let asks = self.book_side(BookSideKind::Ask)?;
+        CompleteBookSnapshot::new(bids, asks).map_err(|_| CanonicalDecodingError::InvalidValue)
+    }
+
+    fn book_side(&mut self, kind: BookSideKind) -> Result<BookSide, CanonicalDecodingError> {
+        let mut slots = [None; 5];
+        for slot in &mut slots {
+            *slot = match self.u8()? {
+                0 => None,
+                1 => Some(BookLevel::new(self.price()?, self.quantity()?)),
+                _ => return Err(CanonicalDecodingError::InvalidValue),
+            };
+        }
+        BookSide::from_slots(kind, slots).map_err(|_| CanonicalDecodingError::InvalidValue)
+    }
+
+    fn observation<T>(
+        &mut self,
+        decode: fn(&mut Self) -> Result<T, CanonicalDecodingError>,
+    ) -> Result<Observation<T>, CanonicalDecodingError> {
+        match self.u8()? {
+            0 => Ok(Observation::NoObservation),
+            1 => Ok(Observation::Set(decode(self)?)),
+            2 => Ok(Observation::Clear),
+            3 => Ok(Observation::Unknown(self.unknown()?)),
+            _ => Err(CanonicalDecodingError::InvalidValue),
+        }
+    }
+
+    fn unknown(&mut self) -> Result<UnknownValue, CanonicalDecodingError> {
+        match self.u8()? {
+            1 => Ok(UnknownValue::Unsigned(self.u64()?)),
+            2 => Ok(UnknownValue::Signed(self.i64()?)),
+            3 => Ok(UnknownValue::Decimal(Decimal::from_atoms(self.i128()?))),
+            4 => Ok(UnknownValue::Text(self.string()?.into())),
+            5 => Ok(UnknownValue::Bytes(self.bytes()?.into())),
+            _ => Err(CanonicalDecodingError::InvalidValue),
+        }
+    }
+
+    fn annotations(&mut self) -> Result<MarketAnnotations, CanonicalDecodingError> {
+        match self.u8()? {
+            0 => Ok(MarketAnnotations::None),
+            1 => Ok(MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(
+                self.u8()?,
+                self.u8()?,
+            ))),
+            _ => Err(CanonicalDecodingError::InvalidValue),
+        }
+    }
+
+    const fn is_finished(&self) -> bool {
+        self.offset == self.bytes.len()
     }
 }
 
