@@ -48,7 +48,13 @@ pub fn execute(command: &M2Command) -> Result<String, M2CommandError> {
         M2CommandKind::Sync => execute_sync(&command.config),
         M2CommandKind::Verify => execute_verify(&command.config),
         M2CommandKind::Replay => execute_replay(&command.config),
-        M2CommandKind::Backtest => execute_backtest(&command.config),
+        M2CommandKind::Backtest => execute_backtest(
+            &command.config,
+            command
+                .output
+                .as_deref()
+                .ok_or(M2CommandError::OutputRequired)?,
+        ),
         M2CommandKind::Run => {
             let config = load(&command.config)?;
             let bundle = plan(config)?;
@@ -56,9 +62,23 @@ pub fn execute(command: &M2Command) -> Result<String, M2CommandError> {
                 execute_sync(&command.config)?;
             }
             prepare_cache(&command.config)?;
-            execute_backtest(&command.config)
+            execute_backtest(
+                &command.config,
+                command
+                    .output
+                    .as_deref()
+                    .ok_or(M2CommandError::OutputRequired)?,
+            )
         }
     }
+}
+
+pub fn execute_inspect(path: &Path) -> Result<String, M2CommandError> {
+    let summary = m2_runner::inspect_run(path)?;
+    Ok(format!(
+        "status={}\nevents={}\norders={}\nfills={}",
+        summary.status, summary.event_count, summary.order_count, summary.fill_count
+    ))
 }
 
 fn execute_plan(path: &Path) -> Result<String, M2CommandError> {
@@ -165,7 +185,7 @@ fn execute_replay(path: &Path) -> Result<String, M2CommandError> {
     ))
 }
 
-fn execute_backtest(path: &Path) -> Result<String, M2CommandError> {
+fn execute_backtest(path: &Path, output: &Path) -> Result<String, M2CommandError> {
     let bundle = ready_bundle(path)?;
     let config = bundle.execution.config();
     let cache = bundle
@@ -173,6 +193,8 @@ fn execute_backtest(path: &Path) -> Result<String, M2CommandError> {
         .as_ref()
         .ok_or(M2CommandError::CacheMissing)?;
     let mut reader = CacheReader::open(cache)?;
+    let source_revision = reader.descriptor().source_revision_identity.clone();
+    let cache_identity = reader.descriptor().cache_identity.clone();
     let mut events = Vec::new();
     while let Some(record) = reader.next_record()? {
         events.push(record.into_event());
@@ -221,12 +243,20 @@ fn execute_backtest(path: &Path) -> Result<String, M2CommandError> {
         ledger,
         None,
     )?;
+    m2_runner::publish_backtest(
+        output,
+        &completed,
+        bundle.execution.identity().as_bytes(),
+        &source_revision,
+        &cache_identity,
+    )?;
     Ok(format!(
-        "backtest=complete\nevents={}\norders={}\nfills={}\nfinal_cash_atoms={}",
+        "backtest=complete\nevents={}\norders={}\nfills={}\nfinal_cash_atoms={}\noutput={}",
         completed.replay.summary().event_count(),
         completed.simulator.orders().len(),
         completed.simulator.fills().len(),
-        completed.performance.final_cash.atoms()
+        completed.performance.final_cash.atoms(),
+        output.display()
     ))
 }
 
@@ -298,8 +328,10 @@ pub enum M2CommandError {
     State(market_state::SessionSegmentIdError),
     Strategy(strategy_api::DeclarationError),
     Backtest(m2_runner::BacktestError),
+    Artifact(m2_runner::ArtifactError),
     MissingCredential,
     CacheMissing,
+    OutputRequired,
     Other(String),
 }
 
@@ -325,6 +357,7 @@ convert!(Replay, replay_engine::ReplayError);
 convert!(State, market_state::SessionSegmentIdError);
 convert!(Strategy, strategy_api::DeclarationError);
 convert!(Backtest, m2_runner::BacktestError);
+convert!(Artifact, m2_runner::ArtifactError);
 
 impl fmt::Display for M2CommandError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {

@@ -620,11 +620,14 @@ dependencies = [
 name = "m2-runner"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "execution-sim",
  "market-state",
  "market-types",
  "replay-engine",
+ "serde_json",
  "strategy-api",
+ "tempfile",
 ]
 
 [[package]]
