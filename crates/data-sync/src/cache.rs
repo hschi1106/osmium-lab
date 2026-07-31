@@ -7,7 +7,8 @@ use std::{
 };
 
 use market_types::{
-    CANONICAL_EVENT_VERSION, DomainEvent, EVENT_SCHEMA_VERSION, MARKET_TYPES_VERSION, MatchTime,
+    CANONICAL_EVENT_VERSION, DomainEvent, EVENT_SCHEMA_VERSION, MARKET_TYPES_VERSION, MarketId,
+    MatchTime,
 };
 use replay_engine::{
     EventStream, ORDERING_RULE_VERSION, OrderingKey, ReplayStreamBinding, ReplayStreamFactory,
@@ -15,16 +16,29 @@ use replay_engine::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use twse_normalizer::{MAPPING_NAME, MAPPING_VERSION, NormalizerConfig, TwseNormalizer};
+use taifex_normalizer::{
+    MAPPING_NAME as TAIFEX_MAPPING_NAME, MAPPING_VERSION as TAIFEX_MAPPING_VERSION,
+    NormalizerConfig as TaifexNormalizerConfig, TaifexNormalizer,
+};
+use twse_normalizer::{
+    MAPPING_NAME as TWSE_MAPPING_NAME, MAPPING_VERSION as TWSE_MAPPING_VERSION,
+    NormalizerConfig as TwseNormalizerConfig, TwseNormalizer,
+};
 
 use crate::{
     LocalSourceRepository, ObjectKind, PartitionRepositoryError, VerificationReport,
-    cache_partition_root,
+    cache_instrument_root, cache_partition_root,
 };
 use run_planner::SourcePartitionKey;
 
 const CACHE_MAGIC: &[u8; 9] = b"OSMCACHE1";
 pub const CACHE_FORMAT_VERSION: u16 = 1;
+
+#[derive(Debug, Clone)]
+pub enum PartitionNormalizerConfig {
+    Twse(TwseNormalizerConfig),
+    Taifex(TaifexNormalizerConfig),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CacheDescriptor {
@@ -81,16 +95,48 @@ impl CacheBuilder {
 
     pub fn build_current(
         &self,
-        config: NormalizerConfig,
+        config: TwseNormalizerConfig,
     ) -> Result<PublishedCache, CacheBuildError> {
         let report = LocalSourceRepository::new(&self.data_root).verify_current()?;
-        self.build(&report, config)
+        self.build_at(
+            &report,
+            &self.data_root.join("source/revisions"),
+            &self.data_root.join("derived/staging"),
+            &self.data_root.join("derived/cache"),
+            None,
+            PartitionNormalizerConfig::Twse(config),
+        )
     }
 
-    fn build(
+    pub fn build_partition(
+        &self,
+        key: &SourcePartitionKey,
+        config: PartitionNormalizerConfig,
+    ) -> Result<PublishedCache, CacheBuildError> {
+        let repository = crate::PartitionedSourceRepository::new(&self.data_root, key.clone())
+            .map_err(|error| CacheBuildError::Partition(error.to_string()))?;
+        let report = repository.verify_current()?;
+        let source_root = repository.root().join("revisions");
+        let cache_root = crate::cache_partition_root(&self.data_root, key)
+            .map_err(|error| CacheBuildError::Partition(error.to_string()))?;
+        self.build_at(
+            &report,
+            &source_root,
+            &cache_root,
+            &cache_root,
+            Some(hex(key.identity().as_bytes())),
+            config,
+        )
+    }
+
+    fn build_at(
         &self,
         source: &VerificationReport,
-        config: NormalizerConfig,
+        source_root: &Path,
+        staging_root: &Path,
+        cache_root: &Path,
+        partition_identity: Option<String>,
+        config: PartitionNormalizerConfig,
     ) -> Result<PublishedCache, CacheBuildError> {
         if source
             .manifest()
@@ -100,10 +146,7 @@ impl CacheBuilder {
         {
             return Err(CacheBuildError::SourceManifest);
         }
-        let source_path = self
-            .data_root
-            .join("source/revisions")
-            .join(&source.manifest().revision_identity);
+        let source_path = source_root.join(&source.manifest().revision_identity);
         let mut lines = Vec::new();
         for page in &source.manifest().pages {
             let file = File::open(source_path.join(&page.relative_path))?;
@@ -121,14 +164,42 @@ impl CacheBuilder {
                 );
             }
         }
-        let events = TwseNormalizer::new(config.clone())
-            .normalize_json_lines(&lines)
-            .map_err(|error| CacheBuildError::Normalization(error.to_string()))?
-            .into_events();
+        let (instrument, trading_date, mapping_name, mapping_version, events) = match config {
+            PartitionNormalizerConfig::Twse(config) => {
+                let instrument = config.instrument().clone();
+                let trading_date = config.trading_date();
+                let events = TwseNormalizer::new(config)
+                    .normalize_json_lines(&lines)
+                    .map_err(|error| CacheBuildError::Normalization(error.to_string()))?
+                    .into_events();
+                (
+                    instrument,
+                    trading_date,
+                    TWSE_MAPPING_NAME.to_owned(),
+                    TWSE_MAPPING_VERSION,
+                    events,
+                )
+            }
+            PartitionNormalizerConfig::Taifex(config) => {
+                let instrument = config.instrument().clone();
+                let trading_date = config.trading_date();
+                let events = TaifexNormalizer::new(config)
+                    .normalize_json_lines(&lines)
+                    .map_err(|error| CacheBuildError::Normalization(error.to_string()))?
+                    .into_events();
+                (
+                    instrument,
+                    trading_date,
+                    TAIFEX_MAPPING_NAME.to_owned(),
+                    TAIFEX_MAPPING_VERSION,
+                    events,
+                )
+            }
+        };
         let events =
             order_events(events).map_err(|error| CacheBuildError::Ordering(error.to_string()))?;
 
-        let attempt = self.data_root.join("derived/staging/cache-build");
+        let attempt = staging_root.join("cache-build");
         if attempt.exists() {
             return Err(CacheBuildError::BuildAlreadyExists);
         }
@@ -163,14 +234,22 @@ impl CacheBuilder {
         fs::rename(&events_tmp, attempt.join("events.bin"))?;
 
         let payload_sha256 = hex(&payload_hasher.finalize());
-        let cache_identity = cache_identity(source, &config, &payload_sha256, events.len() as u64);
+        let cache_identity = cache_identity(
+            source,
+            &instrument,
+            trading_date,
+            mapping_version,
+            partition_identity.as_deref(),
+            &payload_sha256,
+            events.len() as u64,
+        );
         let descriptor = CacheDescriptor {
             cache_format_version: CACHE_FORMAT_VERSION,
             cache_identity: cache_identity.clone(),
             source_revision_identity: source.manifest().revision_identity.clone(),
-            instrument_market: config.instrument().market().discriminant(),
-            instrument_symbol: config.instrument().symbol().as_str().to_owned(),
-            trading_date_epoch_days: config.trading_date().as_epoch_days(),
+            instrument_market: instrument.market().discriminant(),
+            instrument_symbol: instrument.symbol().as_str().to_owned(),
+            trading_date_epoch_days: trading_date.as_epoch_days(),
             event_count: events.len() as u64,
             first_match_time_micros: first_match_time.map(MatchTime::as_unix_microseconds),
             last_match_time_micros: last_match_time.map(MatchTime::as_unix_microseconds),
@@ -179,23 +258,22 @@ impl CacheBuilder {
             event_schema_version: EVENT_SCHEMA_VERSION,
             canonical_event_version: CANONICAL_EVENT_VERSION,
             ordering_rule_version: ORDERING_RULE_VERSION,
-            partition_identity: None,
-            normalizer_mapping_name: MAPPING_NAME.to_owned(),
-            normalizer_mapping_version: MAPPING_VERSION,
+            partition_identity,
+            normalizer_mapping_name: mapping_name,
+            normalizer_mapping_version: mapping_version,
         };
         let descriptor_bytes = serde_json::to_vec_pretty(&descriptor)
             .map_err(|error| CacheBuildError::Descriptor(error.to_string()))?;
         write_atomic(&attempt.join("descriptor.yaml"), &descriptor_bytes)?;
         File::open(&attempt)?.sync_all()?;
 
-        let caches = self.data_root.join("derived/cache");
-        fs::create_dir_all(&caches)?;
-        let published_path = caches.join(&cache_identity);
+        fs::create_dir_all(cache_root)?;
+        let published_path = cache_root.join(&cache_identity);
         if published_path.exists() {
             return Err(CacheBuildError::CacheAlreadyExists(cache_identity));
         }
         fs::rename(&attempt, &published_path)?;
-        File::open(&caches)?.sync_all()?;
+        File::open(cache_root)?.sync_all()?;
         Ok(PublishedCache {
             path: published_path,
             descriptor,
@@ -273,7 +351,10 @@ impl PartitionCacheEntry {
 
 fn cache_identity(
     source: &VerificationReport,
-    config: &NormalizerConfig,
+    instrument: &market_types::InstrumentId,
+    trading_date: market_types::TradingDate,
+    mapping_version: u16,
+    partition_identity: Option<&str>,
     payload_sha256: &str,
     event_count: u64,
 ) -> String {
@@ -281,14 +362,17 @@ fn cache_identity(
     bytes.extend_from_slice(b"OSCI");
     bytes.extend_from_slice(&CACHE_FORMAT_VERSION.to_be_bytes());
     bytes.extend_from_slice(source.revision().as_bytes());
-    bytes.push(config.instrument().market().discriminant());
-    bytes.extend_from_slice(config.instrument().symbol().as_bytes());
-    bytes.extend_from_slice(&config.trading_date().to_canonical_bytes());
-    bytes.extend_from_slice(&MAPPING_VERSION.to_be_bytes());
+    bytes.push(instrument.market().discriminant());
+    bytes.extend_from_slice(instrument.symbol().as_bytes());
+    bytes.extend_from_slice(&trading_date.to_canonical_bytes());
+    bytes.extend_from_slice(&mapping_version.to_be_bytes());
     bytes.extend_from_slice(&MARKET_TYPES_VERSION.to_be_bytes());
     bytes.extend_from_slice(&EVENT_SCHEMA_VERSION.to_be_bytes());
     bytes.extend_from_slice(&CANONICAL_EVENT_VERSION.to_be_bytes());
     bytes.extend_from_slice(&ORDERING_RULE_VERSION.to_be_bytes());
+    if let Some(partition_identity) = partition_identity {
+        bytes.extend_from_slice(partition_identity.as_bytes());
+    }
     bytes.extend_from_slice(&event_count.to_be_bytes());
     bytes.extend_from_slice(payload_sha256.as_bytes());
     hex(blake3::hash(&bytes).as_bytes())
@@ -434,6 +518,7 @@ impl EventStream for CacheReader {
 #[derive(Debug, Clone)]
 pub struct LocalCacheFactory {
     data_root: PathBuf,
+    partitioned: bool,
 }
 
 impl LocalCacheFactory {
@@ -441,6 +526,15 @@ impl LocalCacheFactory {
     pub fn new(data_root: impl Into<PathBuf>) -> Self {
         Self {
             data_root: data_root.into(),
+            partitioned: false,
+        }
+    }
+
+    #[must_use]
+    pub fn new_partitioned(data_root: impl Into<PathBuf>) -> Self {
+        Self {
+            data_root: data_root.into(),
+            partitioned: true,
         }
     }
 }
@@ -452,10 +546,17 @@ impl ReplayStreamFactory for LocalCacheFactory {
     fn open(&mut self, binding: &ReplayStreamBinding) -> Result<Self::Stream, Self::Error> {
         let cache_identity = hex(binding.cache_identity());
         let source_revision = hex(binding.source_revision_identity());
-        let reader = CacheReader::open_bound(
-            self.data_root.join("derived/cache").join(&cache_identity),
-            &source_revision,
-        )?;
+        let cache_root = if self.partitioned {
+            cache_instrument_root(
+                &self.data_root,
+                binding.instrument(),
+                binding.trading_date(),
+            )
+            .map_err(|_| CacheReadError::BindingMismatch)?
+        } else {
+            self.data_root.join("derived/cache")
+        };
+        let reader = CacheReader::open_bound(cache_root.join(&cache_identity), &source_revision)?;
         let descriptor = reader.descriptor();
         if descriptor.cache_identity != cache_identity
             || descriptor.instrument_market != binding.instrument().market().discriminant()
@@ -492,13 +593,23 @@ impl CacheRecord {
 }
 
 fn validate_descriptor(descriptor: &CacheDescriptor) -> Result<(), CacheReadError> {
+    let mapping_compatible = (descriptor.normalizer_mapping_name == TWSE_MAPPING_NAME
+        && descriptor.normalizer_mapping_version == TWSE_MAPPING_VERSION)
+        || (descriptor.normalizer_mapping_name == TAIFEX_MAPPING_NAME
+            && descriptor.normalizer_mapping_version == TAIFEX_MAPPING_VERSION);
+    let mapping_market_compatible = match MarketId::from_discriminant(descriptor.instrument_market)
+    {
+        Ok(MarketId::Twse) => descriptor.normalizer_mapping_name == TWSE_MAPPING_NAME,
+        Ok(MarketId::Taifex) => descriptor.normalizer_mapping_name == TAIFEX_MAPPING_NAME,
+        Ok(MarketId::Tpex) | Err(_) => false,
+    };
     if descriptor.cache_format_version != CACHE_FORMAT_VERSION
         || descriptor.market_types_version != MARKET_TYPES_VERSION
         || descriptor.event_schema_version != EVENT_SCHEMA_VERSION
         || descriptor.canonical_event_version != CANONICAL_EVENT_VERSION
         || descriptor.ordering_rule_version != ORDERING_RULE_VERSION
-        || descriptor.normalizer_mapping_name != MAPPING_NAME
-        || descriptor.normalizer_mapping_version != MAPPING_VERSION
+        || !mapping_compatible
+        || !mapping_market_compatible
     {
         return Err(CacheReadError::IncompatibleDescriptor);
     }
@@ -556,6 +667,7 @@ pub enum CacheBuildError {
     EventTooLarge,
     BuildAlreadyExists,
     CacheAlreadyExists(String),
+    Partition(String),
 }
 
 #[derive(Debug)]
@@ -576,6 +688,12 @@ impl Error for CacheCatalogError {}
 impl From<io::Error> for CacheCatalogError {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
+    }
+}
+
+impl From<PartitionRepositoryError> for CacheCatalogError {
+    fn from(error: PartitionRepositoryError) -> Self {
+        Self::Layout(error)
     }
 }
 
@@ -638,8 +756,10 @@ mod tests {
     use crate::{
         ArchiveKind, ArchiveTimestamp, CursorStateMachine, StagingRevision, TeralionQuery,
     };
+    use run_planner::{SessionPlan, SourceId, SourcePartitionKey};
+    use strategy_api::SessionKind;
 
-    fn source(root: &Path) -> NormalizerConfig {
+    fn source(root: &Path) -> TwseNormalizerConfig {
         let instrument = InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap());
         let date: TradingDate = "2026-07-27".parse().unwrap();
         let ticks = TeralionQuery::ticks(
@@ -669,13 +789,28 @@ mod tests {
             )
             .unwrap();
         staging.publish(ticks.identity(), true).unwrap();
-        NormalizerConfig::new(
+        TwseNormalizerConfig::new(
             instrument,
             date,
             MatchTime::parse("2026-07-27T08:55:00+08:00").unwrap(),
             MatchTime::parse("2026-07-27T13:35:00+08:00").unwrap(),
         )
         .unwrap()
+    }
+
+    fn partition_key() -> SourcePartitionKey {
+        let instrument = InstrumentId::new(MarketId::Twse, Symbol::new("2330").expect("symbol"));
+        let date: TradingDate = "2026-07-27".parse().expect("date");
+        let session = SessionPlan::for_instrument(&instrument, date, [SessionKind::Regular])
+            .expect("session");
+        SourcePartitionKey::new(
+            SourceId::TeralionFeedArchive,
+            instrument,
+            date,
+            [SessionKind::Regular],
+            session.identity(),
+        )
+        .expect("partition key")
     }
 
     #[test]
@@ -701,7 +836,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             published.descriptor().normalizer_mapping_version,
-            MAPPING_VERSION
+            TWSE_MAPPING_VERSION
         );
         assert_eq!(
             published.descriptor().ordering_rule_version,
@@ -711,5 +846,68 @@ mod tests {
             CacheReader::open_bound(published.path(), &"0".repeat(64)).unwrap_err(),
             CacheReadError::StaleSourceLineage
         ));
+    }
+
+    #[test]
+    fn partition_cache_preserves_partition_lineage_and_keyed_layout() {
+        let root = tempfile::tempdir().unwrap();
+        let key = partition_key();
+        let instrument = key.instrument().clone();
+        let date = key.trading_date();
+        let ticks = TeralionQuery::ticks(
+            instrument.clone(),
+            ArchiveTimestamp::parse("2026-07-27T08:55:00+08:00").unwrap(),
+            ArchiveTimestamp::parse("2026-07-27T13:35:00+08:00").unwrap(),
+            [ArchiveKind::Quote],
+            5_000,
+        )
+        .unwrap();
+        let tick = br#"{"type":"quote","market":"twse","format":"STOCK_SNAPSHOT","symbol":"2330","match_time":"2026-07-27T09:00:00+08:00","received_at":"2026-07-27T09:00:00+08:00","status_flags":16,"limit_flags":0,"cum_volume":1,"intermediate_print":false,"deal":{"price":100,"quantity":1},"bids":[{"price":99,"quantity":2}],"asks":[{"price":101,"quantity":2}]}"#;
+        let body = format!(
+            r#"{{"items":[{}],"next_cursor":null}}"#,
+            std::str::from_utf8(tick).unwrap()
+        )
+        .into_bytes();
+        let mut staging =
+            StagingRevision::create_for_partition(root.path(), &key, "partition-cache").unwrap();
+        let mut cursor = CursorStateMachine::new(ticks.clone()).unwrap();
+        let request = cursor.request_next().unwrap();
+        let pending = cursor.accept_response(&request, body).unwrap();
+        let staged = staging.stage_page(pending).unwrap();
+        cursor.commit_page(staged.commit_receipt()).unwrap();
+        staging
+            .stage_daily_instrument(
+                TeralionQuery::daily_instrument(instrument.clone(), date).identity(),
+                br#"{"symbol":"2330","market":"twse"}"#,
+            )
+            .unwrap();
+        let source = staging.publish(ticks.identity(), true).unwrap();
+        let config = TwseNormalizerConfig::new(
+            instrument,
+            date,
+            MatchTime::parse("2026-07-27T08:55:00+08:00").unwrap(),
+            MatchTime::parse("2026-07-27T13:35:00+08:00").unwrap(),
+        )
+        .unwrap();
+        let cache = CacheBuilder::new(root.path())
+            .build_partition(&key, PartitionNormalizerConfig::Twse(config))
+            .unwrap();
+        assert!(
+            cache.path().starts_with(
+                root.path()
+                    .join("cache/replay/teralion/twse/2026-07-27/2330")
+            )
+        );
+        let partition_identity = hex(key.identity().as_bytes());
+        assert_eq!(
+            cache.descriptor().partition_identity.as_deref(),
+            Some(partition_identity.as_str())
+        );
+        let catalog = PartitionCacheCatalog::new(root.path());
+        let found = catalog
+            .find(&key, &source.manifest().revision_identity)
+            .unwrap()
+            .expect("partition cache");
+        assert_eq!(found.descriptor(), cache.descriptor());
     }
 }

@@ -9,6 +9,7 @@ blake3 = "1.8"
 data-sync = { path = "../data-sync" }
 market-types = { path = "../market-types" }
 run-planner = { path = "../run-planner" }
+replay-engine = { path = "../replay-engine" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"

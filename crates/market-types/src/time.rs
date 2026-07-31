@@ -21,6 +21,26 @@ impl MatchTime {
         self.0
     }
 
+    /// Formats this UTC instant as an offset-aware ISO-8601 timestamp.
+    pub fn to_iso8601(self, offset_minutes: i32) -> String {
+        let local_microseconds = self.0 + i64::from(offset_minutes) * 60 * MICROS_PER_SECOND;
+        let local_seconds = local_microseconds.div_euclid(MICROS_PER_SECOND);
+        let microseconds = local_microseconds.rem_euclid(MICROS_PER_SECOND);
+        let days = local_seconds.div_euclid(SECONDS_PER_DAY);
+        let seconds = local_seconds.rem_euclid(SECONDS_PER_DAY);
+        let (year, month, day) = civil_from_days(days);
+        let hour = seconds / 3_600;
+        let minute = (seconds % 3_600) / 60;
+        let second = seconds % 60;
+        let sign = if offset_minutes < 0 { '-' } else { '+' };
+        let absolute_offset = offset_minutes.unsigned_abs();
+        format!(
+            "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{microseconds:06}{sign}{:02}:{:02}",
+            absolute_offset / 60,
+            absolute_offset % 60,
+        )
+    }
+
     /// Parses `YYYY-MM-DDTHH:MM:SS[.fraction](Z|±HH:MM)` without rounding.
     pub fn parse(input: &str) -> Result<Self, MatchTimeError> {
         parse_match_time(input)
@@ -210,6 +230,22 @@ const fn is_leap_year(year: u32) -> bool {
     year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
 }
 
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let shifted = days + 719_468;
+    let era = shifted.div_euclid(146_097);
+    let day_of_era = shifted - era * 146_097;
+    let year_of_era = (day_of_era - day_of_era / 1_460 + day_of_era / 36_524
+        - day_of_era / 146_096)
+        .div_euclid(365);
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_part = (5 * day_of_year + 2).div_euclid(153);
+    let day = day_of_year - (153 * month_part + 2).div_euclid(5) + 1;
+    let month = month_part + if month_part < 10 { 3 } else { -9 };
+    let year = year + i64::from(month <= 2);
+    (year, month, day)
+}
+
 // Howard Hinnant's proleptic-Gregorian civil-date conversion, shifted to Unix epoch days.
 fn days_from_civil(year: u32, month: u32, day: u32) -> i64 {
     let mut year = i64::from(year);
@@ -224,4 +260,25 @@ fn days_from_civil(year: u32, month: u32, day: u32) -> i64 {
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
 
     era * 146_097 + day_of_era - 719_468
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn iso8601_format_round_trips_with_positive_offset() {
+        let value = MatchTime::parse("2026-07-17T14:55:00.123456+08:00").unwrap();
+        let formatted = value.to_iso8601(480);
+        assert_eq!(formatted, "2026-07-17T14:55:00.123456+08:00");
+        assert_eq!(MatchTime::parse(&formatted).unwrap(), value);
+    }
+
+    #[test]
+    fn iso8601_format_handles_cross_midnight_negative_offset() {
+        let value = MatchTime::parse("2026-07-01T00:00:00Z").unwrap();
+        let formatted = value.to_iso8601(-300);
+        assert_eq!(formatted, "2026-06-30T19:00:00.000000-05:00");
+        assert_eq!(MatchTime::parse(&formatted).unwrap(), value);
+    }
 }
