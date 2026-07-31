@@ -23,7 +23,7 @@ reference_trading_date     = 2026-07-20
 companion_instrument       = TWSE 2330
 acceptance_universe_size   = 4
 source_evidence            = docs/verification/evidence/m3/source-selection-2026-07-31.yaml
-fixture_redistribution     = Pending
+fixture_redistribution     = Approved
 ```
 
 三個 `reference_symbols` 是 Teralion `2026-07-20` daily instrument collection
@@ -277,10 +277,14 @@ local gitignored acquisition 已完成五個 partitions、156 個 cursor pages �
 都包含完整五檔、multi-trade batch、相同 `match_time` occurrences 及 raw
 `close`／`stats`。
 
-這項 evidence 關閉 exact symbol、date、coverage 與 local acquisition gate，但不
-授權將新 TAIFEX payload 提交至 repository。既有 M1 redistribution approval 只涵蓋
-TWSE `2330`；TAIFEX fixture extraction／commit 前仍須取得明確 approval 並將
-selection、removal、checksum 與 redistribution scope 寫入 fixture metadata。
+這項 evidence 關閉 exact symbol、date、coverage、local acquisition 與
+redistribution gates。repository owner 已明確授權將 page-aligned recorded subset
+提交至 private `hschi1106/osmium-lab` 供 internal use；17 個 shards 共 74,214 筆，
+全體 fixture SHA-256 為
+`10972c8a6ee8e58704c3fdbbbcd6d95f37ac8eb4a4519dcdb14429492275ddaf`。
+三個 fixture metadata 分別記錄 selection、removal、source/shard checksum 與
+approval scope；授權不延伸至 public repository、fork、release、package 或其他
+export。
 
 ## 7. Trading date 與 SessionPlan
 
