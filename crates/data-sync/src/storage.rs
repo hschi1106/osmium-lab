@@ -141,7 +141,7 @@ fn append_semantic_object(
 
 #[derive(Debug)]
 pub struct StagingRevision {
-    data_root: PathBuf,
+    publish_root: PathBuf,
     attempt_path: PathBuf,
     pages: Vec<PageMetadata>,
     daily_instrument: Option<PageMetadata>,
@@ -149,19 +149,36 @@ pub struct StagingRevision {
 
 impl StagingRevision {
     pub fn create(data_root: impl AsRef<Path>, attempt_id: &str) -> Result<Self, StagingError> {
-        if attempt_id.is_empty()
-            || !attempt_id
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-        {
-            return Err(StagingError::InvalidAttemptId);
-        }
+        validate_attempt_id(attempt_id)?;
         let data_root = data_root.as_ref().to_path_buf();
         let attempt_path = data_root.join("staging").join(attempt_id);
         fs::create_dir_all(attempt_path.join("ticks/pages"))?;
         fs::create_dir_all(attempt_path.join("instrument"))?;
         Ok(Self {
-            data_root,
+            publish_root: data_root.join("source"),
+            attempt_path,
+            pages: Vec::new(),
+            daily_instrument: None,
+        })
+    }
+
+    pub fn create_for_partition(
+        data_root: impl AsRef<Path>,
+        key: &run_planner::SourcePartitionKey,
+        attempt_id: &str,
+    ) -> Result<Self, StagingError> {
+        validate_attempt_id(attempt_id)?;
+        let repository = crate::PartitionedSourceRepository::new(data_root, key.clone())
+            .map_err(|error| StagingError::Partition(error.to_string()))?;
+        repository
+            .ensure_layout()
+            .map_err(|error| StagingError::Partition(error.to_string()))?;
+        let publish_root = repository.root().to_path_buf();
+        let attempt_path = publish_root.join("staging").join(attempt_id);
+        fs::create_dir_all(attempt_path.join("ticks/pages"))?;
+        fs::create_dir_all(attempt_path.join("instrument"))?;
+        Ok(Self {
+            publish_root,
             attempt_path,
             pages: Vec::new(),
             daily_instrument: None,
@@ -202,7 +219,7 @@ impl StagingRevision {
             None
         };
         Ok(Self {
-            data_root,
+            publish_root: data_root.join("source"),
             attempt_path,
             pages,
             daily_instrument,
@@ -317,7 +334,7 @@ impl StagingRevision {
         write_atomic_file(&self.attempt_path.join("manifest.yaml"), &manifest_bytes)?;
         sync_directory(&self.attempt_path)?;
 
-        let revisions = self.data_root.join("source/revisions");
+        let revisions = self.publish_root.join("revisions");
         fs::create_dir_all(&revisions)?;
         let published_path = revisions.join(&manifest.revision_identity);
         if published_path.exists() {
@@ -328,7 +345,7 @@ impl StagingRevision {
         fs::rename(&self.attempt_path, &published_path)?;
         sync_directory(&revisions)?;
 
-        let current = self.data_root.join("source/current.yaml");
+        let current = self.publish_root.join("current.yaml");
         write_atomic_file(&current, manifest.revision_identity.as_bytes())?;
         Ok(PublishedRevision {
             path: published_path,
@@ -469,6 +486,17 @@ fn decode_nibble(value: u8) -> Option<u8> {
     }
 }
 
+fn validate_attempt_id(attempt_id: &str) -> Result<(), StagingError> {
+    if attempt_id.is_empty()
+        || !attempt_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(StagingError::InvalidAttemptId);
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 pub enum StagingError {
     Io(io::Error),
@@ -484,6 +512,7 @@ pub enum StagingError {
     CheckpointPageMismatch,
     InterruptedPageChanged,
     Manifest(String),
+    Partition(String),
 }
 
 impl fmt::Display for StagingError {
@@ -510,6 +539,8 @@ impl From<io::Error> for StagingError {
 #[cfg(test)]
 mod tests {
     use market_types::{InstrumentId, MarketId, Symbol};
+    use run_planner::{SessionPlan, SourceId, SourcePartitionKey};
+    use strategy_api::SessionKind;
 
     use super::*;
     use crate::{ArchiveKind, ArchiveTimestamp, CursorStateMachine, TeralionQuery};
@@ -521,6 +552,21 @@ mod tests {
             ArchiveTimestamp::parse("2026-07-27T13:35:00+08:00").unwrap(),
             [ArchiveKind::Quote],
             5_000,
+        )
+        .unwrap()
+    }
+
+    fn partition_key() -> SourcePartitionKey {
+        let instrument = InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap());
+        let date = "2026-07-27".parse().unwrap();
+        let session_plan =
+            SessionPlan::for_instrument(&instrument, date, [SessionKind::Regular]).unwrap();
+        SourcePartitionKey::new(
+            SourceId::TeralionFeedArchive,
+            instrument,
+            date,
+            [SessionKind::Regular],
+            session_plan.identity(),
         )
         .unwrap()
     }
@@ -587,5 +633,39 @@ mod tests {
             fs::read_to_string(root.path().join("source/current.yaml")).unwrap(),
             published.manifest().revision_identity
         );
+    }
+
+    #[test]
+    fn partition_publish_has_an_independent_current_pointer() {
+        let root = tempfile::tempdir().unwrap();
+        let query = query();
+        let key = partition_key();
+        let mut staging =
+            StagingRevision::create_for_partition(root.path(), &key, "attempt-4").unwrap();
+        let mut machine = CursorStateMachine::new(query.clone()).unwrap();
+        let request = machine.request_next().unwrap();
+        let pending = machine
+            .accept_response(&request, br#"{"items":[],"next_cursor":null}"#.to_vec())
+            .unwrap();
+        let staged = staging.stage_page(pending).unwrap();
+        machine.commit_page(staged.commit_receipt()).unwrap();
+        staging
+            .stage_daily_instrument(
+                TeralionQuery::daily_instrument(
+                    query.instrument().unwrap().clone(),
+                    "2026-07-27".parse().unwrap(),
+                )
+                .identity(),
+                br#"{"symbol":"2330","market":"twse","date":"2026-07-27"}"#,
+            )
+            .unwrap();
+        let published = staging.publish(query.identity(), true).unwrap();
+        let repository = crate::PartitionedSourceRepository::new(root.path(), key).unwrap();
+        assert_eq!(
+            fs::read_to_string(repository.current_path()).unwrap(),
+            published.manifest().revision_identity
+        );
+        assert!(repository.inspect().report().is_some());
+        assert!(!root.path().join("source/current.yaml").exists());
     }
 }

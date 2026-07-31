@@ -17,6 +17,7 @@ zstd = "0.13"
 twse-normalizer = { path = "../normalizer/twse" }
 
 [dev-dependencies]
+strategy-api = { path = "../strategy-api" }
 tempfile = "3"
 
 [lints]
