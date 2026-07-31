@@ -6,6 +6,7 @@ members = [
     "crates/normalizer/twse",
     "crates/osmium-cli",
     "crates/data-sync",
+    "crates/execution-sim",
     "crates/replay-engine",
     "crates/run-planner",
     "crates/strategy-api",
