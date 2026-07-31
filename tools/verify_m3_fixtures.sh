@@ -15,19 +15,29 @@ command -v rg >/dev/null 2>&1 || {
     exit 2
 }
 
-ruby -ryaml -rdigest -e '
+ruby -ryaml -rjson -rdigest -e '
 fixture_root, evidence_path = ARGV
 
 metadata_paths = Dir.glob("#{fixture_root}/*/2026-07-20/metadata.yaml").sort
 abort("expected three M3 fixture metadata files") unless metadata_paths.length == 3
 
-metadata_paths.each do |path|
+  metadata_paths.each do |path|
   metadata = YAML.safe_load(
     File.read(path),
     permitted_classes: [],
     aliases: false
   )
-  root = File.dirname(path)
+    root = File.dirname(path)
+  daily_path = File.join(root, "daily.json")
+  abort("#{daily_path}: missing committed daily instrument") unless File.file?(daily_path)
+  daily_bytes = File.binread(daily_path)
+  expected_daily = metadata.fetch("source_acquisition").fetch("daily_instrument_sha256")
+  abort("#{daily_path}: daily instrument checksum mismatch") unless Digest::SHA256.hexdigest(daily_bytes) == expected_daily
+  daily = JSON.parse(daily_bytes)
+  abort("#{daily_path}: symbol mismatch") unless daily.fetch("symbol") == metadata.fetch("symbol")
+  abort("#{daily_path}: market mismatch") unless daily.fetch("market") == metadata.fetch("source_market")
+  abort("#{daily_path}: trading date mismatch") unless daily.fetch("trading_date") == metadata.fetch("exchange_trading_date")
+
   shards = metadata.fetch("segments")
     .values
     .flat_map { |segment| segment.fetch("shards") }

@@ -521,7 +521,7 @@ fn validate_tick(
     let expected_market = match instrument.market() {
         market_types::MarketId::Twse => "twse",
         market_types::MarketId::Tpex => "tpex",
-        market_types::MarketId::Taifex => "taifex",
+        market_types::MarketId::Taifex => "taifex_fut",
     };
     if market != expected_market {
         return Err(CursorError::TickIdentityMismatch("market"));
@@ -601,6 +601,28 @@ mod tests {
             r#"{{"items":[{{"type":"quote","market":"twse","format":"STOCK_SNAPSHOT","symbol":"2330","match_time":"2026-07-27T09:00:00+08:00","received_at":"2026-07-27T09:00:00+08:00"}}],"next_cursor":{next}}}"#
         )
         .into_bytes()
+    }
+
+    #[test]
+    fn taifex_query_accepts_wire_kinds_and_market() {
+        let query = TeralionQuery::ticks(
+            InstrumentId::new(MarketId::Taifex, Symbol::new("TXFH6").unwrap()),
+            ArchiveTimestamp::parse("2026-07-20T08:40:00+08:00").unwrap(),
+            ArchiveTimestamp::parse("2026-07-20T13:50:00+08:00").unwrap(),
+            [
+                ArchiveKind::Book,
+                ArchiveKind::Close,
+                ArchiveKind::Stats,
+                ArchiveKind::Trade,
+            ],
+            5_000,
+        )
+        .unwrap();
+        let body = br#"{"items":[{"type":"book","market":"taifex_fut","format":"I080","symbol":"TXFH6","match_time":"2026-07-20T08:45:00+08:00","received_at":"2026-07-20T08:45:00+08:00"}],"next_cursor":null}"#;
+        let mut machine = CursorStateMachine::new(query).unwrap();
+        let request = machine.request_next().unwrap();
+        let pending = machine.accept_response(&request, body.to_vec()).unwrap();
+        assert_eq!(pending.record_count(), 1);
     }
 
     #[test]
