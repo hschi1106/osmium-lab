@@ -669,7 +669,18 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 name = "osmium-cli"
 version = "0.1.0"
 dependencies = [
+ "data-sync",
+ "execution-sim",
  "m1-runner",
+ "m2-config",
+ "m2-runner",
+ "market-state",
+ "market-types",
+ "replay-engine",
+ "run-planner",
+ "serde_json",
+ "strategy-api",
+ "twse-normalizer",
 ]
 
 [[package]]

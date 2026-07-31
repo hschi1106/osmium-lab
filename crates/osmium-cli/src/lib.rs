@@ -7,9 +7,13 @@ use std::{
 
 use m1_runner::{ArtifactExportError, M1FixtureInput, M1RunError, M1RunSummary};
 
+mod m2;
+pub use m2::{M2Command, M2CommandError, M2CommandKind, execute as execute_m2};
+
 pub const USAGE: &str = "\
 Usage:
   osmium replay --fixture <fixture-root> --output <output-directory>
+  osmium plan|sync|verify|replay|backtest|run --config <file> [--output <directory>]
 
 The M1 fixture root must contain metadata.yaml, regular-quotes/, and
 golden/fixture-set.sha256. The output directory must not already exist.
@@ -19,6 +23,7 @@ golden/fixture-set.sha256. The output directory must not already exist.
 pub enum ParsedCommand {
     Help,
     Replay(ReplayCommand),
+    M2(M2Command),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,12 +78,27 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<ParsedComm
     if command == "--help" || command == "-h" {
         return Ok(ParsedCommand::Help);
     }
+    if let Some(kind) = match command.to_str() {
+        Some("plan") => Some(M2CommandKind::Plan),
+        Some("sync") => Some(M2CommandKind::Sync),
+        Some("verify") => Some(M2CommandKind::Verify),
+        Some("backtest") => Some(M2CommandKind::Backtest),
+        Some("run") => Some(M2CommandKind::Run),
+        _ => None,
+    } {
+        return parse_m2(kind, args);
+    }
     if command != "replay" {
         return Err(CliError::usage(format!(
             "unknown command: {}",
             command.to_string_lossy()
         )));
     }
+    let remaining = args.collect::<Vec<_>>();
+    if remaining.iter().any(|argument| argument == "--config") {
+        return parse_m2(M2CommandKind::Replay, remaining.into_iter());
+    }
+    let mut args = remaining.into_iter();
 
     let mut fixture_root = None;
     let mut output_directory = None;
@@ -119,6 +139,36 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<ParsedComm
         fixture_root,
         output_directory,
     )))
+}
+
+fn parse_m2(
+    kind: M2CommandKind,
+    args: impl Iterator<Item = OsString>,
+) -> Result<ParsedCommand, CliError> {
+    let mut config = None;
+    let mut output = None;
+    let mut args = args;
+    while let Some(flag) = args.next() {
+        let value = args.next().ok_or_else(|| {
+            CliError::usage(format!("missing value for {}", flag.to_string_lossy()))
+        })?;
+        match flag.to_str() {
+            Some("--config") if config.is_none() => config = Some(PathBuf::from(value)),
+            Some("--output") if output.is_none() => output = Some(PathBuf::from(value)),
+            Some("--config" | "--output") => {
+                return Err(CliError::usage(format!(
+                    "duplicate option: {}",
+                    flag.to_string_lossy()
+                )));
+            }
+            _ => return Err(CliError::usage("unknown M2 option")),
+        }
+    }
+    Ok(ParsedCommand::M2(M2Command {
+        kind,
+        config: config.ok_or_else(|| CliError::usage("missing required --config option"))?,
+        output,
+    }))
 }
 
 pub fn execute_replay(command: &ReplayCommand) -> Result<ReplayOutcome, CliError> {
