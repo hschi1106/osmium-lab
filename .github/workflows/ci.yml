@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality-and-m1-acceptance:
+    name: Quality and M1 acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Run network-disabled acceptance
+        run: |
+          tools/run_m1_acceptance.sh \
+            --output target/m1-acceptance-ci \
+            --network-runner docker
+
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m1-acceptance-${{ github.sha }}
+          path: |
+            target/m1-acceptance-ci
+            target/m1-acceptance-ci.failed
+          if-no-files-found: error
+          retention-days: 30

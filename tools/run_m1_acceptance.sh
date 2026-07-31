@@ -96,7 +96,16 @@ mkdir -p "$parent"
 staging=$parent/.$base.staging.$$
 repeat=$parent/.$base.repeat.$$
 cleanup() {
-    rm -rf "$staging" "$repeat"
+    rm -rf "$repeat"
+    if [ -d "$staging" ]; then
+        failed=$output_path.failed
+        if [ ! -e "$failed" ]; then
+            mv "$staging" "$failed"
+            echo "failed acceptance diagnostics=$failed" >&2
+        else
+            echo "failed acceptance diagnostics=$staging" >&2
+        fi
+    fi
 }
 trap cleanup EXIT HUP INT TERM
 mkdir -p "$staging/test-results"
