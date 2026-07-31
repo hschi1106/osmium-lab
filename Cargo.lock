@@ -578,6 +578,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "m2-runner"
+version = "0.1.0"
+dependencies = [
+ "execution-sim",
+ "market-state",
+ "market-types",
+ "replay-engine",
+ "strategy-api",
+]
+
+[[package]]
 name = "market-state"
 version = "0.1.0"
 dependencies = [
