@@ -328,6 +328,10 @@ macOS 的 `auto` runner 使用 `sandbox-exec`；Linux 使用 Docker
 `--network none`。container image 可以在進入 network-disabled runtime 前準備，
 但 replay process 本身不得具有網路能力或 `TERALION_API_KEY`。
 
+GitHub Actions 的 `Quality and M1 acceptance` job 使用相同 harness，成功時上傳
+完整 acceptance artifact set；失敗時上傳 `.failed` diagnostics。CI 不持有
+Teralion credential，也不在 M1 job 執行任何 sync。
+
 文件階段使用：
 
 ```sh
