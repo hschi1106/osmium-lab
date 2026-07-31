@@ -149,6 +149,21 @@ pub fn cache_partition_root(
     keyed_root(data_root, "cache/replay", key)
 }
 
+pub fn cache_instrument_root(
+    data_root: &Path,
+    instrument: &InstrumentId,
+    trading_date: market_types::TradingDate,
+) -> Result<PathBuf, PartitionRepositoryError> {
+    let market = market_name(instrument);
+    let symbol = safe_component(instrument.symbol().as_str())?;
+    Ok(data_root
+        .join("cache/replay")
+        .join("teralion")
+        .join(market)
+        .join(trading_date.to_string())
+        .join(symbol))
+}
+
 fn keyed_root(
     data_root: &Path,
     prefix: &str,

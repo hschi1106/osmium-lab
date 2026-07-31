@@ -188,6 +188,23 @@ impl StagingRevision {
     pub fn resume(data_root: impl AsRef<Path>, attempt_id: &str) -> Result<Self, StagingError> {
         let data_root = data_root.as_ref().to_path_buf();
         let attempt_path = data_root.join("staging").join(attempt_id);
+        Self::resume_at(data_root.join("source"), attempt_path)
+    }
+
+    pub fn resume_for_partition(
+        data_root: impl AsRef<Path>,
+        key: &run_planner::SourcePartitionKey,
+        attempt_id: &str,
+    ) -> Result<Self, StagingError> {
+        validate_attempt_id(attempt_id)?;
+        let repository = crate::PartitionedSourceRepository::new(data_root, key.clone())
+            .map_err(|error| StagingError::Partition(error.to_string()))?;
+        let publish_root = repository.root().to_path_buf();
+        let attempt_path = publish_root.join("staging").join(attempt_id);
+        Self::resume_at(publish_root, attempt_path)
+    }
+
+    fn resume_at(publish_root: PathBuf, attempt_path: PathBuf) -> Result<Self, StagingError> {
         let checkpoint = crate::CursorCheckpoint::load(&attempt_path.join("checkpoint.json"))?;
         let mut metadata_paths = fs::read_dir(attempt_path.join("ticks/pages"))?
             .filter_map(Result::ok)
@@ -219,7 +236,7 @@ impl StagingRevision {
             None
         };
         Ok(Self {
-            publish_root: data_root.join("source"),
+            publish_root,
             attempt_path,
             pages,
             daily_instrument,
@@ -667,5 +684,31 @@ mod tests {
         );
         assert!(repository.inspect().report().is_some());
         assert!(!root.path().join("source/current.yaml").exists());
+    }
+
+    #[test]
+    fn partition_resume_rehydrates_committed_pages_from_checkpoint() {
+        let root = tempfile::tempdir().unwrap();
+        let query = query();
+        let key = partition_key();
+        let attempt = "attempt-resume";
+        let mut staging =
+            StagingRevision::create_for_partition(root.path(), &key, attempt).unwrap();
+        let mut machine = CursorStateMachine::new(query.clone()).unwrap();
+        let request = machine.request_next().unwrap();
+        let pending = machine
+            .accept_response(&request, br#"{"items":[],"next_cursor":"next"}"#.to_vec())
+            .unwrap();
+        let staged = staging.stage_page(pending).unwrap();
+        machine.commit_page(staged.commit_receipt()).unwrap();
+        machine
+            .checkpoint()
+            .save(&staging.path().join("checkpoint.json"))
+            .unwrap();
+
+        let resumed = StagingRevision::resume_for_partition(root.path(), &key, attempt).unwrap();
+        assert_eq!(resumed.path(), staging.path());
+        assert_eq!(resumed.pages.len(), 1);
+        assert_eq!(resumed.pages[0].ordinal, 0);
     }
 }

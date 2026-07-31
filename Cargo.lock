@@ -149,6 +149,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "strategy-api",
+ "taifex-normalizer",
  "tempfile",
  "twse-normalizer",
  "zstd",
@@ -638,6 +639,7 @@ dependencies = [
  "blake3",
  "data-sync",
  "market-types",
+ "replay-engine",
  "run-planner",
  "serde",
  "serde_json",
@@ -700,6 +702,7 @@ dependencies = [
  "run-planner",
  "serde_json",
  "strategy-api",
+ "taifex-normalizer",
  "twse-normalizer",
 ]
 

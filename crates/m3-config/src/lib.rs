@@ -7,13 +7,14 @@ use std::{
 
 use data_sync::{PartitionCacheCatalog, PartitionedSourceRepository};
 use market_types::{Decimal, InstrumentId, MarketId, QuantityUnit, Symbol, TradingDate};
+use replay_engine::{ReplayPlan, ReplayStreamBinding, StableStreamDescriptorId};
 use run_planner::{
     CacheIdentity, CachePolicy, CacheState, ChargeConfig, ChargeSides, Currency, CurrencyAmount,
     EffectiveRunConfig, ExecutionPlan, FillEvidence, FillModelConfig, InstrumentEconomicsConfig,
     MarkingPolicyConfig, OutputPolicy, PlannedPartition, PositionAccountingConfig,
     QuantityAllocationConfig, QuantityEvidence, ReplayDataPolicy, RoundingPolicy, RunConfig,
     SessionPlan, SessionPlanError, SlippageModelConfig, SourceId, SourcePartitionKey, SourcePolicy,
-    StrategyBinding,
+    SourceState, StrategyBinding,
 };
 use serde::Deserialize;
 use strategy_api::{
@@ -56,12 +57,47 @@ impl M3Config {
     pub const fn selections(&self) -> &[M3InstrumentSelection] {
         &self.selections
     }
+
+    pub fn session_plan_for(&self, key: &SourcePartitionKey) -> Result<SessionPlan, M3ConfigError> {
+        SessionPlan::for_instrument(
+            key.instrument(),
+            key.trading_date(),
+            key.session_kinds().iter().copied(),
+        )
+        .map_err(M3ConfigError::SessionPlan)
+    }
+
+    pub fn partition_keys(&self) -> Result<Box<[SourcePartitionKey]>, M3ConfigError> {
+        let mut keys = Vec::new();
+        for selection in &self.selections {
+            for trading_date in self.effective.trading_dates() {
+                let session_plan = SessionPlan::for_instrument(
+                    &selection.instrument,
+                    *trading_date,
+                    selection.session_kinds.iter().copied(),
+                )
+                .map_err(M3ConfigError::SessionPlan)?;
+                keys.push(
+                    SourcePartitionKey::new(
+                        SourceId::TeralionFeedArchive,
+                        selection.instrument.clone(),
+                        *trading_date,
+                        selection.session_kinds.iter().copied(),
+                        session_plan.identity(),
+                    )
+                    .map_err(|error| M3ConfigError::Value(error.to_string()))?,
+                );
+            }
+        }
+        Ok(keys.into_boxed_slice())
+    }
 }
 
 #[derive(Debug)]
 pub struct M3PlanBundle {
     pub execution: ExecutionPlan,
     pub session_plans: Box<[SessionPlan]>,
+    pub replay: Option<ReplayPlan>,
 }
 
 pub fn config_version(path: impl AsRef<Path>) -> Result<u16, M3ConfigError> {
@@ -85,6 +121,8 @@ pub fn load(path: impl AsRef<Path>) -> Result<M3Config, M3ConfigError> {
 pub fn plan(config: M3Config) -> Result<M3PlanBundle, M3ConfigError> {
     let mut partitions = Vec::new();
     let mut session_plans = Vec::new();
+    let mut replay_bindings = Vec::new();
+    let mut replay_ready = true;
     let cache_catalog = PartitionCacheCatalog::new(config.effective.data_root());
     for selection in &config.selections {
         for trading_date in config.effective.trading_dates() {
@@ -107,6 +145,21 @@ pub fn plan(config: M3Config) -> Result<M3PlanBundle, M3ConfigError> {
                     .map_err(|error| M3ConfigError::Value(error.to_string()))?;
             let inspection = repository.inspect();
             let cache_state = cache_state(&cache_catalog, &key, inspection.report())?;
+            if let (SourceState::Complete { revision }, CacheState::Valid { identity: cache }) =
+                (inspection.state(), cache_state)
+            {
+                replay_bindings.push(ReplayStreamBinding::new(
+                    StableStreamDescriptorId::from_bytes(
+                        *blake3::hash(cache.as_bytes()).as_bytes(),
+                    ),
+                    key.instrument().clone(),
+                    key.trading_date(),
+                    *revision.as_bytes(),
+                    *cache.as_bytes(),
+                ));
+            } else {
+                replay_ready = false;
+            }
             partitions.push(PlannedPartition::classify(
                 key,
                 inspection.state(),
@@ -117,9 +170,18 @@ pub fn plan(config: M3Config) -> Result<M3PlanBundle, M3ConfigError> {
     }
     let execution = ExecutionPlan::new(config.effective, partitions, Vec::new())
         .map_err(|error| M3ConfigError::Value(error.to_string()))?;
+    let replay = if replay_ready {
+        Some(
+            ReplayPlan::new_multi(*execution.identity().as_bytes(), replay_bindings)
+                .map_err(|error| M3ConfigError::Value(error.to_string()))?,
+        )
+    } else {
+        None
+    };
     Ok(M3PlanBundle {
         execution,
         session_plans: session_plans.into_boxed_slice(),
+        replay,
     })
 }
 
@@ -131,10 +193,11 @@ fn cache_state(
     let Some(report) = inspection else {
         return Ok(CacheState::Missing);
     };
-    let Some(entry) = catalog
-        .find(key, &hex(report.manifest().revision_identity.as_bytes()))
-        .map_err(|error| M3ConfigError::Value(error.to_string()))?
-    else {
+    let entry = match catalog.find(key, &report.manifest().revision_identity) {
+        Ok(entry) => entry,
+        Err(_) => return Ok(CacheState::Corrupt),
+    };
+    let Some(entry) = entry else {
         return Ok(CacheState::Missing);
     };
     let identity = decode_hex(&entry.descriptor().cache_identity)?;
@@ -444,16 +507,6 @@ fn nibble(value: u8) -> Option<u8> {
         b'A'..=b'F' => Some(value - b'A' + 10),
         _ => None,
     }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(DIGITS[(byte >> 4) as usize] as char);
-        output.push(DIGITS[(byte & 0x0f) as usize] as char);
-    }
-    output
 }
 
 fn reject_secrets(bytes: &[u8]) -> Result<(), M3ConfigError> {
