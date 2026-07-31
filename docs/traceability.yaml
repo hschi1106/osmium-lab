@@ -45,11 +45,15 @@ milestone_status:
       - docs/verification/m3-acceptance.md
       - docs/verification/evidence/m3/formal-2026-08-01-complete/acceptance-report.yaml
   M4:
-    reference_scope: one TPEx regular-equity symbol and trading date
+    reference_scope: TPEx 6488 2026-07-20 regular
     specification: complete
-    fixtures: not_started
-    implementation: not_started
-    formal_acceptance: not_run
+    source_evidence: complete
+    fixtures: complete
+    implementation: complete
+    formal_acceptance: complete
+    completion_quality: strict
+    evidence:
+      - docs/verification/evidence/m4/formal-2026-08-01/acceptance-report.yaml
   M5:
     reference_scope: warrants and options, delivered as independently accepted sub-scopes
     specification: complete
@@ -102,6 +106,7 @@ document_sets:
     m3_acceptance: docs/verification/m3-acceptance.md
     m3_performance: docs/verification/performance.md
     m3_formal_evidence: docs/verification/evidence/m3/formal-2026-08-01-complete/acceptance-report.yaml
+    m4_formal_evidence: docs/verification/evidence/m4/formal-2026-08-01/acceptance-report.yaml
     m1_formal_evidence: docs/verification/evidence/m1/formal-2026-07-31/acceptance-report.yaml
     fixture_provenance: docs/verification/fixture-provenance.md
     performance: docs/verification/performance.md
@@ -154,6 +159,43 @@ m3_trace:
       - M3-AC-15
       - M3-AC-16
       - M3-AC-17
+
+m4_trace:
+  status: complete
+  implementation_paths:
+    - crates/normalizer/tpex/src/lib.rs
+    - crates/market-types/src/annotations.rs
+    - crates/data-sync/src/cache.rs
+    - crates/m3-config/src/bin/m3_fixture_data.rs
+    - crates/osmium-cli/src/m2.rs
+    - crates/market-state/src/profile.rs
+    - crates/replay-engine/src/ordering.rs
+    - crates/strategy-api/src/context.rs
+    - crates/run-planner/src/session.rs
+  configuration:
+    - config/m4-tpex.yaml
+  fixture_and_tools:
+    - docs/interfaces/tpex.md
+    - fixtures/teralion/tpex/6488/2026-07-20
+    - tools/acquire_m4_tpex_fixture.sh
+    - tools/extract_tpex_fixture.rs
+    - tools/verify_m4_fixture.sh
+    - tools/run_m4_acceptance.sh
+  formal_evidence: docs/verification/evidence/m4/formal-2026-08-01/acceptance-report.yaml
+  acceptance_scope:
+    passed:
+      - M4-AC-01
+      - M4-AC-02
+      - M4-AC-03
+      - M4-AC-04
+      - M4-AC-05
+      - M4-AC-06
+      - M4-AC-07
+      - M4-AC-08
+      - M4-AC-09
+      - M4-AC-10
+      - M4-AC-11
+      - M4-AC-12
 
 architecture_trace:
   - path: docs/architecture/overview.md
@@ -285,14 +327,30 @@ interface_trace:
       - REPLAY-06
       - NFR-01
       - NFR-03
+  - path: docs/interfaces/tpex.md
+    status: complete
+    mapping_name: TeralionTpexQuote
+    mapping_version: 1
+    evidence_scope: TPEx 6488 2026-07-20 committed regular fixture
+    requirements:
+      - DATA-01
+      - DATA-02
+      - DATA-03
+      - DATA-05
+      - REPLAY-01
+      - REPLAY-02
+      - REPLAY-03
+      - REPLAY-06
+      - NFR-01
+      - NFR-03
 
 design_trace:
   - path: docs/design/market-types.md
     status: complete
     design_versions:
-      market_types: 1
-      event_schema: 1
-      canonical_event: 1
+      market_types: 3
+      event_schema: 3
+      canonical_event: 3
     requirements:
       - DATA-04
       - DATA-05
@@ -308,10 +366,10 @@ design_trace:
   - path: docs/design/market-state.md
     status: complete
     design_versions:
-      market_state: 1
-      state_reducer: 1
-      canonical_market_state: 1
-      canonical_final_state_set: 1
+      market_state: 3
+      state_reducer: 2
+      canonical_market_state: 3
+      canonical_final_state_set: 3
     requirements:
       - REPLAY-01
       - REPLAY-03
@@ -431,8 +489,8 @@ operations_trace:
 verification_trace:
   - path: docs/verification/plan.md
     status: complete
-    verification_plan_version: 2
-    scope: M1 + M2
+    verification_plan_version: 3
+    scope: M1 + M2 + M3 + M4
     requirements:
       - DATA-01
       - DATA-02
@@ -493,6 +551,30 @@ verification_trace:
       - STRAT-01
       - OPS-02
       - NFR-01
+      - NFR-03
+  - path: docs/verification/evidence/m4/formal-2026-08-01/acceptance-report.yaml
+    status: complete
+    acceptance_contract_version: 1
+    verification_plan_version: 3
+    scope: M4 TPEx regular equity plus M3 regression universe
+    completion_quality: strict
+    requirements:
+      - DATA-01
+      - DATA-02
+      - DATA-03
+      - REPLAY-01
+      - REPLAY-02
+      - REPLAY-03
+      - REPLAY-04
+      - REPLAY-05
+      - REPLAY-06
+      - STRAT-01
+      - SIM-01
+      - SIM-02
+      - OPS-01
+      - OPS-02
+      - NFR-01
+      - NFR-02
       - NFR-03
 
 requirements:

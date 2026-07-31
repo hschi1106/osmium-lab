@@ -18,7 +18,7 @@ checksum 如何讀取同一份可重現狀態。它承接：
 | Contract | Version |
 | --- | ---: |
 | `market_state` | 3 |
-| `state_reducer` | 1 |
+| `state_reducer` | 2 |
 | `canonical_market_state` | 3 |
 | `canonical_final_state_set` | 3 |
 

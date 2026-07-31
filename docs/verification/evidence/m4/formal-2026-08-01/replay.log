@@ -1,0 +1,5 @@
+market=Twse symbol=2330 trading_date=2026-07-20 descriptor=75a11a34c618c20c5b012a5601ac593943b516ac747f1ddabd3b055b34dafb82
+market=Tpex symbol=6488 trading_date=2026-07-20 descriptor=25a019b426948bec7453e4789ff0a47a1d66fb4409ee3dee046b77076d4f5d25
+market=Taifex symbol=CAFH6 trading_date=2026-07-20 descriptor=db01d326d93c7749005d1de089546b87998b95e8ceabd7459de03fc284c65f59
+market=Taifex symbol=CDFH6 trading_date=2026-07-20 descriptor=dfa708ff450e2891cbea4d4c69e7dffa5f6122ca8712866ed4f4c320ec8dafe7
+market=Taifex symbol=TXFH6 trading_date=2026-07-20 descriptor=274c52b1bb66566854c0c38d9e17bfd1ed582a6fe49518162343956607e9585a

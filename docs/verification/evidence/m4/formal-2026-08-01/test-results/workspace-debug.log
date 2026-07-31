@@ -1,0 +1,467 @@
+   Compiling m1-runner v0.1.0 (/Users/hschi1106/Documents/osmium-lab/crates/m1-runner)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.61s
+     Running unittests src/lib.rs (target/debug/deps/data_sync-b5410c8affdd2b3c)
+
+running 22 tests
+test cursor::tests::cursor_and_credential_debug_are_redacted ... ok
+test cursor::tests::retry_reuses_the_exact_request_cursor ... ok
+test query::tests::credential_debug_is_redacted ... ok
+test query::tests::ticks_identity_is_canonical_and_secret_free ... ok
+test cursor::tests::taifex_query_accepts_wire_kinds_and_market ... ok
+test cursor::tests::tpex_query_accepts_quote_wire_kind_and_market ... ok
+test cursor::tests::terminal_is_only_reached_after_terminal_page_commit ... ok
+test cursor::tests::cursor_only_advances_after_durable_commit ... ok
+test cursor::tests::repeated_cursor_or_page_invalidates_query ... ok
+test storage::tests::publish_requires_terminal_cursor_and_daily_instrument ... ok
+test partition::tests::partition_roots_are_independent_and_have_keyed_metadata ... ok
+test storage::tests::page_is_zstd_only_and_round_trips_before_commit ... ok
+test verify::tests::staging_without_publish_is_building ... ok
+test storage::tests::partition_resume_rehydrates_committed_pages_from_checkpoint ... ok
+test sync::tests::sync_durably_checkpoints_every_committed_page ... ok
+test storage::tests::publish_atomically_moves_an_immutable_revision ... ok
+test storage::tests::partition_publish_has_an_independent_current_pointer ... ok
+test verify::tests::complete_revision_is_reused_without_http ... ok
+test cache::tests::mapping_version_is_part_of_descriptor ... ok
+test cache::tests::cache_round_trips_canonical_events_and_validates_eof ... ok
+test verify::tests::damaged_payload_is_corrupt_and_requires_visible_repair ... ok
+test cache::tests::partition_cache_preserves_partition_lineage_and_keyed_layout ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+
+     Running unittests src/lib.rs (target/debug/deps/execution_sim-aa217769abcf1ddc)
+
+running 10 tests
+test tests::adverse_slippage_never_clamps_to_limit ... ok
+test tests::top_of_book_uses_ask_for_buy_and_bid_for_sell ... ok
+test accounting::tests::signed_position_reversal_resets_average_cost ... ok
+test tests::indicative_auction_is_never_fill_evidence ... ok
+test accounting::tests::futures_short_close_uses_signed_closed_quantity ... ok
+test accounting::tests::futures_cash_moves_only_on_realized_pnl_and_costs ... ok
+test accounting::tests::multi_ledger_requires_a_mark_for_open_positions ... ok
+test accounting::tests::average_cost_realized_pnl_and_reconciliation_are_deterministic ... ok
+test accounting::tests::realized_pnl_uses_economic_quantity ... ok
+test accounting::tests::multi_ledger_reconciles_equity_and_futures_cash_separately ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/m1_runner-27d09e92bac0a3b0)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/m1_vertical_slice.rs (target/debug/deps/m1_vertical_slice-becc3d05d645cd57)
+
+running 3 tests
+test m1_runner_requires_only_an_explicit_local_fixture_path ... ok
+test m1_vertical_slice_reports_complete_local_run ... ok
+test m1_repeated_and_shuffled_runs_are_byte_identical ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 47.96s
+
+     Running unittests src/lib.rs (target/debug/deps/m2_config-3efd7b9361040781)
+
+running 2 tests
+test tests::secret_like_config_content_is_rejected_before_yaml_materialization ... ok
+test tests::checked_in_config_materializes_reference_session ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/m2_runner-f10b7fdeec6480f6)
+
+running 2 tests
+test tests::empty_stream_still_finalizes_and_reconciles ... ok
+test tests::multi_backtest_runs_isolated_subsequent_fills ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+     Running unittests src/lib.rs (target/debug/deps/m3_config-a9066ba694d94d33)
+
+running 2 tests
+test tests::m3_config_rejects_embedded_credentials ... ok
+test tests::m3_config_materializes_three_taifex_profiles_and_twse ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/m3_fixture_data.rs (target/debug/deps/m3_fixture_data-227b00f290d2ba21)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/market_state-6a2213dd93707d5d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/reducer.rs (target/debug/deps/reducer-a4b90a32893049d3)
+
+running 10 tests
+test initial_state_preserves_unavailable_semantics ... ok
+test canonical_state_set_uses_instrument_order_not_input_order ... ok
+test initial_market_state_canonical_frame_matches_the_documented_layout ... ok
+test book_snapshot_preserves_trade_and_volume_under_an_explicit_profile ... ok
+test taifex_opening_indicative_is_timeline_without_trade_or_volume_state ... ok
+test segment_reset_is_committed_with_the_first_new_segment_event ... ok
+test tpex_profile_accepts_tpex_annotations_and_replaces_the_book ... ok
+test quote_replaces_book_atomically_and_no_observation_preserves_trade_origin ... ok
+test clear_unknown_and_volume_regression_have_explicit_atomic_behavior ... ok
+test trade_batch_preserves_book_and_increments_version_once ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/market_types-18fd2289e8624cdb)
+
+running 2 tests
+test time::tests::iso8601_format_handles_cross_midnight_negative_offset ... ok
+test time::tests::iso8601_format_round_trips_with_positive_offset ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/decimal.rs (target/debug/deps/decimal-c82434845f7a5905)
+
+running 2 tests
+test decimal_canonical_encoding_and_arithmetic_are_exact ... ok
+test m1_t012_decimal_never_rounds_or_uses_float ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/domain_events.rs (target/debug/deps/domain_events-1231d77f86e0e7a9)
+
+running 7 tests
+test twse_annotation_typed_views_preserve_raw_semantics ... ok
+test canonical_event_changes_for_distinct_observation_semantics ... ok
+test tpex_annotation_typed_views_keep_a_market_specific_variant ... ok
+test quote_and_trade_batch_reject_mixed_quantity_units ... ok
+test book_side_enforces_contiguity_price_order_and_units ... ok
+test canonical_quote_frame_has_the_documented_field_order ... ok
+test indicative_auction_roundtrips_without_becoming_a_trade ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/instrument_identity.rs (target/debug/deps/instrument_identity-f605e07c9ce32154)
+
+running 3 tests
+test instrument_identity_orders_by_market_then_symbol_bytes ... ok
+test market_id_has_fixed_discriminants_and_ordering_ranks ... ok
+test symbol_is_non_empty_and_byte_exact ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/match_time.rs (target/debug/deps/match_time-71b0e381ad1643dd)
+
+running 2 tests
+test m1_t010_match_time_is_exact_utc_microseconds ... ok
+test m1_t011_invalid_match_time_is_rejected ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/price.rs (target/debug/deps/price-49e77559d4d8fd74)
+
+running 1 test
+test price_requires_a_strictly_positive_exact_decimal ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/quantity.rs (target/debug/deps/quantity-ae2dc27e9499f719)
+
+running 3 tests
+test quantity_arithmetic_is_checked_and_unit_safe ... ok
+test quantity_unit_has_fixed_canonical_discriminants ... ok
+test quantity_requires_a_positive_value_and_encodes_its_unit ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/trading_date.rs (target/debug/deps/trading_date-fcb2ec0b06c1cfae)
+
+running 3 tests
+test trading_date_parses_and_formats_valid_gregorian_dates ... ok
+test trading_date_uses_signed_epoch_days_and_canonical_bytes ... ok
+test trading_date_rejects_invalid_format_and_nonexistent_dates ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/volume.rs (target/debug/deps/volume-231c872ac0a7569a)
+
+running 3 tests
+test quantity_and_volume_conversion_preserves_the_explicit_unit ... ok
+test volume_allows_zero_and_encodes_its_unit ... ok
+test volume_arithmetic_is_checked_and_unit_safe ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/osmium_cli-372076ed52874cf6)
+
+running 6 tests
+test tests::malformed_arguments_are_usage_errors ... ok
+test m2::tests::m2_exit_codes_preserve_stable_failure_categories ... ok
+test tests::cache_prepare_is_a_first_class_config_command ... ok
+test tests::replay_arguments_accept_either_option_order ... ok
+test tests::inspect_requires_exactly_one_run_directory ... ok
+test m2::tests::m3_plan_command_lists_each_partition_without_source_access ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/main.rs (target/debug/deps/osmium-d99ecd16bcb43639)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/replay_command.rs (target/debug/deps/replay_command-a4923eccfb0cc7a4)
+
+running 1 test
+test replay_command_exports_the_complete_m1_artifact_set_without_api_key ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.38s
+
+     Running unittests src/lib.rs (target/debug/deps/replay_engine-ca32c543ab6afe93)
+
+running 2 tests
+test plan::tests::m2_freezes_exactly_one_selected_stream ... ok
+test plan::tests::replay_plan_identity_is_deterministic_and_lineage_bound ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/full_fixture.rs (target/debug/deps/full_fixture-ff3d5b5f8bb0fac9)
+
+running 1 test
+test complete_fixture_replay_is_deterministic_and_preserves_intermediate_phase_order ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.25s
+
+     Running tests/replay.rs (target/debug/deps/replay-e970364b250c103f)
+
+running 11 tests
+test invalid_twse_realtime_trade_shape_is_rejected ... ok
+test frozen_replay_opens_only_the_selected_universe_stream ... ok
+test context_schedule_resets_observable_state_at_segment_boundary ... ok
+test replay_clock_state_and_checksum_commit_once_per_event ... ok
+test precommit_ordering_and_state_errors_leave_current_event_uncommitted ... ok
+test multi_stream_replay_merges_bounded_heads_and_ignores_sentinel ... ok
+test empty_selected_event_sequence_has_a_framed_checksum_and_initial_state ... ok
+test ordering_v2_places_twse_intermediate_before_final_and_retains_duplicates ... ok
+test multi_stream_binding_order_does_not_change_checksum ... ok
+test source_sequence_none_sorts_before_some_before_fingerprint ... ok
+test shuffled_inputs_produce_identical_checksums_and_final_state ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/run_planner-d25d165036dc2ffb)
+
+running 3 tests
+test session::tests::regular_only_stock_future_rejects_after_hours ... ok
+test session::tests::index_futures_after_hours_crosses_previous_business_date ... ok
+test session::tests::requested_session_order_does_not_change_identity ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/config.rs (target/debug/deps/config-e8e289915c91dd2a)
+
+running 7 tests
+test unsupported_config_version_is_rejected ... ok
+test every_universe_instrument_requires_valid_economics ... ok
+test strategy_declaration_must_match_effective_universe ... ok
+test economics_outside_universe_is_rejected ... ok
+test negative_slippage_is_rejected_before_planning ... ok
+test effective_config_applies_defaults_and_canonicalizes_sets ... ok
+test semantic_checksum_excludes_data_root ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/partition_plan.rs (target/debug/deps/partition_plan-881d79f5738eecf6)
+
+running 9 tests
+test five_source_states_have_distinct_stable_kinds ... ok
+test partition_identity_uses_canonical_session_order ... ok
+test coverage_unavailable_is_not_confused_with_missing_download ... ok
+test source_and_cache_states_classify_into_explicit_actions ... ok
+test strict_plan_rejects_degraded_scope ... ok
+test execution_plan_requires_every_universe_date_partition ... ok
+test missing_partition_makes_network_requirement_explicit ... ok
+test explicit_degraded_plan_only_accepts_incomplete_partition_scope ... ok
+test execution_plan_is_independent_of_partition_discovery_order ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/strategy_api-1a8239f636b6e5eb)
+
+running 2 tests
+test orders::tests::execution_mode_controls_order_capability ... ok
+test orders::tests::intent_encoding_is_deterministic ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/strategy.rs (target/debug/deps/strategy-9a0e882e84904764)
+
+running 6 tests
+test failed_callback_discards_current_batch_after_core_commit ... ok
+test session_phase_and_twse_indicative_rules_are_explicit ... ok
+test callback_observes_committed_post_event_state_and_context ... ok
+test example_strategy_declares_only_2330_and_emits_in_fixed_order ... ok
+test panic_and_unavailable_capability_have_stable_categories ... ok
+test deterministic_output_is_independent_of_input_order ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/taifex_normalizer-8d4293783260dfbb)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/fixtures.rs (target/debug/deps/fixtures-4fed462f0fd9b7b9)
+
+running 6 tests
+test unknown_format_reports_the_format_identity ... ok
+test i020_continuation_is_rejected_in_the_current_source_boundary ... ok
+test timeline_quantities_use_contract_units ... ok
+test skips_keep_exchange_specific_reasons ... ok
+test i022_zero_zero_is_a_no_observation_opening_event ... ok
+test all_m3_futures_fixtures_normalize_with_opening_events_only ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.86s
+
+     Running unittests src/lib.rs (target/debug/deps/tpex_normalizer-6ad7c0ef4e771231)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/full_fixture.rs (target/debug/deps/full_fixture-53e4a105e6c99866)
+
+running 1 test
+test complete_committed_regular_fixture_normalizes_offline ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.56s
+
+     Running tests/normalizer.rs (target/debug/deps/normalizer-74d9b5300b98a62a)
+
+running 6 tests
+test snapshot_maps_exact_numeric_lexemes_and_null_deal ... ok
+test unknown_format_and_invalid_book_are_rejected_with_context ... ok
+test window_skip_format_and_reserved_flags_are_explicitly_classified ... ok
+test realtime_pair_is_grouped_by_match_time_and_emits_trade_then_quote ... ok
+test trial_quotes_become_opening_and_closing_auction_events ... ok
+test incomplete_and_volume_mismatched_realtime_groups_are_rejected ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/twse_normalizer-a3b6acbfb3f688e8)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/full_fixture.rs (target/debug/deps/full_fixture-65897f5a606caf8e)
+
+running 1 test
+test complete_committed_regular_fixture_normalizes_offline ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.35s
+
+     Running tests/normalizer.rs (target/debug/deps/normalizer-6a6933e3fd0c5b3e)
+
+running 6 tests
+test snapshot_maps_exact_numeric_lexemes_and_null_deal ... ok
+test unknown_format_and_invalid_book_are_rejected_with_context ... ok
+test window_skip_format_and_reserved_flags_are_explicitly_classified ... ok
+test realtime_pair_is_grouped_by_match_time_and_emits_trade_then_quote ... ok
+test trial_quotes_become_opening_and_closing_auction_events ... ok
+test incomplete_and_volume_mismatched_realtime_groups_are_rejected ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests data_sync
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests execution_sim
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests m1_runner
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests m2_config
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests m2_runner
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests m3_config
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests market_state
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests market_types
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests osmium_cli
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests replay_engine
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests run_planner
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests strategy_api
+
+running 2 tests
+test crates/strategy-api/src/strategy.rs - strategy::StrategyEventContext (line 29) - compile fail ... ok
+test crates/strategy-api/src/strategy.rs - strategy::StrategyEventContext (line 38) - compile fail ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+   Doc-tests taifex_normalizer
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tpex_normalizer
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests twse_normalizer
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,16 +1,17 @@
-# M1／M2／M3 Verification Plan
+# M1／M2／M3／M4 Verification Plan
 
 ## 1. 文件目的
 
 本文件定義 M1「TWSE 2330 regular-market deterministic replay vertical slice」、
-M2「Teralion 真實資料準備與離線 backtest」及 M3「TWSE 2330 加 TAIFEX 三商品與多商品離線
-backtest」的驗證方法、test ID、fixture policy、golden artifacts 與執行順序。它是
+M2「Teralion 真實資料準備與離線 backtest」、M3「TWSE 2330 加 TAIFEX 三商品與多商品離線
+backtest」及 M4「TPEx 6488 regular-equity 五市場離線 backtest」的驗證方法、test ID、
+fixture policy、golden artifacts 與執行順序。它是
 測試契約，不是測試已通過的證據；實際結果由 M1/M2 acceptance、
 [M3 acceptance](m3-acceptance.md) 及 machine-readable CI evidence 登錄。
 
 ```text
 verification_plan_version = 3
-scope                     = M1 + M2 + M3
+scope                     = M1 + M2 + M3 + M4
 ```
 
 依據：
@@ -784,3 +785,46 @@ M3 verification only closes when all M3-AC-01..17 are `Passed` in
 - cache hit/rebuild、debug/release、repeat/permutation 與 corruption checks 無 warning。
 - `docs/traceability.yaml`、CLI/local-data/performance 文件與 formal report 已更新，
   且沒有未解釋的 `Blocked`／`Partial`／`NotRun`。
+
+## 24. M4 commands 與 evidence
+
+M4 使用 TPEx `6488` 2026-07-20 regular fixture，並以 shared-date TWSE 與三個
+TAIFEX partition 做 regression。fixture integrity 與 offline materialization：
+
+```sh
+tools/verify_m4_fixture.sh
+cargo run -p m3-config --bin m3_fixture_data -- \
+  --config config/m4-tpex.yaml \
+  --fixtures fixtures/teralion \
+  --data-root target/m4-data
+```
+
+正式 network-disabled harness：
+
+```sh
+tools/run_m4_acceptance.sh \
+  --output docs/verification/evidence/m4/formal-<UTC-date>
+```
+
+M4 evidence 必須包含 TPEx daily/source/page/shard checksums、strict identity 與
+normalizer tests、五個 opened streams、event/state/strategy/order/fill/ledger checksums、
+network-disabled plan／verify／replay／backtest／inspect、10 次 rerun、三次 discovery
+permutation、cache rebuild、debug/release comparison、corruption rejection 與
+performance baseline。M4 只包含 TPEx regular equity；odd-lot、warrant、option 與未被
+fixture 固定的 format 仍屬 M5 scope。
+
+## 25. M4 exit criteria
+
+M4 verification only closes when all M4-AC-01..12 are `Passed` in
+[`M4-tpex.md`](../increments/M4-tpex.md) and
+[`docs/verification/evidence/m4/formal-2026-08-01/acceptance-report.yaml`](evidence/m4/formal-2026-08-01/acceptance-report.yaml)，且：
+
+- TPEx fixture、daily instrument、source revision、mapping 與 redistribution approval 可追溯。
+- `TeralionTpexQuote` 只接受 `STOCK_SNAPSHOT`／`STOCK_REALTIME`，odd-lot 明確 skip，
+  invalid identity／shape／數值 strict reject。
+- `MarketAnnotations::TpexQuote`、Indicative auction timeline、intermediate/final ordering
+  與完整五檔 replacement 不改變 M1-M3 semantics。
+- TPEx source/cache、strategy context、equity economics、multi-stream state isolation
+  與 selective stream open 通過。
+- schema version 3 的 cache rebuild、replay checksum、backtest ledger 與 deterministic
+  rerun evidence 已登錄，沒有未解釋的 `Blocked`／`Partial`／`NotRun`。
