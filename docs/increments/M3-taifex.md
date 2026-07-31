@@ -815,6 +815,11 @@ verification evidence。
 
 ## 19. Completion criteria
 
+本 increment contract 的實作目前已涵蓋 TAIFEX 三商品；formal acceptance 仍受
+shared-date TWSE `2330` tick fixture gate 阻塞。三商品 evidence 不能推導四商品
+ordering/performance 已通過；以 [`M3 acceptance`](../verification/m3-acceptance.md)
+及 machine-readable report 的 status 為準。
+
 M3 只有在下列條件全部成立時完成：
 
 - 三個 exact TAIFEX symbols、共同 date 與 fixture approval gates 關閉。

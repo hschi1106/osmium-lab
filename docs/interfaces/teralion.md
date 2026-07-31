@@ -133,7 +133,9 @@ GET /api/feed/ticks/{symbol}?start=<same>&end=<same>&kinds=<same>&limit=5000&cur
 規則：
 
 - `start`／`end` 使用含 offset 的 ISO-8601 timestamp。
-- `kinds` 是 comma-separated source kind；M2 TWSE 使用 `quote`。
+- `kinds` 是 comma-separated source kind；M2 TWSE 使用 `quote`，M3 TAIFEX 使用
+  `book,close,stats,trade`。adapter 必須以 market-specific kind registry 驗證每筆
+  item 的 `type`，不能把 TAIFEX wire kind 改名成 `quote`。
 - `limit` 最大為 `5000`；page size 不是完整性條件。
 - 每頁都重送同一組 frozen `symbol`、`start`、`end`、`kinds` 及 `limit`，只新增
   前一頁原樣回傳的 `cursor`。

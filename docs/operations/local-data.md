@@ -2,13 +2,13 @@
 
 ## 1. 文件目的
 
-本文件定義 M2 本地來源資料、staging、replay cache 與 run artifacts 的目錄布局、
+本文件定義 M2/M3 本地來源資料、staging、replay cache 與 run artifacts 的目錄布局、
 操作流程、修復方式及安全邊界。它讓使用者能判斷哪些資料可重用、哪些衍生檔可刪除，
 以及中斷或損壞後應如何恢復。
 
 ```text
-local_data_contract_version = 1
-current_scope               = M2 TWSE 2330 single-day source and cache
+local_data_contract_version = 2
+current_scope               = M2 TWSE 2330 + M3 partitioned TAIFEX source and cache
 ```
 
 資料內容及狀態演算法由 [Data Sync 設計](../design/data-sync.md)定義；CLI command
@@ -85,6 +85,26 @@ M2 使用單一 user-configured `data_root`。推薦布局：
 repository 的 `fixtures/` 是 committed acceptance fixture，不是使用者的
 `data_root`，也不是 M2 live source catalog。M1 `--fixture` workflow 不得自動掃描
 或修改 M2 data root。
+
+M3 使用相同 contract 的 partitioned layout；每個 instrument/date/session selection
+有獨立 source current pointer 與 cache identity：
+
+```text
+<data_root>/
+  source/teralion/taifex/2026-07-20/TXFH6/
+    partition.yaml
+    current.yaml
+    revisions/<source-revision>/manifest.yaml
+  cache/replay/teralion/taifex/2026-07-20/TXFH6/<cache-identity>/
+    descriptor.yaml
+    events.bin
+```
+
+`TXFH6`、`CDFH6` 的 after-hours 與 regular source items 可以在同一 partition
+revision 中保存；session ownership 由 `SessionPlan` 決定，不由 directory date 或
+wire calendar date 猜測。`CAFH6` 只有 regular window。cache builder 依 market
+normalizer mapping 與 partition identity 產生 source-bound cache；刪除 cache 不會
+改變 source revision。
 
 ## 4. Partition files
 
