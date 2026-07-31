@@ -7,11 +7,13 @@ license.workspace = true
 [dependencies]
 blake3 = "1.8"
 market-types = { path = "../market-types" }
+replay-engine = { path = "../replay-engine" }
 run-planner = { path = "../run-planner" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 sha2 = "0.10"
 zstd = "0.13"
+twse-normalizer = { path = "../normalizer/twse" }
 
 [dev-dependencies]
 tempfile = "3"

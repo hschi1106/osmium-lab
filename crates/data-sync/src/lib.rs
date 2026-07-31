@@ -1,8 +1,13 @@
+mod cache;
 mod cursor;
 mod query;
 mod storage;
 mod verify;
 
+pub use cache::{
+    CACHE_FORMAT_VERSION, CacheBuildError, CacheBuilder, CacheDescriptor, CacheReadError,
+    CacheReader, CacheRecord, PublishedCache,
+};
 pub use cursor::{
     CursorCheckpoint, CursorError, CursorState, CursorStateMachine, PageCommitReceipt, PendingPage,
     TeralionCursor, TeralionRequest, TeralionTransport, TransportError,
