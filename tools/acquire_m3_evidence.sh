@@ -3,7 +3,7 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-trading_date=2026-07-27
+trading_date=2026-07-28
 destination=${1:-"$root/raw/teralion/taifex/$trading_date/evidence"}
 staging="$destination.staging"
 base_url=${TERALION_BASE_URL:-https://app.teraliontech.com}
@@ -69,6 +69,7 @@ jq -e '
 
 fetch_instrument() {
     symbol=$1
+    market=$2
 
     fetch "$staging/discovery/instrument-$symbol.json" \
         "$base_url/api/feed/instruments/$symbol" \
@@ -76,9 +77,9 @@ fetch_instrument() {
     fetch "$staging/discovery/range-$symbol.json" \
         "$base_url/api/feed/range/$symbol"
 
-    jq -e --arg symbol "$symbol" --arg date "$trading_date" '
+    jq -e --arg symbol "$symbol" --arg market "$market" --arg date "$trading_date" '
         .symbol == $symbol
-        and .market == "taifex_fut"
+        and .market == $market
         and .trading_date == $date
     ' "$staging/discovery/instrument-$symbol.json" >/dev/null
     jq -e --arg symbol "$symbol" '
@@ -86,9 +87,10 @@ fetch_instrument() {
     ' "$staging/discovery/range-$symbol.json" >/dev/null
 }
 
-fetch_instrument TXFH6
-fetch_instrument CDFH6
-fetch_instrument CAFH6
+fetch_instrument TXFH6 taifex_fut
+fetch_instrument CDFH6 taifex_fut
+fetch_instrument CAFH6 taifex_fut
+fetch_instrument 2330 twse
 
 summarize_page() {
     page=$1
@@ -224,17 +226,17 @@ fetch_partition() {
     echo "$symbol $segment: $count records in $page_number pages"
 }
 
-# Trading date 2026-07-27 follows the Friday 2026-07-24 after-hours session.
+# Trading date 2026-07-28 follows the Monday 2026-07-27 after-hours session.
 fetch_partition TXFH6 after_hours \
-    2026-07-24T14:55:00+08:00 2026-07-25T05:05:00+08:00
+    2026-07-27T14:55:00+08:00 2026-07-28T05:05:00+08:00
 fetch_partition TXFH6 regular \
-    2026-07-27T08:40:00+08:00 2026-07-27T13:50:00+08:00
+    2026-07-28T08:40:00+08:00 2026-07-28T13:50:00+08:00
 fetch_partition CDFH6 after_hours \
-    2026-07-24T17:20:00+08:00 2026-07-25T05:05:00+08:00
+    2026-07-27T17:20:00+08:00 2026-07-28T05:05:00+08:00
 fetch_partition CDFH6 regular \
-    2026-07-27T08:40:00+08:00 2026-07-27T13:50:00+08:00
+    2026-07-28T08:40:00+08:00 2026-07-28T13:50:00+08:00
 fetch_partition CAFH6 regular \
-    2026-07-27T08:40:00+08:00 2026-07-27T13:50:00+08:00
+    2026-07-28T08:40:00+08:00 2026-07-28T13:50:00+08:00
 
 (
     cd "$staging"
