@@ -6,7 +6,7 @@ mod verify;
 
 pub use cache::{
     CACHE_FORMAT_VERSION, CacheBuildError, CacheBuilder, CacheDescriptor, CacheReadError,
-    CacheReader, CacheRecord, PublishedCache,
+    CacheReader, CacheRecord, LocalCacheFactory, PublishedCache,
 };
 pub use cursor::{
     CursorCheckpoint, CursorError, CursorState, CursorStateMachine, PageCommitReceipt, PendingPage,

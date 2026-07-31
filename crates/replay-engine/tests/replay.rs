@@ -9,7 +9,8 @@ use market_types::{
     TradePrintKind, TradingDate, TwseQuoteAnnotations, Volume,
 };
 use replay_engine::{
-    OrderingError, OrderingKey, ReplayClock, ReplayCore, ReplayError, order_events,
+    EventStream, OrderingError, OrderingKey, ReplayClock, ReplayCore, ReplayError, ReplayPlan,
+    ReplayStreamBinding, ReplayStreamFactory, StableStreamDescriptorId, order_events,
 };
 
 fn instrument() -> InstrumentId {
@@ -99,6 +100,31 @@ fn core() -> ReplayCore {
     .unwrap()
 }
 
+struct EmptyStream;
+
+impl EventStream for EmptyStream {
+    type Error = std::io::Error;
+
+    fn next_event(&mut self) -> Result<Option<DomainEvent>, Self::Error> {
+        Ok(None)
+    }
+}
+
+#[derive(Default)]
+struct RecordingFactory {
+    opened: Vec<StableStreamDescriptorId>,
+}
+
+impl ReplayStreamFactory for RecordingFactory {
+    type Stream = EmptyStream;
+    type Error = std::io::Error;
+
+    fn open(&mut self, binding: &ReplayStreamBinding) -> Result<Self::Stream, Self::Error> {
+        self.opened.push(binding.descriptor_id());
+        Ok(EmptyStream)
+    }
+}
+
 #[test]
 fn ordering_v2_places_twse_intermediate_before_final_and_retains_duplicates() {
     let intermediate = intermediate(10, 10);
@@ -130,6 +156,27 @@ fn ordering_v2_places_twse_intermediate_before_final_and_retains_duplicates() {
             .source_phase_rank(),
         20
     );
+}
+
+#[test]
+fn frozen_replay_opens_only_the_selected_universe_stream() {
+    let selected = StableStreamDescriptorId::from_bytes([1; 32]);
+    let outside_universe_sentinel = StableStreamDescriptorId::from_bytes([9; 32]);
+    let plan = ReplayPlan::new(
+        [7; 32],
+        vec![ReplayStreamBinding::new(
+            selected,
+            instrument(),
+            date(),
+            [2; 32],
+            [3; 32],
+        )],
+    )
+    .unwrap();
+    let mut factory = RecordingFactory::default();
+    core().replay_frozen(&plan, &mut factory).unwrap();
+    assert_eq!(factory.opened, vec![selected]);
+    assert!(!factory.opened.contains(&outside_universe_sentinel));
 }
 
 #[test]
