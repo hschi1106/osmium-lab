@@ -13,8 +13,8 @@ use run_planner::{
     EffectiveRunConfig, ExecutionPlan, FillEvidence, FillModelConfig, InstrumentEconomicsConfig,
     MarkingPolicyConfig, OutputPolicy, PlannedPartition, PositionAccountingConfig,
     QuantityAllocationConfig, QuantityEvidence, ReplayDataPolicy, RoundingPolicy, RunConfig,
-    SessionPlanIdentity, SimulationConfig, SlippageModelConfig, SourceId, SourcePartitionKey,
-    SourcePolicy, StrategyBinding,
+    SessionPlan, SessionPlanIdentity, SimulationConfig, SlippageModelConfig, SourceId,
+    SourcePartitionKey, SourcePolicy, StrategyBinding,
 };
 use serde::Deserialize;
 use strategy_api::{
@@ -309,18 +309,20 @@ pub fn materialize_session(
     config: &EffectiveRunConfig,
 ) -> Result<MaterializedSession, M2ConfigError> {
     let date = config.trading_dates()[0];
-    let open = MatchTime::parse(&format!("{date}T09:00:00+08:00"))
-        .map_err(|error| M2ConfigError::Value(error.to_string()))?;
-    let close = MatchTime::parse(&format!("{date}T13:30:00+08:00"))
-        .map_err(|error| M2ConfigError::Value(error.to_string()))?;
-    let replay_start = MatchTime::from_unix_microseconds(open.as_unix_microseconds() - 300_000_000);
-    let replay_end_exclusive =
-        MatchTime::from_unix_microseconds(close.as_unix_microseconds() + 300_000_000);
-    let mut canonical = Vec::new();
-    canonical.extend_from_slice(b"TWSE-REGULAR-V1");
-    canonical.extend_from_slice(&date.to_canonical_bytes());
-    canonical.extend_from_slice(&open.as_unix_microseconds().to_be_bytes());
-    canonical.extend_from_slice(&close.as_unix_microseconds().to_be_bytes());
+    let session_plan = SessionPlan::for_instrument(
+        config
+            .universe()
+            .first()
+            .ok_or(M2ConfigError::Invalid("universe"))?,
+        date,
+        config.session_kinds().iter().copied(),
+    )
+    .map_err(|error| M2ConfigError::Value(error.to_string()))?;
+    let window = session_plan
+        .window(SessionKind::Regular)
+        .ok_or(M2ConfigError::Invalid("regular session"))?;
+    let open = window.open();
+    let close = window.close();
     Ok(MaterializedSession {
         segment: SessionSegment::new(
             SessionSegmentId::new("regular")
@@ -331,9 +333,9 @@ pub fn materialize_session(
             close,
         )
         .map_err(|error| M2ConfigError::Value(error.to_string()))?,
-        replay_start,
-        replay_end_exclusive,
-        identity: SessionPlanIdentity::from_bytes(*blake3::hash(&canonical).as_bytes()),
+        replay_start: window.replay_start(),
+        replay_end_exclusive: window.replay_end_exclusive(),
+        identity: session_plan.identity(),
     })
 }
 

@@ -2,6 +2,7 @@ mod canonical;
 mod config;
 mod partition;
 mod plan;
+mod session;
 
 pub use config::{
     CACHE_POLICY_VERSION, CONFIG_SCHEMA_VERSION, CachePolicy, ChargeConfig, ChargeSides,
@@ -20,4 +21,8 @@ pub use plan::{
     CacheAction, CompletionPolicy, DegradedScope, EXECUTION_PLAN_VERSION, ExecutionPlan,
     ExecutionPlanIdentity, NetworkRequirement, PlanError, PlannedPartition, PlanningVersionSet,
     SourceAction, VerificationAction,
+};
+pub use session::{
+    SESSION_CALENDAR_VERSION, SESSION_PROFILE_VERSION, SESSION_WINDOW_POLICY_VERSION, SessionPlan,
+    SessionPlanError, SessionProfileId, SessionWindow,
 };
