@@ -8,6 +8,7 @@ use std::{
 };
 
 use crate::CompletedBacktest;
+use crate::CompletedMultiBacktest;
 
 const RUN_MANIFEST_VERSION: u16 = 1;
 
@@ -68,6 +69,17 @@ pub fn publish_backtest(
         "final-state.blake3",
         format!("{state_checksum}\n").into_bytes(),
     );
+    files.insert(
+        "replay-summary.json",
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "format": "osmium-m3-replay-summary-v1",
+            "status": "strategy_simulated",
+            "event_count": completed.replay.summary().event_count(),
+            "event_checksum": event_checksum,
+            "final_state_checksum": state_checksum,
+        }))
+        .map_err(|error| ArtifactError::Encoding(error.to_string()))?,
+    );
     files.insert("strategy-output.bin", strategy.clone());
     files.insert(
         "strategy-output.blake3",
@@ -120,6 +132,114 @@ pub fn publish_backtest(
         "event_count": completed.replay.summary().event_count(),
         "order_count": completed.simulator.orders().len(),
         "fill_count": completed.simulator.fills().len(),
+        "artifact_checksums": checksums,
+    });
+    files.insert(
+        "run-manifest.yaml",
+        serde_json::to_vec_pretty(&manifest)
+            .map_err(|error| ArtifactError::Encoding(error.to_string()))?,
+    );
+    for (name, bytes) in files {
+        write_file(&staging.join(name), &bytes)?;
+    }
+    File::open(&staging)?.sync_all()?;
+    fs::rename(&staging, output)?;
+    File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+pub fn publish_multi_backtest(
+    output: &Path,
+    completed: &CompletedMultiBacktest,
+    plan_identity: &[u8; 32],
+    source_revision: &str,
+    cache_identity: &str,
+) -> Result<(), ArtifactError> {
+    if output.exists() {
+        return Err(ArtifactError::OutputExists(output.to_path_buf()));
+    }
+    let parent = output.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    let name = output
+        .file_name()
+        .ok_or_else(|| ArtifactError::InvalidOutput(output.to_path_buf()))?
+        .to_string_lossy();
+    let staging = parent.join(format!(".{name}.osmium-staging"));
+    if staging.exists() {
+        return Err(ArtifactError::OutputExists(staging));
+    }
+    fs::create_dir(&staging)?;
+
+    let strategy = completed
+        .strategy_output
+        .to_canonical_bytes()
+        .map_err(|error| ArtifactError::Encoding(error.to_string()))?;
+    let orders = encode_multi_orders(completed)?;
+    let fills = encode_multi_fills(completed);
+    let event_checksum = hex(completed.replay.summary().event_checksum().as_bytes());
+    let state_checksum = hex(completed.replay.summary().final_state_checksum().as_bytes());
+    let mut files = BTreeMap::<&str, Vec<u8>>::new();
+    files.insert(
+        "effective-config.yaml",
+        format!("config_checksum: {}\n", hex(plan_identity)).into_bytes(),
+    );
+    files.insert(
+        "execution-plan.yaml",
+        format!("plan_identity: {}\n", hex(plan_identity)).into_bytes(),
+    );
+    files.insert(
+        "data-lineage.yaml",
+        format!("source_revision: {source_revision}\n").into_bytes(),
+    );
+    files.insert(
+        "cache-lineage.yaml",
+        format!("cache_identity: {cache_identity}\n").into_bytes(),
+    );
+    files.insert(
+        "event-stream.blake3",
+        format!("{event_checksum}\n").into_bytes(),
+    );
+    files.insert(
+        "final-state.blake3",
+        format!("{state_checksum}\n").into_bytes(),
+    );
+    files.insert("strategy-output.bin", strategy.clone());
+    files.insert(
+        "strategy-output.blake3",
+        format!("{}\n", hash(&strategy)).into_bytes(),
+    );
+    files.insert("orders.bin", orders.clone());
+    files.insert("orders.blake3", format!("{}\n", hash(&orders)).into_bytes());
+    files.insert("fills.bin", fills.clone());
+    files.insert("fills.blake3", format!("{}\n", hash(&fills)).into_bytes());
+    files.insert(
+        "run-summary.yaml",
+        format!(
+            "status: strategy_simulated\nevents: {}\norders: {}\nfills: {}\n",
+            completed.replay.summary().event_count(),
+            completed.simulator.order_count(),
+            completed.simulator.fill_count(),
+        )
+        .into_bytes(),
+    );
+    files.insert(
+        "warnings.yaml",
+        b"warnings: [accounting_pending]\n".to_vec(),
+    );
+    let checksums = files
+        .iter()
+        .map(|(name, bytes)| ((*name).to_owned(), hash(bytes)))
+        .collect::<BTreeMap<_, _>>();
+    let manifest = serde_json::json!({
+        "run_manifest_version": RUN_MANIFEST_VERSION,
+        "status": "strategy_simulated",
+        "completion_quality": "strategy_simulated",
+        "plan_identity": hex(plan_identity),
+        "source_revision": source_revision,
+        "cache_identity": cache_identity,
+        "event_count": completed.replay.summary().event_count(),
+        "order_count": completed.simulator.order_count(),
+        "fill_count": completed.simulator.fill_count(),
         "artifact_checksums": checksums,
     });
     files.insert(
@@ -190,6 +310,40 @@ fn encode_fills(completed: &CompletedBacktest) -> Vec<u8> {
     let mut bytes = b"OSFILLS1".to_vec();
     bytes.extend_from_slice(&(completed.simulator.fills().len() as u64).to_be_bytes());
     for fill in completed.simulator.fills() {
+        bytes.extend_from_slice(fill.order_id().as_bytes());
+        bytes.extend_from_slice(&fill.triggering_ordinal().to_be_bytes());
+        bytes.extend_from_slice(&fill.match_time().as_unix_microseconds().to_be_bytes());
+        bytes.push(fill.side() as u8);
+        bytes.extend_from_slice(&fill.price().to_canonical_bytes());
+        bytes.extend_from_slice(&fill.quantity().to_canonical_bytes());
+    }
+    bytes
+}
+
+fn encode_multi_orders(completed: &CompletedMultiBacktest) -> Result<Vec<u8>, ArtifactError> {
+    let orders = completed.simulator.orders();
+    let mut bytes = b"OSORDERS1".to_vec();
+    bytes.extend_from_slice(&(orders.len() as u64).to_be_bytes());
+    for order in orders {
+        bytes.extend_from_slice(order.id().as_bytes());
+        let intent = order
+            .intent()
+            .to_canonical_bytes()
+            .map_err(|error| ArtifactError::Encoding(error.to_string()))?;
+        bytes.extend_from_slice(&(intent.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(&intent);
+        bytes.extend_from_slice(&order.filled().to_be_bytes());
+        bytes.extend_from_slice(&order.remaining().to_be_bytes());
+        bytes.push(order.status() as u8);
+    }
+    Ok(bytes)
+}
+
+fn encode_multi_fills(completed: &CompletedMultiBacktest) -> Vec<u8> {
+    let fills = completed.simulator.fills();
+    let mut bytes = b"OSFILLS1".to_vec();
+    bytes.extend_from_slice(&(fills.len() as u64).to_be_bytes());
+    for fill in fills {
         bytes.extend_from_slice(fill.order_id().as_bytes());
         bytes.extend_from_slice(&fill.triggering_ordinal().to_be_bytes());
         bytes.extend_from_slice(&fill.match_time().as_unix_microseconds().to_be_bytes());

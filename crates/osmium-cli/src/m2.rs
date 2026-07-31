@@ -11,8 +11,8 @@ use data_sync::{
     TeralionCredential, TeralionQuery, TeralionSync,
 };
 use execution_sim::{
-    ChargeModel, ChargeSides, EvidenceMode, FillModel, InstrumentEconomics, Ledger, QuantityPolicy,
-    RoundingPolicy, Simulator,
+    ChargeModel, ChargeSides, EvidenceMode, FillModel, InstrumentEconomics, Ledger, MultiSimulator,
+    QuantityPolicy, RoundingPolicy, Simulator,
 };
 use m2_config::{M2PlanBundle, load, plan};
 use m3_config::{
@@ -30,6 +30,10 @@ use run_planner::{
     SourceState,
 };
 use strategy_api::M2AcceptanceStrategy;
+use strategy_api::{
+    M3_ACCEPTANCE_STRATEGY_ID, M3_ACCEPTANCE_STRATEGY_VERSION, M3AcceptanceStrategy, SessionKind,
+    SessionSegment,
+};
 use taifex_normalizer::NormalizerConfig as TaifexNormalizerConfig;
 use twse_normalizer::NormalizerConfig as TwseNormalizerConfig;
 
@@ -458,6 +462,16 @@ fn replay_m3(path: &Path) -> Result<replay_engine::CompletedReplay, M2CommandErr
     let config = load_m3(path)?;
     let bundle = plan_m3(config.clone())?;
     let replay = bundle.replay.as_ref().ok_or(M2CommandError::CacheMissing)?;
+    let mut core = m3_core(&config, &bundle)?;
+    let mut factory = data_sync::LocalCacheFactory::new_partitioned(config.effective().data_root());
+    core.replay_frozen_multi(replay, &mut factory)?;
+    Ok(core.complete()?)
+}
+
+fn m3_core(
+    config: &M3Config,
+    bundle: &m3_config::M3PlanBundle,
+) -> Result<ReplayCore, M2CommandError> {
     let mut states = Vec::new();
     let mut reducers = Vec::new();
     let mut contexts = Vec::new();
@@ -504,10 +518,32 @@ fn replay_m3(path: &Path) -> Result<replay_engine::CompletedReplay, M2CommandErr
         contexts.push((key.instrument().clone(), context));
         schedules.push((key.instrument().clone(), windows));
     }
-    let mut core = ReplayCore::new_multi_with_schedules(states, reducers, contexts, schedules)?;
-    let mut factory = data_sync::LocalCacheFactory::new_partitioned(config.effective().data_root());
-    core.replay_frozen_multi(replay, &mut factory)?;
-    Ok(core.complete()?)
+    Ok(ReplayCore::new_multi_with_schedules(
+        states, reducers, contexts, schedules,
+    )?)
+}
+
+fn m3_schedule(config: &M3Config) -> Result<m2_runner::MultiSessionSchedule, M2CommandError> {
+    let mut entries = Vec::new();
+    for key in config.partition_keys()? {
+        let session_plan = config.session_plan_for(&key)?;
+        let mut segments = Vec::new();
+        for window in session_plan.windows() {
+            let id = match window.kind() {
+                SessionKind::Regular => "regular",
+                SessionKind::AfterHours => "after_hours",
+            };
+            segments.push(SessionSegment::new(
+                market_state::SessionSegmentId::new(id)?,
+                window.kind(),
+                key.trading_date(),
+                window.open(),
+                window.close(),
+            )?);
+        }
+        entries.push((key.instrument().clone(), segments));
+    }
+    Ok(m2_runner::MultiSessionSchedule::new(entries)?)
 }
 
 fn execute_backtest(path: &Path, output: &Path) -> Result<String, M2CommandError> {
@@ -582,28 +618,95 @@ fn execute_backtest(path: &Path, output: &Path) -> Result<String, M2CommandError
 }
 
 fn execute_m3_backtest(path: &Path, output: &Path) -> Result<String, M2CommandError> {
-    let completed = replay_m3(path)?;
-    if output.exists() {
-        return Err(M2CommandError::Artifact(
-            m2_runner::ArtifactError::OutputExists(output.to_path_buf()),
-        ));
+    let config = load_m3(path)?;
+    let bundle = plan_m3(config.clone())?;
+    if bundle
+        .execution
+        .config()
+        .strategy()
+        .identity()
+        .strategy_id()
+        != M3_ACCEPTANCE_STRATEGY_ID
+        || bundle
+            .execution
+            .config()
+            .strategy()
+            .identity()
+            .strategy_version()
+            != M3_ACCEPTANCE_STRATEGY_VERSION
+    {
+        return Err(M2CommandError::M3Unsupported);
     }
-    std::fs::create_dir_all(output)?;
-    let summary = serde_json::json!({
-        "format": "osmium-m3-replay-summary-v1",
-        "status": "replay_complete",
-        "event_count": completed.summary().event_count(),
-        "event_checksum": hex(completed.summary().event_checksum().as_bytes()),
-        "final_state_checksum": hex(completed.summary().final_state_checksum().as_bytes()),
-    });
-    std::fs::write(
-        output.join("replay-summary.json"),
-        serde_json::to_vec_pretty(&summary)
-            .map_err(|error| M2CommandError::Other(error.to_string()))?,
+    let replay = bundle.replay.as_ref().ok_or(M2CommandError::CacheMissing)?;
+    let core = m3_core(&config, &bundle)?;
+    let schedule = m3_schedule(&config)?;
+    let strategy = M3AcceptanceStrategy::new(
+        M3AcceptanceStrategy::source_binary_identity()?,
+        bundle.execution.config().universe().iter().cloned(),
+        bundle.execution.config().session_kinds().iter().copied(),
+    )?;
+    let simulation = bundle.execution.config().simulation();
+    let fill = simulation.fill_model();
+    let slippage = match simulation.slippage_model() {
+        SlippageModelConfig::AdverseFixedDelta { delta } => delta,
+    };
+    let simulator =
+        MultiSimulator::new(bundle.execution.config().instrument_economics().iter().map(
+            |economics| {
+                (
+                    economics.instrument().clone(),
+                    economics.quantity_unit(),
+                    FillModel {
+                        evidence: match fill.evidence() {
+                            FillEvidence::TopOfBook => EvidenceMode::TopOfBook,
+                            FillEvidence::TradePrint => EvidenceMode::TradePrint,
+                        },
+                        quantity: match fill.quantity() {
+                            QuantityEvidence::Unlimited => QuantityPolicy::Unlimited,
+                            QuantityEvidence::Observed => QuantityPolicy::Displayed,
+                        },
+                        adverse_price_delta: slippage,
+                    },
+                )
+            },
+        ))?;
+    let mut factory = data_sync::LocalCacheFactory::new_partitioned(config.effective().data_root());
+    let completed =
+        m2_runner::run_multi_backtest(core, strategy, replay, &mut factory, &schedule, simulator)?;
+    let mut source_lineage = Vec::new();
+    let mut cache_lineage = Vec::new();
+    for partition in bundle.execution.partitions() {
+        let source = match partition.source_state() {
+            SourceState::Complete { revision } => hex(revision.as_bytes()),
+            _ => return Err(M2CommandError::CacheMissing),
+        };
+        let cache = match partition.cache_action() {
+            CacheAction::ReuseValidCache { identity } => hex(identity.as_bytes()),
+            _ => return Err(M2CommandError::CacheMissing),
+        };
+        let label = format!(
+            "{:?}/{}@{}",
+            partition.key().instrument().market(),
+            partition.key().instrument().symbol(),
+            partition.key().trading_date(),
+        );
+        source_lineage.push(format!("{label}={source}"));
+        cache_lineage.push(format!("{label}={cache}"));
+    }
+    let source_revision = source_lineage.join(",");
+    let cache_identity = cache_lineage.join(",");
+    m2_runner::publish_multi_backtest(
+        output,
+        &completed,
+        bundle.execution.identity().as_bytes(),
+        &source_revision,
+        &cache_identity,
     )?;
     Ok(format!(
-        "backtest=replay_only\nevents={}\norders=0\nfills=0\noutput={}",
-        completed.summary().event_count(),
+        "backtest=strategy_simulated\nevents={}\norders={}\nfills={}\noutput={}",
+        completed.replay.summary().event_count(),
+        completed.simulator.order_count(),
+        completed.simulator.fill_count(),
         output.display()
     ))
 }
@@ -689,8 +792,11 @@ pub enum M2CommandError {
     TaifexNormalizer(taifex_normalizer::ConfigError),
     Replay(replay_engine::ReplayError),
     State(market_state::SessionSegmentIdError),
+    Context(strategy_api::ContextError),
     Strategy(strategy_api::DeclarationError),
+    Simulation(execution_sim::SimulationError),
     Backtest(m2_runner::BacktestError),
+    MultiBacktest(m2_runner::MultiBacktestError),
     Artifact(m2_runner::ArtifactError),
     Io(std::io::Error),
     Partition(data_sync::PartitionRepositoryError),
@@ -711,6 +817,7 @@ impl M2CommandError {
             | Self::Normalizer(_)
             | Self::TaifexNormalizer(_)
             | Self::State(_)
+            | Self::Context(_)
             | Self::Strategy(_)
             | Self::OutputRequired
             | Self::M3Config(_)
@@ -722,7 +829,9 @@ impl M2CommandError {
             | Self::Artifact(_)
             | Self::CacheMissing => 20,
             Self::Transport(_) | Self::Sync(_) | Self::MissingCredential => 30,
-            Self::Replay(_) | Self::Backtest(_) => 50,
+            Self::Replay(_) | Self::Backtest(_) | Self::MultiBacktest(_) | Self::Simulation(_) => {
+                50
+            }
             Self::Partition(_) | Self::Io(_) | Self::ReplayContextWindow(_) | Self::Other(_) => 1,
         }
     }
@@ -750,8 +859,11 @@ convert!(Normalizer, twse_normalizer::ConfigError);
 convert!(TaifexNormalizer, taifex_normalizer::ConfigError);
 convert!(Replay, replay_engine::ReplayError);
 convert!(State, market_state::SessionSegmentIdError);
+convert!(Context, strategy_api::ContextError);
 convert!(Strategy, strategy_api::DeclarationError);
+convert!(Simulation, execution_sim::SimulationError);
 convert!(Backtest, m2_runner::BacktestError);
+convert!(MultiBacktest, m2_runner::MultiBacktestError);
 convert!(Artifact, m2_runner::ArtifactError);
 convert!(Partition, data_sync::PartitionRepositoryError);
 convert!(ReplayContextWindow, replay_engine::ReplayContextWindowError);
