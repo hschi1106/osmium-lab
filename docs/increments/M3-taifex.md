@@ -815,10 +815,10 @@ verification evidence。
 
 ## 19. Completion criteria
 
-本 increment contract 的實作目前已涵蓋 TAIFEX 三商品；formal acceptance 仍受
-shared-date TWSE `2330` tick fixture gate 阻塞。三商品 evidence 不能推導四商品
-ordering/performance 已通過；以 [`M3 acceptance`](../verification/m3-acceptance.md)
-及 machine-readable report 的 status 為準。
+本 increment contract 的實作已涵蓋 shared-date TWSE `2330` 與三個 TAIFEX 商品；
+formal acceptance 由 [`M3 acceptance`](../verification/m3-acceptance.md) 及
+machine-readable report 記錄為四商品 `Passed`。TWSE fixture 的來源、抽取 predicate、
+page checksums、daily instrument 與 redistribution approval 均保存在 fixture metadata。
 
 M3 只有在下列條件全部成立時完成：
 
