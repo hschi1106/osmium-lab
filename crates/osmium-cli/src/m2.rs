@@ -22,7 +22,7 @@ use run_planner::{
     ChargeSides as PlanChargeSides, FillEvidence, NetworkRequirement, QuantityEvidence,
     RoundingPolicy as PlanRounding, SlippageModelConfig, SourceAction,
 };
-use strategy_api::ExampleStrategy;
+use strategy_api::M2AcceptanceStrategy;
 use twse_normalizer::NormalizerConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,6 +158,14 @@ fn execute_verify(path: &Path) -> Result<String, M2CommandError> {
 
 fn prepare_cache(path: &Path) -> Result<String, M2CommandError> {
     let config = load(path)?;
+    let planned = plan(config.clone())?;
+    if let Some(cache) = planned.cache_path {
+        let reader = CacheReader::open(cache)?;
+        return Ok(format!(
+            "cache=reused\ncache_identity={}",
+            reader.descriptor().cache_identity
+        ));
+    }
     let session = m2_config::materialize_session(&config)?;
     let built = CacheBuilder::new(config.data_root()).build_current(NormalizerConfig::new(
         config.universe()[0].clone(),
@@ -195,12 +203,8 @@ fn execute_backtest(path: &Path, output: &Path) -> Result<String, M2CommandError
     let mut reader = CacheReader::open(cache)?;
     let source_revision = reader.descriptor().source_revision_identity.clone();
     let cache_identity = reader.descriptor().cache_identity.clone();
-    let mut events = Vec::new();
-    while let Some(record) = reader.next_record()? {
-        events.push(record.into_event());
-    }
-    let strategy = ExampleStrategy::new(
-        ExampleStrategy::source_binary_identity()?,
+    let strategy = M2AcceptanceStrategy::new(
+        M2AcceptanceStrategy::source_binary_identity()?,
         config.universe()[0].clone(),
     )?;
     let simulation = config.simulation();
@@ -234,11 +238,11 @@ fn execute_backtest(path: &Path, output: &Path) -> Result<String, M2CommandError
         charge(simulation.fee_model()),
         charge(simulation.tax_model()),
     );
-    let completed = m2_runner::run_backtest(
+    let completed = m2_runner::run_backtest_stream(
         core(&bundle)?,
         strategy,
         &bundle.session.segment,
-        events,
+        &mut reader,
         simulator,
         ledger,
         None,
@@ -335,6 +339,29 @@ pub enum M2CommandError {
     Other(String),
 }
 
+impl M2CommandError {
+    #[must_use]
+    pub const fn exit_code(&self) -> u8 {
+        match self {
+            Self::Config(_)
+            | Self::Query(_)
+            | Self::Normalizer(_)
+            | Self::State(_)
+            | Self::Strategy(_)
+            | Self::OutputRequired => 2,
+            Self::Verify(_)
+            | Self::CacheBuild(_)
+            | Self::CacheRead(_)
+            | Self::Staging(_)
+            | Self::Artifact(_)
+            | Self::CacheMissing => 20,
+            Self::Transport(_) | Self::Sync(_) | Self::MissingCredential => 30,
+            Self::Replay(_) | Self::Backtest(_) => 50,
+            Self::Other(_) => 1,
+        }
+    }
+}
+
 macro_rules! convert {
     ($variant:ident, $source:ty) => {
         impl From<$source> for M2CommandError {
@@ -365,3 +392,16 @@ impl fmt::Display for M2CommandError {
     }
 }
 impl Error for M2CommandError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn m2_exit_codes_preserve_stable_failure_categories() {
+        assert_eq!(M2CommandError::OutputRequired.exit_code(), 2);
+        assert_eq!(M2CommandError::CacheMissing.exit_code(), 20);
+        assert_eq!(M2CommandError::MissingCredential.exit_code(), 30);
+        assert_eq!(M2CommandError::Other("internal".to_owned()).exit_code(), 1);
+    }
+}

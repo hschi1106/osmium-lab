@@ -18,8 +18,8 @@ use run_planner::{
 };
 use serde::Deserialize;
 use strategy_api::{
-    CanonicalParamsChecksum, EXAMPLE_STRATEGY_ID, EXAMPLE_STRATEGY_VERSION, ExampleStrategy,
-    SessionKind, SessionSegment, Strategy,
+    CanonicalParamsChecksum, M2_ACCEPTANCE_STRATEGY_ID, M2_ACCEPTANCE_STRATEGY_VERSION,
+    M2AcceptanceStrategy, SessionKind, SessionSegment, Strategy,
 };
 
 pub const M2_CONFIG_VERSION: u16 = 1;
@@ -181,9 +181,9 @@ fn resolve(raw: FileConfig) -> Result<EffectiveRunConfig, M2ConfigError> {
         raw.universe.session_kinds == ["regular"],
         "universe.session_kinds",
     )?;
-    require(raw.strategy.id == EXAMPLE_STRATEGY_ID, "strategy.id")?;
+    require(raw.strategy.id == M2_ACCEPTANCE_STRATEGY_ID, "strategy.id")?;
     require(
-        raw.strategy.version == EXAMPLE_STRATEGY_VERSION,
+        raw.strategy.version == M2_ACCEPTANCE_STRATEGY_VERSION,
         "strategy.version",
     )?;
     require(
@@ -196,16 +196,16 @@ fn resolve(raw: FileConfig) -> Result<EffectiveRunConfig, M2ConfigError> {
     let instrument = instrument()?;
     let date = TradingDate::parse(&raw.universe.trading_dates[0])
         .map_err(|error| M2ConfigError::Value(error.to_string()))?;
-    let example = ExampleStrategy::new(
-        ExampleStrategy::source_binary_identity()
+    let strategy_instance = M2AcceptanceStrategy::new(
+        M2AcceptanceStrategy::source_binary_identity()
             .map_err(|error| M2ConfigError::Value(error.to_string()))?,
         instrument.clone(),
     )
     .map_err(|error| M2ConfigError::Value(error.to_string()))?;
     let strategy = StrategyBinding::new(
-        example.identity().clone(),
+        strategy_instance.identity().clone(),
         CanonicalParamsChecksum::for_empty_params(),
-        example.declaration(),
+        strategy_instance.declaration(),
     );
     let fee = charge(raw.simulation.fee)?;
     let tax = charge(raw.simulation.tax)?;
