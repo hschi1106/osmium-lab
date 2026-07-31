@@ -626,6 +626,23 @@ mod tests {
     }
 
     #[test]
+    fn tpex_query_accepts_quote_wire_kind_and_market() {
+        let query = TeralionQuery::ticks(
+            InstrumentId::new(MarketId::Tpex, Symbol::new("6488").unwrap()),
+            ArchiveTimestamp::parse("2026-07-20T08:55:00+08:00").unwrap(),
+            ArchiveTimestamp::parse("2026-07-20T13:35:00+08:00").unwrap(),
+            [ArchiveKind::Quote],
+            5_000,
+        )
+        .unwrap();
+        let body = br#"{"items":[{"type":"quote","market":"tpex","format":"STOCK_REALTIME","symbol":"6488","match_time":"2026-07-20T09:00:00+08:00","received_at":"2026-07-20T09:00:00+08:00"}],"next_cursor":null}"#;
+        let mut machine = CursorStateMachine::new(query).unwrap();
+        let request = machine.request_next().unwrap();
+        let pending = machine.accept_response(&request, body.to_vec()).unwrap();
+        assert_eq!(pending.record_count(), 1);
+    }
+
+    #[test]
     fn cursor_only_advances_after_durable_commit() {
         let mut machine = CursorStateMachine::new(query()).unwrap();
         let request = machine.request_next().unwrap();

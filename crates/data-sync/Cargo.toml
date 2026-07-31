@@ -15,6 +15,7 @@ serde_json = { version = "1", features = ["raw_value"] }
 sha2 = "0.10"
 zstd = "0.13"
 twse-normalizer = { path = "../normalizer/twse" }
+tpex-normalizer = { path = "../normalizer/tpex" }
 taifex-normalizer = { path = "../normalizer/taifex" }
 
 [dev-dependencies]

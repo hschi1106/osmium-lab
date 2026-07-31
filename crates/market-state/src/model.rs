@@ -127,8 +127,10 @@ impl AppliedEventRef {
 }
 
 fn source_phase_for_event(event: &DomainEvent) -> u8 {
-    if event.instrument().market() != market_types::MarketId::Twse
-        || event.source_format().as_str() != "STOCK_REALTIME"
+    if !matches!(
+        event.instrument().market(),
+        market_types::MarketId::Twse | market_types::MarketId::Tpex
+    ) || event.source_format().as_str() != "STOCK_REALTIME"
     {
         return 0;
     }

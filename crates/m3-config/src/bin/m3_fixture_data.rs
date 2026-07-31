@@ -159,8 +159,8 @@ fn fixture_partition_root(
 ) -> Result<PathBuf, Box<dyn Error>> {
     let market = match key.instrument().market() {
         MarketId::Twse => "twse",
+        MarketId::Tpex => "tpex",
         MarketId::Taifex => "taifex",
-        market => return Err(format!("unsupported fixture market: {market:?}").into()),
     };
     let root = fixture_root
         .join(market)
@@ -172,24 +172,24 @@ fn fixture_partition_root(
 fn session_directories(kind: &SourcePartitionKey) -> Vec<(SessionKind, &'static str)> {
     match kind.instrument().market() {
         MarketId::Twse => vec![(SessionKind::Regular, "regular-quotes")],
+        MarketId::Tpex => vec![(SessionKind::Regular, "regular-quotes")],
         MarketId::Taifex => vec![
             (SessionKind::AfterHours, "after-hours"),
             (SessionKind::Regular, "regular"),
         ],
-        MarketId::Tpex => Vec::new(),
     }
 }
 
 fn kinds_for(instrument: &InstrumentId) -> &'static [ArchiveKind] {
     match instrument.market() {
         MarketId::Twse => &[ArchiveKind::Quote],
+        MarketId::Tpex => &[ArchiveKind::Quote],
         MarketId::Taifex => &[
             ArchiveKind::Book,
             ArchiveKind::Close,
             ArchiveKind::Stats,
             ArchiveKind::Trade,
         ],
-        MarketId::Tpex => &[],
     }
 }
 
@@ -255,6 +255,15 @@ fn prepare_partition(
                 end.utc(),
             )?)
         }
+        MarketId::Tpex => {
+            let (start, end) = replay_window(config, key)?;
+            PartitionNormalizerConfig::Tpex(tpex_normalizer::NormalizerConfig::new(
+                key.instrument().clone(),
+                key.trading_date(),
+                start.utc(),
+                end.utc(),
+            )?)
+        }
         MarketId::Taifex => {
             let (start, end) = replay_window(config, key)?;
             PartitionNormalizerConfig::Taifex(taifex_normalizer::NormalizerConfig::new(
@@ -264,7 +273,6 @@ fn prepare_partition(
                 end.utc(),
             )?)
         }
-        market => return Err(format!("unsupported normalizer market: {market:?}").into()),
     };
     let cache = CacheBuilder::new(data_root).build_partition(key, normalizer)?;
     println!(

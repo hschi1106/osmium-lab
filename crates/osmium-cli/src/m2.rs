@@ -36,6 +36,7 @@ use strategy_api::{
     SessionSegment,
 };
 use taifex_normalizer::NormalizerConfig as TaifexNormalizerConfig;
+use tpex_normalizer::NormalizerConfig as TpexNormalizerConfig;
 use twse_normalizer::NormalizerConfig as TwseNormalizerConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,6 +186,7 @@ fn m3_queries(
         .ok_or_else(|| M2CommandError::Other("M3 session plan has no windows".to_owned()))?;
     let kinds = match key.instrument().market() {
         MarketId::Twse => [ArchiveKind::Quote].as_slice(),
+        MarketId::Tpex => [ArchiveKind::Quote].as_slice(),
         MarketId::Taifex => [
             ArchiveKind::Book,
             ArchiveKind::Close,
@@ -192,11 +194,6 @@ fn m3_queries(
             ArchiveKind::Trade,
         ]
         .as_slice(),
-        market => {
-            return Err(M2CommandError::Other(format!(
-                "M3 does not support market {market:?}"
-            )));
-        }
     };
     let ticks = TeralionQuery::ticks(
         key.instrument().clone(),
@@ -213,17 +210,18 @@ fn m3_queries(
             replay_start,
             replay_end_exclusive,
         )?),
+        MarketId::Tpex => PartitionNormalizerConfig::Tpex(TpexNormalizerConfig::new(
+            key.instrument().clone(),
+            key.trading_date(),
+            replay_start,
+            replay_end_exclusive,
+        )?),
         MarketId::Taifex => PartitionNormalizerConfig::Taifex(TaifexNormalizerConfig::new(
             key.instrument().clone(),
             key.trading_date(),
             replay_start,
             replay_end_exclusive,
         )?),
-        market => {
-            return Err(M2CommandError::Other(format!(
-                "M3 does not support market {market:?}"
-            )));
-        }
     };
     Ok((ticks, daily, normalizer))
 }
@@ -521,12 +519,8 @@ fn m3_core(
             .ok_or_else(|| M2CommandError::Other("M3 session plan has no windows".to_owned()))?;
         let reducer = match key.instrument().market() {
             MarketId::Twse => MarketStateReducer::twse_regular(),
+            MarketId::Tpex => MarketStateReducer::tpex_regular(),
             MarketId::Taifex => MarketStateReducer::taifex_futures(),
-            market => {
-                return Err(M2CommandError::Other(format!(
-                    "M3 does not support market {market:?}"
-                )));
-            }
         };
         states.push(MarketState::new(
             key.instrument().clone(),
@@ -849,6 +843,7 @@ pub enum M2CommandError {
     CacheBuild(data_sync::CacheBuildError),
     CacheRead(data_sync::CacheReadError),
     Normalizer(twse_normalizer::ConfigError),
+    TpexNormalizer(tpex_normalizer::ConfigError),
     TaifexNormalizer(taifex_normalizer::ConfigError),
     Replay(replay_engine::ReplayError),
     State(market_state::SessionSegmentIdError),
@@ -876,6 +871,7 @@ impl M2CommandError {
             Self::Config(_)
             | Self::Query(_)
             | Self::Normalizer(_)
+            | Self::TpexNormalizer(_)
             | Self::TaifexNormalizer(_)
             | Self::State(_)
             | Self::Context(_)
@@ -919,6 +915,7 @@ convert!(Verify, data_sync::VerificationError);
 convert!(CacheBuild, data_sync::CacheBuildError);
 convert!(CacheRead, data_sync::CacheReadError);
 convert!(Normalizer, twse_normalizer::ConfigError);
+convert!(TpexNormalizer, tpex_normalizer::ConfigError);
 convert!(TaifexNormalizer, taifex_normalizer::ConfigError);
 convert!(Replay, replay_engine::ReplayError);
 convert!(State, market_state::SessionSegmentIdError);

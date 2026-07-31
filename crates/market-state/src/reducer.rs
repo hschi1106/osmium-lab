@@ -10,7 +10,7 @@ use crate::{
     SessionSegmentId, StateField, TradeObservation, UnavailableReason,
 };
 
-pub const MARKET_STATE_VERSION: u16 = 2;
+pub const MARKET_STATE_VERSION: u16 = 3;
 pub const STATE_REDUCER_VERSION: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +76,11 @@ impl MarketStateReducer {
     }
 
     #[must_use]
+    pub fn tpex_regular() -> Self {
+        Self::new(MarketStateProfile::tpex_regular())
+    }
+
+    #[must_use]
     pub const fn profile(&self) -> &MarketStateProfile {
         &self.profile
     }
@@ -90,7 +95,7 @@ impl MarketStateReducer {
         self.profile
             .validate_event(event)
             .map_err(StateTransitionError::Profile)?;
-        validate_twse_realtime_shape(event)?;
+        validate_realtime_shape(event)?;
 
         let event_ref =
             AppliedEventRef::from_event(event).map_err(StateTransitionError::CanonicalEncoding)?;
@@ -369,10 +374,13 @@ fn apply_trade_observation(
     changed.insert(ChangedField::RecentTrade);
 }
 
-fn validate_twse_realtime_shape(event: &DomainEvent) -> Result<(), StateTransitionError> {
-    if event.instrument().market() != market_types::MarketId::Twse
-        || event.source_format().as_str() != "STOCK_REALTIME"
-    {
+fn validate_realtime_shape(event: &DomainEvent) -> Result<(), StateTransitionError> {
+    let error = match event.instrument().market() {
+        market_types::MarketId::Twse => StateTransitionError::InvalidTwseRealtimeShape,
+        market_types::MarketId::Tpex => StateTransitionError::InvalidTpexRealtimeShape,
+        _ => return Ok(()),
+    };
+    if event.source_format().as_str() != "STOCK_REALTIME" {
         return Ok(());
     }
     match event.payload() {
@@ -388,9 +396,7 @@ fn validate_twse_realtime_shape(event: &DomainEvent) -> Result<(), StateTransiti
         EventPayload::IndicativeOpeningAuction(_) | EventPayload::IndicativeClosingAuction(_) => {
             Ok(())
         }
-        EventPayload::BookSnapshot(_) | EventPayload::TradeBatch(_) => {
-            Err(StateTransitionError::InvalidTwseRealtimeShape)
-        }
+        EventPayload::BookSnapshot(_) | EventPayload::TradeBatch(_) => Err(error),
     }
 }
 
@@ -494,6 +500,7 @@ pub enum StateTransitionError {
     MatchTimeRegression,
     OrderingRegression,
     InvalidTwseRealtimeShape,
+    InvalidTpexRealtimeShape,
     CumulativeVolumeRegression {
         previous: u64,
         next: u64,
@@ -528,6 +535,9 @@ impl fmt::Display for StateTransitionError {
             Self::OrderingRegression => formatter.write_str("event ordering key regressed"),
             Self::InvalidTwseRealtimeShape => {
                 formatter.write_str("invalid TWSE STOCK_REALTIME domain event shape")
+            }
+            Self::InvalidTpexRealtimeShape => {
+                formatter.write_str("invalid TPEx STOCK_REALTIME domain event shape")
             }
             Self::CumulativeVolumeRegression { previous, next } => write!(
                 formatter,

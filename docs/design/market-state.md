@@ -17,10 +17,10 @@ checksum 如何讀取同一份可重現狀態。它承接：
 
 | Contract | Version |
 | --- | ---: |
-| `market_state` | 1 |
+| `market_state` | 3 |
 | `state_reducer` | 1 |
-| `canonical_market_state` | 1 |
-| `canonical_final_state_set` | 1 |
+| `canonical_market_state` | 3 |
+| `canonical_final_state_set` | 3 |
 
 版本是 run identity 與 manifest 的一部分。domain type 名稱不附加 `V1` 後綴。
 
@@ -482,8 +482,8 @@ Canonical state 沿用 `market-types.md` 的 primitive rules：
 
 ```text
 magic                                [4]byte = "OSMS"
-canonical_market_state_version       u16 = 1
-market_state_version                 u16 = 1
+canonical_market_state_version       u16 = 3
+market_state_version                 u16 = 3
 instrument                           CanonicalInstrumentId
 trading_date                         i32
 current_segment_id                   Optional<CanonicalString>
@@ -547,7 +547,7 @@ run-level final state 即使 M1 只有一個 instrument，也使用 collection f
 
 ```text
 magic                                [4]byte = "OSMF"
-canonical_final_state_set_version    u16 = 1
+canonical_final_state_set_version    u16 = 3
 state_count                          u32
 states                               repeated {
     state_byte_length                u32

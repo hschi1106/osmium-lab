@@ -22,6 +22,7 @@ run-planner = { path = "../run-planner" }
 serde_json = "1"
 strategy-api = { path = "../strategy-api" }
 taifex-normalizer = { path = "../normalizer/taifex" }
+tpex-normalizer = { path = "../normalizer/tpex" }
 twse-normalizer = { path = "../normalizer/twse" }
 
 [lints]

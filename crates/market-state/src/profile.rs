@@ -14,6 +14,7 @@ pub enum CumulativeVolumePolicy {
 pub enum AnnotationPolicy {
     NoneOnly,
     TwseQuote,
+    TpexQuote,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,6 +156,41 @@ impl MarketStateProfile {
         .expect("built-in TAIFEX market-state profile is valid")
     }
 
+    pub fn tpex_regular() -> Self {
+        Self::new(
+            MarketId::Tpex,
+            vec![
+                SourceFormatRule::new(
+                    SourceFormatId::new("STOCK_REALTIME")
+                        .expect("TPEx source format constant is non-empty"),
+                    vec![
+                        EventKind::QuoteSnapshot,
+                        EventKind::TradeBatch,
+                        EventKind::IndicativeOpeningAuction,
+                        EventKind::IndicativeClosingAuction,
+                    ],
+                )
+                .expect("TPEx realtime profile has accepted event kinds"),
+                SourceFormatRule::new(
+                    SourceFormatId::new("STOCK_SNAPSHOT")
+                        .expect("TPEx source format constant is non-empty"),
+                    vec![
+                        EventKind::QuoteSnapshot,
+                        EventKind::IndicativeOpeningAuction,
+                        EventKind::IndicativeClosingAuction,
+                    ],
+                )
+                .expect("TPEx snapshot profile has accepted event kinds"),
+            ],
+            CumulativeVolumePolicy::NonDecreasingWithinSegment {
+                unit: QuantityUnit::TradingUnit,
+            },
+            AnnotationPolicy::TpexQuote,
+            1,
+        )
+        .expect("built-in TPEx market-state profile is valid")
+    }
+
     #[must_use]
     pub const fn market(&self) -> MarketId {
         self.market
@@ -196,6 +232,7 @@ impl MarketStateProfile {
             (self.annotation_policy, annotations),
             (AnnotationPolicy::NoneOnly, MarketAnnotations::None)
                 | (AnnotationPolicy::TwseQuote, MarketAnnotations::TwseQuote(_))
+                | (AnnotationPolicy::TpexQuote, MarketAnnotations::TpexQuote(_))
         );
         if compatible {
             Ok(())
