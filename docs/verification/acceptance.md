@@ -13,8 +13,10 @@ current_overall_status      = NotRun
 ```
 
 fixture approval gate 已關閉；詳見
-[Fixture provenance](fixture-provenance.md)。implementation 與 acceptance tests
-尚未完成，因此 overall status 是 `NotRun`，不是 `Passed`。
+[Fixture provenance](fixture-provenance.md)。M1 vertical slice implementation、固定
+goldens、debug／release workspace tests 與 no-key local test 已完成；但
+`M1-T053` 仍須由 network-disabled CI 執行，因此正式 overall status 維持
+`NotRun`，不是 `Passed`。
 
 依據：
 
@@ -45,7 +47,7 @@ fixture approval gate 已關閉；詳見
 | `GATE-FIXTURE-02` fixture metadata 與 checksum | `Passed` | regular fixture metadata、source manifest 與 exact SHA-256 |
 | `GATE-SECRET-01` secret scan | `Passed` | field allowlist 與 forbidden-pattern scan，0 findings |
 | `GATE-SPEC-01` M1 design versions fixed | `Passed` | market-types 1、market-state 1、replay-engine 1、strategy-api 1 |
-| `GATE-BUILD-01` offline Rust workspace build | `Passed` | 2026-07-30 debug／release workspace tests |
+| `GATE-BUILD-01` offline Rust workspace build | `Passed` | 2026-07-31 debug／release 各 55 tests／27 suites，workspace Clippy 無 warning |
 
 `GATE-SPEC-01` 只代表 paper contract 已固定，不代表 implementation 符合。
 
@@ -218,8 +220,20 @@ approver
 approved_at
 ```
 
-目前沒有任何 golden checksum 可填。第一次 approved fixture implementation
-完成後才建立 expected values；本文件不預先捏造。
+approved fixture implementation 已在
+`fixtures/teralion/twse/2330/2026-07-27/golden/` 建立首版 expected values：
+
+| Artifact | Checksum |
+| --- | --- |
+| fixture set（SHA-256） | `5292ef24885c95c9402988423679e6b6381348cd09bb774d8489f08e9aa11ed1` |
+| normalized events（BLAKE3-256） | `7e37ff0ad4a8b15b4c569b295c0f03f26bb6c0f32db1493edac71620e85a28df` |
+| event stream（BLAKE3-256） | `0cecf1f6c3c6a8422955183fe383e787612efee3a4c4a7961d7faa6ee9e1de56` |
+| final state（BLAKE3-256） | `02f256fc1007ce41e56200a4f82fc0f0cb504ee29afdf7262307a232862e7ea0` |
+| strategy output（BLAKE3-256） | `763a5cb305a7ebbe86ea463e4091e90346421273e61b2f40f0c8ba4247690917` |
+
+大型 `normalized-events.bin` 與 `strategy-output.bin` 由 `m1-runner` 在 acceptance
+run 期間從 committed fixture 產生，不提交為第二份 source data；測試直接比較
+其完整 bytes，並以表列 checksum 固定 expected result。
 
 ## 7. Failure policy
 
@@ -248,12 +262,22 @@ approved_at
 
 ## 9. Current paperwork result
 
-截至 2026-07-30：
+截至 2026-07-31：
 
-- M1-AC-01：`Blocked`，等待明確的 Teralion fixture commit／redistribution
-  approval。
-- M1-AC-02 至 M1-AC-10：`NotRun`，因 implementation 與 tests 尚未開始。
-- M1 overall：`Blocked`。
+- fixture approval、implementation 與 compact golden gates 已完成。
+- `cargo fmt --check`、workspace Clippy、debug 及 release workspace tests 已
+  成功；debug／release 各為 55 tests／27 suites。
+- vertical slice 已驗證 73,795 events、73,795 callbacks、147,590 strategy
+  output records、0 warnings；同一 input 共 10 runs 及 3 個固定 shuffle seeds
+  的 normalized event bytes、event／state checksums 與 strategy output bytes
+  完全相同。
+- 移除 `TERALION_API_KEY` 後的 focused local run 已成功。
+- `M1-T053` 尚未在 network-disabled CI/container 執行；本機執行環境有網路
+  能力，不能替代該 evidence。
+- M1-AC-01 至 M1-AC-10 的正式 status 維持 `NotRun`；M1 overall 為
+  `NotRun`，不是 `Blocked` 或 `Passed`。
 
-這個 status 只描述 acceptance readiness；不阻止先實作不含受限 payload 的
-market types、normalizer interfaces、reducer、replayer 與 synthetic tests。
+本機可檢查證據記錄於
+[`local-2026-07-31.yaml`](evidence/m1/local-2026-07-31.yaml)。下一個正式動作
+是由 network-disabled CI 重跑 `M1-T050` 至 `M1-T054` 並產生完整
+`acceptance-report.yaml`。
