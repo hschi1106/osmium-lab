@@ -43,7 +43,7 @@ milestone_status:
     evidence:
       - docs/verification/evidence/m3/source-selection-2026-07-31.yaml
       - docs/verification/m3-acceptance.md
-      - docs/verification/evidence/m3/formal-<UTC-date>/acceptance-report.yaml
+      - docs/verification/evidence/m3/formal-2026-08-01/acceptance-report.yaml
     pending:
       - authorized TWSE 2330 2026-07-20 tick fixture and source/cache lineage
       - four-instrument offline ordering, strategy and performance acceptance
@@ -94,7 +94,7 @@ document_sets:
     m3_source_selection: docs/verification/evidence/m3/source-selection-2026-07-31.yaml
     m3_acceptance: docs/verification/m3-acceptance.md
     m3_performance: docs/verification/performance.md
-    m3_formal_evidence: docs/verification/evidence/m3/formal-<UTC-date>/acceptance-report.yaml
+    m3_formal_evidence: docs/verification/evidence/m3/formal-2026-08-01/acceptance-report.yaml
     m1_formal_evidence: docs/verification/evidence/m1/formal-2026-07-31/acceptance-report.yaml
     fixture_provenance: docs/verification/fixture-provenance.md
     performance: docs/verification/performance.md
