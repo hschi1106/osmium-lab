@@ -6,12 +6,12 @@ use std::{
 use m1_runner::{ArtifactExportError, M1FixtureInput};
 
 const NORMALIZED_EVENTS_BLAKE3: &str =
-    "fbcc03d53d541c7033211f2d93811ffe619b2943fe1f459836983d951db7f85c";
+    "6e5c4cbdb1615b53db770bc8283623da9259b3791f8d008fc42e6753b531803b";
 const EVENT_STREAM_BLAKE3: &str =
-    "7c06b170b06425a52a23c7ca3bb055c993163807837e88ea6207bbdccf7e17c8";
-const FINAL_STATE_BLAKE3: &str = "c243c4852da585412e4b62c78b1ef3535c5c9e6e61480d590e77ce58de174db2";
+    "06f5ed8855e7f13813b3c428f2e1429b524e03bec6c1a393e8a0e4580daa9342";
+const FINAL_STATE_BLAKE3: &str = "46483a599e221b707a0d99cf7c5dbe6cf909376a31d17af3085685f3dcfcca17";
 const STRATEGY_OUTPUT_BLAKE3: &str =
-    "6adb1736bc66e848162710ac73b10b7281c47d2a99e514de100cacd01e3d9c2a";
+    "7b772890179c4d5364ff73df5a9d6b368ed9adc7aae090b04ed163bbe5551b10";
 
 fn fixture_directory() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
