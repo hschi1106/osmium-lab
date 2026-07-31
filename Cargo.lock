@@ -78,6 +78,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
+name = "m1-runner"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "market-state",
+ "market-types",
+ "replay-engine",
+ "strategy-api",
+ "twse-normalizer",
+]
+
+[[package]]
 name = "market-state"
 version = "0.1.0"
 dependencies = [

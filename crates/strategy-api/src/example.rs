@@ -16,6 +16,11 @@ pub struct ExampleStrategy {
 }
 
 impl ExampleStrategy {
+    pub fn source_binary_identity() -> Result<BinaryIdentity, crate::DeclarationError> {
+        let digest = blake3::hash(include_bytes!("example.rs"));
+        BinaryIdentity::new("strategy-source-blake3", *digest.as_bytes())
+    }
+
     pub fn new(
         binary_identity: BinaryIdentity,
         instrument: market_types::InstrumentId,

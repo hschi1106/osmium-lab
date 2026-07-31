@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/m1-runner",
     "crates/market-state",
     "crates/market-types",
     "crates/normalizer/twse",
