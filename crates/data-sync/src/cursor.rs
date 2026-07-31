@@ -1,4 +1,11 @@
-use std::{collections::BTreeSet, error::Error, fmt};
+use std::{
+    collections::BTreeSet,
+    error::Error,
+    fmt,
+    fs::{self, File, OpenOptions},
+    io::{self, Write},
+    path::Path,
+};
 
 use serde_json::Value;
 
@@ -40,6 +47,15 @@ pub struct TeralionRequest {
 }
 
 impl TeralionRequest {
+    #[must_use]
+    pub fn first(query: TeralionQuery) -> Self {
+        Self {
+            query_identity: query.identity(),
+            query,
+            cursor: None,
+        }
+    }
+
     #[must_use]
     pub const fn query(&self) -> &TeralionQuery {
         &self.query
@@ -187,6 +203,101 @@ impl CursorCheckpoint {
     #[must_use]
     pub const fn terminal(&self) -> bool {
         self.terminal
+    }
+
+    pub fn save(&self, path: &Path) -> Result<(), io::Error> {
+        let value = serde_json::json!({
+            "query_identity": hex(self.query_identity.as_bytes()),
+            "committed_pages": self.committed_pages,
+            "next_cursor": self.next_cursor.as_ref().map(TeralionCursor::as_str),
+            "seen_cursor_digests": self.seen_cursor_digests.iter().map(|value| hex(value)).collect::<Vec<_>>(),
+            "seen_page_fingerprints": self.seen_page_fingerprints.iter().map(|value| hex(value)).collect::<Vec<_>>(),
+            "terminal": self.terminal,
+        });
+        let bytes = serde_json::to_vec_pretty(&value).map_err(io::Error::other)?;
+        let temporary = path.with_extension("tmp");
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        fs::rename(temporary, path)?;
+        File::open(path.parent().expect("checkpoint has parent"))?.sync_all()
+    }
+
+    pub fn load(path: &Path) -> Result<Self, io::Error> {
+        let value: serde_json::Value =
+            serde_json::from_slice(&fs::read(path)?).map_err(io::Error::other)?;
+        let required_text = |field: &str| {
+            value
+                .get(field)
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, field.to_owned()))
+        };
+        let digest_set = |field: &str| -> Result<BTreeSet<[u8; 32]>, io::Error> {
+            value
+                .get(field)
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, field.to_owned()))?
+                .iter()
+                .map(|item| {
+                    item.as_str()
+                        .and_then(decode_hex_32)
+                        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, field.to_owned()))
+                })
+                .collect()
+        };
+        Ok(Self {
+            query_identity: SanitizedQueryIdentity::from_bytes(
+                decode_hex_32(required_text("query_identity")?)
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "query identity"))?,
+            ),
+            committed_pages: value["committed_pages"]
+                .as_u64()
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "committed_pages"))?,
+            next_cursor: value
+                .get("next_cursor")
+                .and_then(serde_json::Value::as_str)
+                .map(TeralionCursor::new)
+                .transpose()
+                .map_err(io::Error::other)?,
+            seen_cursor_digests: digest_set("seen_cursor_digests")?,
+            seen_page_fingerprints: digest_set("seen_page_fingerprints")?,
+            terminal: value["terminal"]
+                .as_bool()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "terminal"))?,
+        })
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(DIGITS[(byte >> 4) as usize] as char);
+        output.push(DIGITS[(byte & 0x0f) as usize] as char);
+    }
+    output
+}
+
+fn decode_hex_32(value: &str) -> Option<[u8; 32]> {
+    if value.len() != 64 {
+        return None;
+    }
+    let mut output = [0; 32];
+    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+        output[index] = decode_nibble(pair[0])? << 4 | decode_nibble(pair[1])?;
+    }
+    Some(output)
+}
+
+fn decode_nibble(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        _ => None,
     }
 }
 

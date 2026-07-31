@@ -168,6 +168,47 @@ impl StagingRevision {
         })
     }
 
+    pub fn resume(data_root: impl AsRef<Path>, attempt_id: &str) -> Result<Self, StagingError> {
+        let data_root = data_root.as_ref().to_path_buf();
+        let attempt_path = data_root.join("staging").join(attempt_id);
+        let checkpoint = crate::CursorCheckpoint::load(&attempt_path.join("checkpoint.json"))?;
+        let mut metadata_paths = fs::read_dir(attempt_path.join("ticks/pages"))?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "yaml")
+            })
+            .collect::<Vec<_>>();
+        metadata_paths.sort();
+        let mut pages = metadata_paths
+            .iter()
+            .map(|path| {
+                serde_json::from_slice::<PageMetadata>(&fs::read(path)?)
+                    .map_err(|error| StagingError::Manifest(error.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if pages.len() < checkpoint.committed_pages() as usize {
+            return Err(StagingError::CheckpointPageMismatch);
+        }
+        pages.truncate(checkpoint.committed_pages() as usize);
+        let daily_path = attempt_path.join("instrument/daily.yaml");
+        let daily_instrument = if daily_path.exists() {
+            Some(
+                serde_json::from_slice(&fs::read(daily_path)?)
+                    .map_err(|error| StagingError::Manifest(error.to_string()))?,
+            )
+        } else {
+            None
+        };
+        Ok(Self {
+            data_root,
+            attempt_path,
+            pages,
+            daily_instrument,
+        })
+    }
+
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.attempt_path
@@ -178,6 +219,24 @@ impl StagingRevision {
             return Err(StagingError::NonContiguousPages);
         }
         let relative_path = PathBuf::from(format!("ticks/pages/{:08}.json.zst", page.ordinal()));
+        let metadata_path = self
+            .attempt_path
+            .join(format!("ticks/pages/{:08}.yaml", page.ordinal()));
+        if metadata_path.exists() {
+            let metadata: PageMetadata = serde_json::from_slice(&fs::read(&metadata_path)?)
+                .map_err(|error| StagingError::Manifest(error.to_string()))?;
+            if metadata.record_count != page.record_count()
+                || metadata.uncompressed_bytes != page.body().len() as u64
+                || metadata.uncompressed_sha256 != hex(&Sha256::digest(page.body()))
+            {
+                return Err(StagingError::InterruptedPageChanged);
+            }
+            self.pages.push(metadata.clone());
+            return Ok(StagedPage {
+                object: StagedObject { metadata },
+                receipt: page.commit_receipt(),
+            });
+        }
         let metadata = write_compressed_object(
             &self.attempt_path,
             &relative_path,
@@ -187,6 +246,9 @@ impl StagingRevision {
             page.query_identity(),
             page.body(),
         )?;
+        let metadata_bytes = serde_json::to_vec_pretty(&metadata)
+            .map_err(|error| StagingError::Manifest(error.to_string()))?;
+        write_atomic_file(&metadata_path, &metadata_bytes)?;
         self.pages.push(metadata.clone());
         Ok(StagedPage {
             object: StagedObject { metadata },
@@ -210,6 +272,12 @@ impl StagingRevision {
             query_identity,
             body,
         )?;
+        let metadata_bytes = serde_json::to_vec_pretty(&metadata)
+            .map_err(|error| StagingError::Manifest(error.to_string()))?;
+        write_atomic_file(
+            &self.attempt_path.join("instrument/daily.yaml"),
+            &metadata_bytes,
+        )?;
         self.daily_instrument = Some(metadata.clone());
         Ok(StagedObject { metadata })
     }
@@ -228,6 +296,22 @@ impl StagingRevision {
             self.pages,
             daily_instrument,
         )?;
+        for staging_only in [
+            self.attempt_path.join("checkpoint.json"),
+            self.attempt_path.join("instrument/daily.yaml"),
+        ] {
+            if staging_only.exists() {
+                fs::remove_file(staging_only)?;
+            }
+        }
+        for page in &manifest.pages {
+            let metadata = self
+                .attempt_path
+                .join(format!("ticks/pages/{:08}.yaml", page.ordinal));
+            if metadata.exists() {
+                fs::remove_file(metadata)?;
+            }
+        }
         let manifest_bytes = serde_json::to_vec_pretty(&manifest)
             .map_err(|error| StagingError::Manifest(error.to_string()))?;
         write_atomic_file(&self.attempt_path.join("manifest.yaml"), &manifest_bytes)?;
@@ -397,6 +481,8 @@ pub enum StagingError {
     CursorNotTerminal,
     DailyInstrumentMissing,
     RevisionAlreadyExists(String),
+    CheckpointPageMismatch,
+    InterruptedPageChanged,
     Manifest(String),
 }
 
