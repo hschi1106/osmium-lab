@@ -1,0 +1,5 @@
+status: blocked
+reason: missing committed TWSE 2330 tick fixture for shared trading date
+required_fixture: fixtures/teralion/twse/2330/2026-07-20
+available_companion: raw/teralion/taifex/2026-07-20/evidence/discovery/instrument-2330.json
+synthetic_substitution: forbidden
