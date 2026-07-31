@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use market_state::{
     MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
     StateField, StateTransitionError,
@@ -9,8 +11,9 @@ use market_types::{
     TradePrintKind, TradingDate, TwseQuoteAnnotations, Volume,
 };
 use replay_engine::{
-    EventStream, OrderingError, OrderingKey, ReplayClock, ReplayCore, ReplayError, ReplayPlan,
-    ReplayStreamBinding, ReplayStreamFactory, StableStreamDescriptorId, order_events,
+    EventStream, OrderingError, OrderingKey, ReplayClock, ReplayContextWindow, ReplayCore,
+    ReplayError, ReplayPlan, ReplayStreamBinding, ReplayStreamFactory, StableStreamDescriptorId,
+    order_events,
 };
 
 fn instrument() -> InstrumentId {
@@ -54,9 +57,20 @@ fn trade(price: &str, quantity: u64, kind: TradePrintKind) -> TradePrint {
 }
 
 fn quote(micros: i64, format: &str, cumulative: u64, sequence: Option<u64>) -> DomainEvent {
+    quote_for(&instrument(), date(), micros, format, cumulative, sequence)
+}
+
+fn quote_for(
+    instrument: &InstrumentId,
+    trading_date: TradingDate,
+    micros: i64,
+    format: &str,
+    cumulative: u64,
+    sequence: Option<u64>,
+) -> DomainEvent {
     DomainEvent::new(
-        instrument(),
-        date(),
+        instrument.clone(),
+        trading_date,
         SourceFormatId::new(format).unwrap(),
         MatchTime::from_unix_microseconds(micros),
         sequence,
@@ -125,6 +139,40 @@ impl ReplayStreamFactory for RecordingFactory {
     }
 }
 
+struct VecStream {
+    events: std::vec::IntoIter<DomainEvent>,
+}
+
+impl EventStream for VecStream {
+    type Error = std::io::Error;
+
+    fn next_event(&mut self) -> Result<Option<DomainEvent>, Self::Error> {
+        Ok(self.events.next())
+    }
+}
+
+#[derive(Default)]
+struct MergeFactory {
+    streams: BTreeMap<StableStreamDescriptorId, Vec<DomainEvent>>,
+    opened: Vec<StableStreamDescriptorId>,
+}
+
+impl ReplayStreamFactory for MergeFactory {
+    type Stream = VecStream;
+    type Error = std::io::Error;
+
+    fn open(&mut self, binding: &ReplayStreamBinding) -> Result<Self::Stream, Self::Error> {
+        self.opened.push(binding.descriptor_id());
+        Ok(VecStream {
+            events: self
+                .streams
+                .remove(&binding.descriptor_id())
+                .ok_or_else(|| std::io::Error::other("unexpected stream"))?
+                .into_iter(),
+        })
+    }
+}
+
 #[test]
 fn ordering_v2_places_twse_intermediate_before_final_and_retains_duplicates() {
     let intermediate = intermediate(10, 10);
@@ -177,6 +225,188 @@ fn frozen_replay_opens_only_the_selected_universe_stream() {
     core().replay_frozen(&plan, &mut factory).unwrap();
     assert_eq!(factory.opened, vec![selected]);
     assert!(!factory.opened.contains(&outside_universe_sentinel));
+}
+
+#[test]
+fn multi_stream_replay_merges_bounded_heads_and_ignores_sentinel() {
+    let second = InstrumentId::new(MarketId::Twse, Symbol::new("2317").unwrap());
+    let first_binding = ReplayStreamBinding::new(
+        StableStreamDescriptorId::from_bytes([1; 32]),
+        instrument(),
+        date(),
+        [2; 32],
+        [3; 32],
+    );
+    let second_binding = ReplayStreamBinding::new(
+        StableStreamDescriptorId::from_bytes([2; 32]),
+        second.clone(),
+        date(),
+        [4; 32],
+        [5; 32],
+    );
+    let sentinel = StableStreamDescriptorId::from_bytes([9; 32]);
+    let plan = ReplayPlan::new_multi([7; 32], vec![second_binding.clone(), first_binding.clone()])
+        .unwrap();
+    let mut factory = MergeFactory {
+        streams: BTreeMap::from([
+            (
+                first_binding.descriptor_id(),
+                vec![
+                    quote(10, "STOCK_SNAPSHOT", 10, None),
+                    quote(30, "STOCK_SNAPSHOT", 30, None),
+                ],
+            ),
+            (
+                second_binding.descriptor_id(),
+                vec![
+                    quote_for(&second, date(), 20, "STOCK_SNAPSHOT", 20, None),
+                    quote_for(&second, date(), 30, "STOCK_SNAPSHOT", 30, None),
+                ],
+            ),
+        ]),
+        opened: Vec::new(),
+    };
+    let mut core = ReplayCore::new_multi(
+        vec![
+            MarketState::new(instrument(), date()),
+            MarketState::new(second.clone(), date()),
+        ],
+        vec![
+            (instrument(), MarketStateReducer::twse_regular()),
+            (second.clone(), MarketStateReducer::twse_regular()),
+        ],
+        vec![(instrument(), context()), (second.clone(), context())],
+    )
+    .unwrap();
+    core.replay_frozen_multi(&plan, &mut factory).unwrap();
+    let completed = core.complete().unwrap();
+    assert_eq!(completed.summary().event_count(), 4);
+    assert_eq!(factory.opened.len(), 2);
+    assert!(!factory.opened.contains(&sentinel));
+    assert_eq!(completed.state(&instrument()).unwrap().state_version(), 2);
+    assert_eq!(completed.state(&second).unwrap().state_version(), 2);
+}
+
+#[test]
+fn multi_stream_binding_order_does_not_change_checksum() {
+    let second = InstrumentId::new(MarketId::Twse, Symbol::new("2317").unwrap());
+    let first_binding = ReplayStreamBinding::new(
+        StableStreamDescriptorId::from_bytes([1; 32]),
+        instrument(),
+        date(),
+        [2; 32],
+        [3; 32],
+    );
+    let second_binding = ReplayStreamBinding::new(
+        StableStreamDescriptorId::from_bytes([2; 32]),
+        second.clone(),
+        date(),
+        [4; 32],
+        [5; 32],
+    );
+    let make_core = || {
+        ReplayCore::new_multi(
+            vec![
+                MarketState::new(instrument(), date()),
+                MarketState::new(second.clone(), date()),
+            ],
+            vec![
+                (instrument(), MarketStateReducer::twse_regular()),
+                (second.clone(), MarketStateReducer::twse_regular()),
+            ],
+            vec![(instrument(), context()), (second.clone(), context())],
+        )
+        .unwrap()
+    };
+    let make_factory = || MergeFactory {
+        streams: BTreeMap::from([
+            (
+                first_binding.descriptor_id(),
+                vec![
+                    quote(10, "STOCK_SNAPSHOT", 10, None),
+                    quote(30, "STOCK_SNAPSHOT", 30, None),
+                ],
+            ),
+            (
+                second_binding.descriptor_id(),
+                vec![
+                    quote_for(&second, date(), 20, "STOCK_SNAPSHOT", 20, None),
+                    quote_for(&second, date(), 30, "STOCK_SNAPSHOT", 30, None),
+                ],
+            ),
+        ]),
+        opened: Vec::new(),
+    };
+    let mut first = make_core();
+    let mut first_factory = make_factory();
+    first
+        .replay_frozen_multi(
+            &ReplayPlan::new_multi([7; 32], vec![first_binding.clone(), second_binding.clone()])
+                .unwrap(),
+            &mut first_factory,
+        )
+        .unwrap();
+    let first = first.complete().unwrap();
+    let mut second_core = make_core();
+    let mut second_factory = make_factory();
+    second_core
+        .replay_frozen_multi(
+            &ReplayPlan::new_multi([7; 32], vec![second_binding, first_binding]).unwrap(),
+            &mut second_factory,
+        )
+        .unwrap();
+    let second_result = second_core.complete().unwrap();
+    assert_eq!(
+        first.summary().event_checksum(),
+        second_result.summary().event_checksum()
+    );
+    assert_eq!(
+        first.summary().final_state_checksum(),
+        second_result.summary().final_state_checksum()
+    );
+}
+
+#[test]
+fn context_schedule_resets_observable_state_at_segment_boundary() {
+    let after_hours = ReducerContext::new(
+        date(),
+        SessionSegmentId::new("after_hours").unwrap(),
+        SegmentBoundaryPolicy::ResetObservableFields,
+        1,
+    );
+    let regular = context();
+    let mut core = ReplayCore::new_multi_with_schedules(
+        vec![MarketState::new(instrument(), date())],
+        vec![(instrument(), MarketStateReducer::twse_regular())],
+        vec![(instrument(), regular.clone())],
+        vec![(
+            instrument(),
+            vec![
+                ReplayContextWindow::new(
+                    MatchTime::from_unix_microseconds(0),
+                    MatchTime::from_unix_microseconds(10),
+                    regular,
+                )
+                .unwrap(),
+                ReplayContextWindow::new(
+                    MatchTime::from_unix_microseconds(10),
+                    MatchTime::from_unix_microseconds(20),
+                    after_hours,
+                )
+                .unwrap(),
+            ],
+        )],
+    )
+    .unwrap();
+    core.replay(vec![
+        quote(5, "STOCK_SNAPSHOT", 10, None),
+        quote(15, "STOCK_SNAPSHOT", 1, None),
+    ])
+    .unwrap();
+    let completed = core.complete().unwrap();
+    let state = completed.state(&instrument()).unwrap();
+    assert_eq!(state.current_segment_id().unwrap().as_str(), "after_hours");
+    assert_eq!(state.cumulative_volume().known().unwrap().value(), 1);
 }
 
 #[test]
