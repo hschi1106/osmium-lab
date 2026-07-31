@@ -6,9 +6,10 @@ use market_state::{
 };
 use market_types::{
     BookLevel, BookSide, BookSideKind, BookSnapshot, CompleteBookSnapshot, DomainEvent, EventKind,
-    EventPayload, InstrumentId, MarketAnnotations, MarketId, MatchTime, Observation, Price,
-    Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol, TradeBatch, TradeOrder,
-    TradePrint, TradePrintKind, TradingDate, TwseQuoteAnnotations, UnknownValue, Volume,
+    EventPayload, IndicativeAuction, InstrumentId, MarketAnnotations, MarketId, MatchTime,
+    Observation, Price, Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol, TradeBatch,
+    TradeOrder, TradePrint, TradePrintKind, TradingDate, TwseQuoteAnnotations, UnknownValue,
+    Volume,
 };
 
 fn instrument(symbol: &str) -> InstrumentId {
@@ -338,6 +339,54 @@ fn book_snapshot_preserves_trade_and_volume_under_an_explicit_profile() {
         state.cumulative_volume(),
         StateField::Unavailable(UnavailableReason::Initial)
     ));
+}
+
+#[test]
+fn taifex_opening_indicative_is_timeline_without_trade_or_volume_state() {
+    let instrument = InstrumentId::new(MarketId::Taifex, Symbol::new("TXFH6").unwrap());
+    let trading_date = TradingDate::parse("2026-07-20").unwrap();
+    let event = DomainEvent::new(
+        instrument.clone(),
+        trading_date,
+        SourceFormatId::new("I022").unwrap(),
+        MatchTime::parse("2026-07-20T08:40:00+08:00").unwrap(),
+        None,
+        EventPayload::IndicativeOpeningAuction(
+            IndicativeAuction::new(
+                Observation::Set(Price::parse("43500").unwrap()),
+                Observation::Set(Quantity::new(3, QuantityUnit::Contract).unwrap()),
+                Observation::NoObservation,
+                Observation::NoObservation,
+                MarketAnnotations::None,
+            )
+            .unwrap(),
+        ),
+    );
+    let reducer = MarketStateReducer::taifex_futures();
+    let mut state = MarketState::new(instrument, trading_date);
+    let context = ReducerContext::new(
+        trading_date,
+        SessionSegmentId::new("regular").unwrap(),
+        SegmentBoundaryPolicy::Carry,
+        1,
+    );
+
+    let receipt = reducer.apply(&mut state, &event, &context).unwrap();
+
+    assert_eq!(receipt.new_version(), 1);
+    assert!(matches!(
+        state.book(),
+        StateField::Unavailable(UnavailableReason::Initial)
+    ));
+    assert!(matches!(
+        state.recent_trade(),
+        StateField::Unavailable(UnavailableReason::Initial)
+    ));
+    assert!(matches!(
+        state.cumulative_volume(),
+        StateField::Unavailable(UnavailableReason::Initial)
+    ));
+    assert!(state.last_event().is_some());
 }
 
 #[test]

@@ -67,11 +67,13 @@ M3 只增加：
 
 1. 三個 TAIFEX futures source／metadata／session profiles。
 2. TAIFEX `TradeBatch` 與完整五檔 `BookSnapshot` mapping。
-3. 跨日 `after_hours` 與 `regular` 歸屬同一 exchange trading date。
-4. TWSE 與 TAIFEX 多 stream bounded k-way merge。
-5. config／CLI 從固定單 partition 擴充為 explicit multi-instrument universe。
-6. futures-specific multiplier accounting 與缺漏 provenance failure。
-7. 實際 M3 dataset 的 throughput、I/O 與 peak-memory baseline。
+3. TAIFEX `I022` 開盤試算映射為 `IndicativeOpeningAuction`，且不宣稱存在 futures
+   `IndicativeClosingAuction`。
+4. 跨日 `after_hours` 與 `regular` 歸屬同一 exchange trading date。
+5. TWSE 與 TAIFEX 多 stream bounded k-way merge。
+6. config／CLI 從固定單 partition 擴充為 explicit multi-instrument universe。
+7. futures-specific multiplier accounting 與缺漏 provenance failure。
+8. 實際 M3 dataset 的 throughput、I/O 與 peak-memory baseline。
 
 不得為了 M3 重寫已通過的 M1／M2 goldens，除非 domain contract 確實變更且有獨立
 ADR、version bump 與 migration／rebuild policy。
@@ -152,6 +154,8 @@ multi-stream property tests，但不得把猜測 payload 當作 TAIFEX format ev
 - 三個 instruments 實際 observed 的 trade、trade batch 與完整五檔 snapshot
   formats。
 - `TradeBatch` 與 `BookSnapshot` domain events。
+- `I022` 的 `IndicativeOpeningAuction` domain event；`0/0` 保留為
+  `NoObservation`，不得當作 actual trade 或 fill evidence。
 - TAIFEX raw flags／status 的無損保存及 unknown warning。
 - TWSE `2330` 與三個 TAIFEX futures 的 explicit four-instrument universe。
 - 每 instrument/date/segment 的 source planning、sync、verify、cache build／reuse。
@@ -356,10 +360,13 @@ normalizer 必須：
 2. 以 exact decimal／integer 解析 price、quantity、volume 與 source counters。
 3. 拒絕缺少或無效 `match_time` 的 timeline record。
 4. 將已證實的成交 record 轉成 `TradeBatch`。
-5. 將已證實的完整五檔 record 轉成 `BookSnapshot`。
-6. 保留 source order、raw flags、format 及可用 source sequence。
-7. 將 `close`／`stats` 與 unknown format 明確分類，不猜測為 event。
-8. 產生帶 market、symbol、trading date、format 與 source context 的 stable error。
+5. 將 `I022` calculated opening record 轉成 `IndicativeOpeningAuction`；`0/0` 使用
+   `NoObservation`。
+6. 將已證實的完整五檔 record 轉成 `BookSnapshot`。
+7. 保留 source order、raw flags、format 及可用 source sequence。
+8. 將 `close`／`stats` 與 unknown format 明確分類；I070／I072 不映射為
+   `IndicativeClosingAuction`。
+9. 產生帶 market、symbol、trading date、format 與 source context 的 stable error。
 
 ### 8.2 `BookSnapshot`
 

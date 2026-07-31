@@ -1131,6 +1131,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "taifex-normalizer"
+version = "0.1.0"
+dependencies = [
+ "market-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

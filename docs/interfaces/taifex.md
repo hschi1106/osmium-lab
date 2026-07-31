@@ -19,7 +19,7 @@ Rust type definition；Teralion JSON 與 domain event 必須維持在不同邊�
 格式名稱與官方 message semantics 依
 [TAIFEX Market Data Transmission Manual v2.31.0S](https://www.taifex.com.tw/file/taifex/eng/eng11/TechDocs/19/Market_Data_Transmission_Manual_v2.31.0S.pdf)。
 
-適用 mapping：`TeralionTaifexFutures`，`mapping_version = 1`。
+適用 mapping：`TeralionTaifexFutures`，`mapping_version = 2`。
 
 ## 2. 邊界與 invariant
 
@@ -48,7 +48,8 @@ adapter／normalizer 不負責：
 - 以 `received_at` 排序、推算 latency 或代替 `match_time`。
 - 以檔案列號、page index、cursor 或 ingestion order 補造 `source_sequence`。
 - 由 book 差分推論委託、取消、成交方向、queue position 或 hidden liquidity。
-- 由 `I021`／`I022`／`I023`／`I030`／`I070`／`I072` 製造統計或 indicative event。
+- 由 `I021`／`I023`／`I030`／`I070`／`I072` 製造統計 event；`I022` 明確映射為
+  opening indicative event。
 - 以 TAIFEX wire type 讓 strategy、replayer、MarketState 或 simulation 直接依賴。
 
 TAIFEX 的 `trading_date` 不是 wire field；它由已 materialize 的 source partition 與
@@ -89,7 +90,7 @@ I020/I022 message 內的 packet/display 語意，不是全域或商品序號。�
 | --- | ---: | --- | --- |
 | `trade` / `I020` | 10,229 | matched prices and quantities | **timeline：`TradeBatch`** |
 | `trade` / `I021` | 260 | intra-day high/low | `KnownSkipped(IntradayHighLow)` |
-| `trade` / `I022` | 299 | calculated opening price and volume | `KnownSkipped(IndicativeOpeningAuction)` |
+| `trade` / `I022` | 299 | calculated opening price and volume | **timeline：`IndicativeOpeningAuction`** |
 | `trade` / `I023` | 15 | opening price and quantity | `KnownSkipped(OpeningReference)` |
 | `stats` / `I030` | 4,914 | sum of order data | `KnownSkipped(OrderStatistics)` |
 | `close` / `I070` | 8 | closing market data | `KnownSkipped(ClosingStatistics)` |
@@ -254,33 +255,44 @@ I080／I082 同一 source item 只有 book；不得從相鄰 I020 配對成交�
 volume 或合成 QuoteSnapshot。若未來某一 wire shape 同時包含不可分割的 book 與實際
 成交，必須先更新 event schema，不能在 normalizer 內任意拆成兩個時間點。
 
-## 7. Known non-timeline formats
+## 7. I022：開盤試算 `IndicativeOpeningAuction`
 
-這些 formats 的 raw record 必須可 verify、計數與 inspect，但第一版不產生 domain event。
+`I022` 是 TAIFEX 集合競價的 calculated opening price／volume observation，不是已成交
+的 `TradeBatch`。每一個 accepted `I022` source item 產生一個 atomic
+`IndicativeOpeningAuction` event：
+
+- `trades` 必須恰有一筆；price 與 quantity 必須同時為 `0/0` 或同時為正值。
+- `0/0` 映射為 `price=NoObservation`、`quantity=NoObservation`。
+- 正值映射為 `price=Set(Price)`、`quantity=Set(Quantity<Contract>)`。
+- TAIFEX fixture 沒有 `book` 或 cumulative volume 可用，因此兩者保留為
+  `NoObservation`；I022 永遠不會更新實際成交或成交量狀態，也不能產生 fill evidence。
+- I022 不建立 `IndicativeClosingAuction`。官方 closing/stat records `I070`／`I072`
+  在本 mapping 仍是 `KnownSkipped(ClosingStatistics)`。
+
+## 8. Known non-timeline formats
+
+這些 formats 的 raw record 必須可 verify、計數與 inspect，但本 mapping 不產生 domain event。
 `received_at`、`show_time`、close/stat time 或 open reference 都不能被用作 replay
 clock。
 
 | Format | Observed fields | Validation／preservation | Skip reason |
 | --- | --- | --- | --- |
 | `I021` | `day_high`、`day_low`、`show_time` | prices exact；`show_time` 只保存原始 `HH:MM:SS...` text，不補 date/offset | `IntradayHighLow` |
-| `I022` | `trades`（fixture 恰一筆）、`aggregate`、`first_packet` | price/quantity 必須同時為 `0/0` 或同時 positive；`0/0` 表示沒有試算成交價，不是 price zero | `IndicativeOpeningAuction` |
 | `I023` | `open_price`、`open_quantity` | exact price／integer quantity；同一開盤可重複傳送，不得與 I020 合併或重複計成交 | `OpeningReference` |
 | `I030` | `buy_order`、`buy_quantity`、`sell_order`、`sell_quantity` | non-negative integer；數量單位為 contracts；不得當成 book 或 trade volume | `OrderStatistics` |
 | `I070` | `prices[]`、`stats[]`、nullable `settlement`／`open_interest` | arrays、null 與 numeric lexeme 原樣保存；不產生 close event | `ClosingStatistics` |
 | `I072` | I070 fields plus `block_trade_qnty` | non-negative contract quantity；不產生 close event | `ClosingStatistics` |
 
-I022 是 call-auction calculated observation，不是已成交的 `TradeBatch`；I023 是
-opening reference，且 fixture 中同一 open match time 出現三次。若未來需要把 indicative
-資料提供給策略，應新增明確的 domain observation/event kind 與 fill policy；不能把
-它們偷偷標成 `TradePrintKind::Regular`。
+I023 是 opening reference，且 fixture 中同一 open match time 出現三次；它不會與 I020
+合併，也不會重複計成交。
 
 I070／I072 的 settlement、open interest、close price 與 order counters 暫不進
 MarketState。若未來需要 settlement/accounting input，必須先定義 timing、trading
 period semantics、event schema 與 cache compatibility。
 
-## 8. Status、counter、quantity 與 precision rules
+## 9. Status、counter、quantity 與 precision rules
 
-### 8.1 Status and raw source values
+### 9.1 Status and raw source values
 
 I020／I022 `aggregate.status_code` 依官方 message definition：`0` 為 normal，
 `1..60` 為 abnormal duration，`98` 表示 abnormal removed，`99` 表示超過 60 分鐘。
@@ -290,7 +302,7 @@ I020／I022 `aggregate.status_code` 依官方 message definition：`0` 為 norma
 I080 `derived` 是否存在及其四個欄位也是 source fact。未知額外 fields 一律留在 raw
 source，並在 normalizer report 計數；generic adapter 不刪欄位、不重命名。
 
-### 8.2 Quantity units
+### 9.2 Quantity units
 
 M3 三個 futures instruments 的交易價量、五檔量、I020 aggregate quantity、I022／I023
 opening quantity、I030 order quantity、I070／I072 statistics quantity 都以
@@ -300,7 +312,7 @@ explicit economics provenance 綁定的 accounting input。
 `match_buy_cnt`／`match_sell_cnt` 是 order counts，不是 contracts；不能與 quantity
 相加或當成 trade count。I020 `trades[].quantity` 是 batch 內的 contracts。
 
-### 8.3 Numeric handling
+### 9.3 Numeric handling
 
 - JSON number 的原始 lexical representation 必須可無損轉成 domain Decimal；禁止先經
   binary floating-point。
@@ -311,10 +323,10 @@ explicit economics provenance 綁定的 accounting input。
 - `null` 只在 I070/I072 的 observed nullable fields 依 wire shape 保留；不得把 null
   改成 zero 或 unknown event value。
 
-## 9. Atomicity and ordering
+## 10. Atomicity and ordering
 
-一個 accepted I020、I080 或 I082 source item 產生一個、且只產生一個 atomic domain
-event；一個 I021/I022/I023/I030/I070/I072 item 產生一個 `KnownSkipped` source
+一個 accepted I020、I022、I080 或 I082 source item 產生一個、且只產生一個 atomic domain
+event；一個 I021/I023/I030/I070/I072 item 產生一個 `KnownSkipped` source
 diagnostic，不產生 event。
 
 - I020 batch 內的 trades 不拆成多個 event。
@@ -322,11 +334,11 @@ diagnostic，不產生 event。
 - 不依 input order 將 I020 與同 `match_time` 的 I080/I082 配對。
 - accepted event 先更新該 instrument 的 state，再呼叫 strategy；不同 instrument 的
   state 不互相補值。
-- 全域排序第一鍵是 normalized `match_time`，後續使用 ADR-0001 ordering version 2。
+- 全域排序第一鍵是 normalized `match_time`，後續使用 ADR-0001 ordering version 3。
 - `received_at`、source page、cursor、JSON line number 與 discovery order 不參與
   replay ordering。
 
-## 10. Strict／ExplicitDegraded errors
+## 11. Strict／ExplicitDegraded errors
 
 Strict mode 至少必須拒絕：
 
@@ -343,7 +355,7 @@ ExplicitDegraded 可以逐筆略過已隔離的 known unsupported/invalid scope�
 record number、instrument、format、match_time、reason 與 completion quality；不得把
 invalid record 改成 zero、沿用前一個 book 或以 `received_at` 補時間。
 
-## 11. Normalizer test catalog
+## 12. Normalizer test catalog
 
 下列測試以 committed fixtures 為 positive evidence，另以 synthetic domain fixture
 覆蓋 source 未出現的 negative shape；測試不得修改已提交的 raw bytes。
@@ -355,21 +367,21 @@ invalid record 改成 zero、沿用前一個 book 或以 `received_at` 補時間
 | `TAIFEX-W03` | I020 single and multi-trade | 一筆 atomic `TradeBatch`；保留 source order、Contract unit、aggregate volume |
 | `TAIFEX-W04` | I020 aggregate semantics | batch sum 與 `match_total_qty` 不相等的 fixture accepted；不得重算或覆寫 aggregate |
 | `TAIFEX-W05` | I020 continuation | `first_packet=false`／missing 在目前 source boundary 以 stable unsupported error 拒絕 |
-| `TAIFEX-W06` | I022 calculated opening | `0/0` skip；non-zero indicative record 仍 skip，不產生 regular trade |
+| `TAIFEX-W06` | I022 calculated opening | `0/0` 產生 no-observation opening event；non-zero 產生 indicative event；兩者都不是 regular trade |
 | `TAIFEX-W07` | I023 repeated opening reference | 同 match time 的三次 raw record 都可保存，但不重複產生 trade |
 | `TAIFEX-W08` | I080 complete book | 五檔 bid/ask、strict price order、derived zero/non-zero side 全部可驗證 |
 | `TAIFEX-W09` | I082 WarmUp reference book | 五檔映射為 `BookSnapshot`，source format 保持 I082，fill eligibility 由 session policy 限制 |
 | `TAIFEX-W10` | malformed book | >5 levels、order reversal、hole、zero mismatch、non-positive level rejected |
-| `TAIFEX-W11` | non-timeline records | I021/I022/I023/I030/I070/I072 只產生 KnownSkipped 與 counts |
+| `TAIFEX-W11` | non-timeline records | I021/I023/I030/I070/I072 只產生 KnownSkipped 與 counts；I022 不在 skip set |
 | `TAIFEX-W12` | close/stat payload | nullable fields、array shape、raw values 不進 timeline 且不被當成空頁 |
 | `TAIFEX-W13` | status/counter preservation | known status accepted；unknown status warning；raw counters 不遺失 |
 | `TAIFEX-W14` | source sequence boundary | `source_sequence=None`；不因 line/page/received_at 改變 event order |
 | `TAIFEX-W15` | cross-midnight partition | session/calendar layer 驗證 `2026-07-17`/`2026-07-18` ticks 仍屬 `2026-07-20` trading date |
 | `TAIFEX-W16` | deterministic normalization | shuffled input 產生相同 accepted events、skip counts、warnings 與 canonical bytes |
 
-## 12. Phase boundary
+## 13. Phase boundary
 
-本文件完成 M3 Phase 2 的 interface mapping 與 normalizer test catalog；它不宣稱
-TAIFEX parser、MarketState extension、cache builder 或 multi-stream replay 已完成。
-下一步必須依本 contract 實作 typed wire parser、TAIFEX annotations/schema dependency
-與 strict error tests，再進入 session/calendar implementation。
+本文件完成 M3 Phase 2 的 interface mapping 與 normalizer test catalog；目前已交付
+`taifex-normalizer` 的 I020／I022／I080／I082 mapping 與 TAIFEX MarketState profile。
+cache builder、multi-stream replay、session/calendar 與 TAIFEX-specific annotations 仍
+屬後續 M3 work，不得把 I022 重新降級成 skip 或把 I070／I072 猜成 closing auction。
