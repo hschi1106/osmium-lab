@@ -16,8 +16,9 @@ pub const EXECUTION_SIM_VERSION: u16 = 1;
 pub const FILL_MODEL_VERSION: u16 = 1;
 
 pub use accounting::{
-    ACCOUNTING_VERSION, AccountingError, ChargeModel, ChargeSides, InstrumentEconomics, Ledger,
-    PerformanceSummary, RoundingPolicy,
+    ACCOUNTING_VERSION, AccountingError, AccountingModel, ChargeModel, ChargeSides,
+    InstrumentEconomics, InstrumentLedgerConfig, InstrumentPerformance, Ledger, MultiLedger,
+    MultiPerformanceSummary, PerformanceSummary, RoundingPolicy,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -519,6 +520,16 @@ impl MultiSimulator {
     #[must_use]
     pub fn simulator(&self, instrument: &InstrumentId) -> Option<&Simulator> {
         self.simulators.get(instrument)
+    }
+
+    #[must_use]
+    pub fn fills_for(&self, instrument: &InstrumentId) -> Option<&[FillRecord]> {
+        self.simulators.get(instrument).map(Simulator::fills)
+    }
+
+    #[must_use]
+    pub fn orders_for(&self, instrument: &InstrumentId) -> Option<&[SimOrder]> {
+        self.simulators.get(instrument).map(Simulator::orders)
     }
 
     pub fn instruments(&self) -> impl Iterator<Item = &InstrumentId> {

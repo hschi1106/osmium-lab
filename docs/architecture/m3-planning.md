@@ -22,9 +22,12 @@ plan；source 與 cache 尚未完成時，offline execution 會明確回報缺�
 
 M3 CLI 的 `backtest` 現在會在 bounded multi-stream replay 上執行 linked
 multi-instrument strategy，並以 instrument-isolated simulator 產生 subsequent-event
-orders/fills。發布的 `run-manifest.yaml` 會標示 `strategy_simulated`，`inspect` 會驗證
-replay、strategy output、orders 與 fills 的 checksum。
+orders/fills。step 4 會依商品套用明確的 `EquityV1` 或 `FuturesV1` accounting model：
+futures 只在平倉時以 `price difference × quantity × multiplier` 反映現金與 realized
+P&L，所有商品都會執行 exact decimal reconciliation 與 final marking。
 
-futures-specific accounting、multiplier-driven P&L 與 per-instrument reconciliation
-仍待後續 M3 accounting work；因此 `strategy_simulated` artifact 會保留
-`accounting_pending` warning，不宣稱已完成 P&L backtest。
+發布的 `run-manifest.yaml` 會標示 `successful`／`full`，並包含 versioned
+`ledger.bin`、`positions.yaml`、`performance.yaml`、checksums 與 per-instrument
+economics provenance。`inspect` 會驗證 replay、strategy output、orders、fills 與
+accounting artifacts 的 checksum；若 open position 沒有合法 final mark，backtest
+會在發布前失敗，不產生 successful performance artifact。
