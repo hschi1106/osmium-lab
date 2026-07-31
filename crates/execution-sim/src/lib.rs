@@ -1,3 +1,5 @@
+mod accounting;
+
 use std::{collections::BTreeSet, error::Error, fmt};
 
 use market_types::{
@@ -11,6 +13,11 @@ use strategy_api::{
 
 pub const EXECUTION_SIM_VERSION: u16 = 1;
 pub const FILL_MODEL_VERSION: u16 = 1;
+
+pub use accounting::{
+    ACCOUNTING_VERSION, AccountingError, ChargeModel, ChargeSides, InstrumentEconomics, Ledger,
+    PerformanceSummary, RoundingPolicy,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvidenceMode {
