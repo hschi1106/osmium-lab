@@ -83,7 +83,7 @@ pub struct SourceManifest {
 }
 
 impl SourceManifest {
-    fn build(
+    pub(crate) fn build(
         query_identity: SanitizedQueryIdentity,
         terminal_cursor_reached: bool,
         mut pages: Vec<PageMetadata>,
