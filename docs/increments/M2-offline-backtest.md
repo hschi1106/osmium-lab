@@ -81,7 +81,7 @@ M2 acceptance 開始前必須滿足：
 - Teralion coverage、symbol range、ticks、daily instrument 與 opaque cursor。
 - `STOCK_SNAPSHOT`、`STOCK_REALTIME` 及 M1 已確認的 composition／mapping。
 - source partition 的 missing、building、complete、incomplete、corrupt 狀態。
-- 已驗證來源資料的 immutable revision 與 provenance。
+- 已驗證來源資料的 immutable revision、per-page zstd storage與 provenance。
 - 依 source checksum 與 versions 綁定、可刪除重建的 replay cache。
 - 一個 compile-time linked Rust strategy instance。
 - `Market` 與 `Limit` order intent。
@@ -279,16 +279,21 @@ published source manifest 至少保存：
 - partition identity 與 revision。
 - sanitized endpoint／query identity。
 - requested download windows。
-- source formats、record counts、byte counts。
+- source formats、record counts、uncompressed/compressed byte counts。
 - page identities、page count 與 terminal cursor reached。
-- payload checksum algorithm/version 及 checksum。
-- daily instrument payload identity/checksum。
+- 每個 ticks page及 daily instrument使用 `ZstdPerPageV1`：zstd level 3、frame
+  checksum、無 dictionary，且 data root不保存 uncompressed `.json` payload。
+- uncompressed semantic及 compressed storage checksum algorithms/versions與
+  checksums。
+- daily instrument payload identity及雙 checksum。
 - calendar、session-window policy 及 source schema identity。
 - acquisition／verification tool versions。
 - completeness state 與 reasons。
 - atomic publish identity。
 
 full cursor、authorization header、cookie、signed URL 或 API key 不得保存。
+source revision identity以解壓後 exact response bytes計算；compression level、
+implementation/version及 compressed output不得改變 semantic source identity。
 
 ### 8.3 State 與 atomic publish
 
@@ -751,17 +756,17 @@ query。
 
 M2 建立 reference performance report，但在量測前不武斷制定硬門檻。至少記錄：
 
-- source sync bytes/pages/records。
+- source sync uncompressed/compressed bytes、ratio、pages及 records。
 - cache build elapsed time 與 output bytes。
 - cache-hit backtest elapsed time。
 - events per second。
 - peak resident memory；若量測工具可用。
 - HTTP request count。
-- source JSON parse count。
+- source zstd object decode count及 JSON parse count。
 - opened stream count。
 
-cache-hit backtest 必須證明不重新下載且不重新解析全部 source JSON。正式 replay
-working set 不得與完整 event count 線性成長。
+cache-hit backtest 必須證明不重新下載、不解壓 source zstd object且不重新解析全部
+source JSON。正式 replay working set不得與完整 event count線性成長。
 
 ## 19. Acceptance scenarios
 
@@ -772,7 +777,7 @@ evidence：
 | --- | --- | --- |
 | `M2-AC-01` | 以 acceptance config 執行 `plan` | 正確顯示 download/reuse、verify、cache、universe、models 與 network requirement，無 market-data write |
 | `M2-AC-02` | Teralion query 超過一頁 | opaque cursor 走到 terminal，無截斷、循環或 query drift |
-| `M2-AC-03` | sync 中斷、retry exhausted 或 partial write | partition 維持 building/incomplete，未發布為 complete；重跑結果與 uninterrupted run 相同 |
+| `M2-AC-03` | sync 中斷、retry exhausted、partial zstd frame 或 partial write | partition 維持 building/incomplete，未發布為 complete；重跑的 uncompressed semantics 與 uninterrupted run 相同 |
 | `M2-AC-04` | 相同 identity 第二次 sync | reuse complete source，HTTP request count 為 zero；不同內容不靜默覆寫 |
 | `M2-AC-05` | verify valid／missing／incomplete／corrupt partitions | 五種狀態與修復建議正確；Strict 拒絕非 complete |
 | `M2-AC-06` | cache hit、刪除後 rebuild、version/checksum mismatch | valid cache reuse；只用 local source deterministic rebuild；stale/corrupt cache 不進 replay |
@@ -825,6 +830,8 @@ M2 只有在下列條件全部成立時完成：
 - data-sync、execution-sim、local-data、CLI 及 M2 verification contracts 已 review。
 - authorized reference source 由 Teralion 完整 cursor sync 並 atomic publish。
 - source manifest 可重算 checksum、counts、query 與 provenance。
+- source只保存 per-page/daily-instrument `.json.zst`，雙 checksum及 streaming decode
+  已驗證，沒有 uncompressed JSON source file。
 - 第二次 sync 對 complete source 發出零 HTTP requests。
 - cache 可 reuse、可刪除、可離線重建，且不修改或重新下載 source。
 - replay/backtest 只開啟 declared universe streams。
@@ -847,7 +854,8 @@ simulation 與 CLI：
 1. 完成 data-sync、local-data、execution-sim、CLI M2 design 與 verification plan。
 2. 定義 versioned config、effective plan、partition identity 及 completeness types。
 3. 實作 Teralion client boundary、sanitized request identity 與 cursor state machine。
-4. 實作 staging、manifest、checksum、atomic source publish 及 immutable revision。
+4. 實作 per-page zstd staging、雙 checksum、manifest、atomic source publish及
+   immutable revision。
 5. 實作 verify、state classification、reuse／repair planning 與 second-sync no-op。
 6. 定義 replay cache descriptor、canonical payload、builder、reader、invalidation。
 7. 將 M1 in-memory replay 接到 bounded cache stream 與 frozen ReplayPlan。

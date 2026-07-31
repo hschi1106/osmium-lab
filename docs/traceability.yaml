@@ -252,21 +252,102 @@ design_trace:
       - OPS-02
       - NFR-01
       - NFR-03
+  - path: docs/design/data-sync.md
+    status: complete
+    design_versions:
+      data_sync: 1
+      source_manifest: 1
+      source_revision: 1
+      source_compression_policy: ZstdPerPageV1
+      replay_cache_format: 1
+      cache_descriptor: 1
+    requirements:
+      - DATA-01
+      - DATA-02
+      - DATA-03
+      - DATA-04
+      - DATA-05
+      - REPLAY-05
+      - REPLAY-06
+      - OPS-01
+      - OPS-02
+      - NFR-01
+      - NFR-02
+      - NFR-03
+  - path: docs/design/execution-sim.md
+    status: complete
+    design_versions:
+      execution_sim: 1
+      order_schema: 1
+      fill_model: 1
+      ledger_schema: 1
+      position_accounting: 1
+      result_schema: 1
+    requirements:
+      - REPLAY-04
+      - STRAT-01
+      - SIM-01
+      - SIM-02
+      - OPS-02
+      - NFR-01
+      - NFR-03
+
+operations_trace:
+  - path: docs/operations/local-data.md
+    status: complete
+    contract_version: 1
+    scope: M2
+    requirements:
+      - DATA-01
+      - DATA-02
+      - DATA-03
+      - DATA-04
+      - OPS-01
+      - OPS-02
+      - NFR-02
+      - NFR-03
+  - path: docs/operations/cli.md
+    status: complete
+    contract_version: 2
+    scope: M1 + M2
+    requirements:
+      - DATA-01
+      - DATA-02
+      - DATA-03
+      - DATA-04
+      - STRAT-01
+      - SIM-01
+      - SIM-02
+      - OPS-01
+      - OPS-02
+      - NFR-01
+      - NFR-02
+      - NFR-03
 
 verification_trace:
   - path: docs/verification/plan.md
     status: complete
-    verification_plan_version: 1
-    scope: M1
+    verification_plan_version: 2
+    scope: M1 + M2
     requirements:
+      - DATA-01
+      - DATA-02
+      - DATA-03
+      - DATA-04
+      - DATA-05
       - REPLAY-01
       - REPLAY-02
       - REPLAY-03
       - REPLAY-04
+      - REPLAY-05
       - REPLAY-06
       - STRAT-01
+      - SIM-01
+      - SIM-02
+      - OPS-01
       - OPS-02
       - NFR-01
+      - NFR-02
       - NFR-03
   - path: docs/verification/acceptance.md
     status: complete
