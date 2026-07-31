@@ -460,7 +460,8 @@ EOF
 
 # Source/cache and repeated run directories are derived and intentionally not committed.
 # The report, test logs and canonical artifact checksums are the durable evidence.
-rm -rf "$staging/data" "$staging/rebuild-data" "$staging/runs"
+rm -rf "$staging/data" "$staging/rebuild-data" "$staging/full-data" \
+    "$staging/full-rebuild-data" "$staging/runs"
 
 mv "$staging" "$output_path"
 trap - EXIT HUP INT TERM
