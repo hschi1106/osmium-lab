@@ -3,7 +3,7 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-trading_date=2026-07-28
+trading_date=2026-07-20
 destination=${1:-"$root/raw/teralion/taifex/$trading_date/evidence"}
 staging="$destination.staging"
 base_url=${TERALION_BASE_URL:-https://app.teraliontech.com}
@@ -226,17 +226,17 @@ fetch_partition() {
     echo "$symbol $segment: $count records in $page_number pages"
 }
 
-# Trading date 2026-07-28 follows the Monday 2026-07-27 after-hours session.
+# Trading date 2026-07-20 follows the Friday 2026-07-17 after-hours session.
 fetch_partition TXFH6 after_hours \
-    2026-07-27T14:55:00+08:00 2026-07-28T05:05:00+08:00
+    2026-07-17T14:55:00+08:00 2026-07-18T05:05:00+08:00
 fetch_partition TXFH6 regular \
-    2026-07-28T08:40:00+08:00 2026-07-28T13:50:00+08:00
+    2026-07-20T08:40:00+08:00 2026-07-20T13:50:00+08:00
 fetch_partition CDFH6 after_hours \
-    2026-07-27T17:20:00+08:00 2026-07-28T05:05:00+08:00
+    2026-07-17T17:20:00+08:00 2026-07-18T05:05:00+08:00
 fetch_partition CDFH6 regular \
-    2026-07-28T08:40:00+08:00 2026-07-28T13:50:00+08:00
+    2026-07-20T08:40:00+08:00 2026-07-20T13:50:00+08:00
 fetch_partition CAFH6 regular \
-    2026-07-28T08:40:00+08:00 2026-07-28T13:50:00+08:00
+    2026-07-20T08:40:00+08:00 2026-07-20T13:50:00+08:00
 
 (
     cd "$staging"
