@@ -1,6 +1,7 @@
 mod context;
 mod example;
 mod identity;
+mod orders;
 mod output;
 mod runner;
 mod strategy;
@@ -14,6 +15,10 @@ pub use example::ExampleStrategy;
 pub use identity::{
     BinaryIdentity, CanonicalParamsChecksum, DeclarationError, StrategyDeclaration,
     StrategyIdentity,
+};
+pub use orders::{
+    CancellationReason, ORDER_INTENT_VERSION, OrderFeedback, OrderId, OrderIntent,
+    OrderIntentError, OrderSide, OrderType, RejectionReason, StrategyFeedbackContext, TimeInForce,
 };
 pub use output::{
     CANONICAL_STRATEGY_OUTPUT_VERSION, IndicatorValue, StrategyOutput, StrategyOutputChecksum,

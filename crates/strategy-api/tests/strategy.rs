@@ -9,10 +9,10 @@ use market_types::{
 use replay_engine::ReplayCore;
 use strategy_api::{
     BinaryIdentity, CanonicalParamsChecksum, ExampleStrategy, IndicatorValue, MatchingState,
-    NewOrderEntry, OrderBlockReason, OrderRestrictionReason, SessionKind, SessionPhase,
-    SessionSegment, Strategy, StrategyDeclaration, StrategyEventContext, StrategyExecutionError,
-    StrategyIdentity, StrategyOutputRecord, StrategyOutputSink, StrategyRunErrorCategory,
-    run_strategy,
+    NewOrderEntry, OrderBlockReason, OrderIntent, OrderRestrictionReason, OrderSide, OrderType,
+    SessionKind, SessionPhase, SessionSegment, Strategy, StrategyDeclaration, StrategyEventContext,
+    StrategyExecutionError, StrategyIdentity, StrategyOutputRecord, StrategyOutputSink,
+    StrategyRunErrorCategory, run_strategy,
 };
 
 fn instrument() -> InstrumentId {
@@ -289,7 +289,12 @@ impl Strategy for FailingStrategy {
             FailureMode::Error => Err(StrategyExecutionError::new("expected callback error")),
             FailureMode::Panic => panic!("expected test panic"),
             FailureMode::Capability => {
-                output.emit_order_intent()?;
+                output.emit_order_intent(OrderIntent::new(
+                    instrument(),
+                    OrderSide::Buy,
+                    Quantity::new(1, QuantityUnit::TradingUnit).unwrap(),
+                    OrderType::Market,
+                ))?;
                 Ok(())
             }
         }

@@ -5,8 +5,8 @@ use market_types::DomainEvent;
 use replay_engine::{EventOccurrence, ReplayClock};
 
 use crate::{
-    CanonicalParamsChecksum, SessionCallbackContext, StrategyDeclaration, StrategyIdentity,
-    StrategyOutputEncodingError, StrategyOutputSink, TradingContext,
+    CanonicalParamsChecksum, SessionCallbackContext, StrategyDeclaration, StrategyFeedbackContext,
+    StrategyIdentity, StrategyOutputEncodingError, StrategyOutputSink, TradingContext,
 };
 
 pub struct StrategyInitializationContext<'a> {
@@ -139,6 +139,14 @@ pub trait Strategy {
         output: &mut StrategyOutputSink,
     ) -> Result<(), StrategyExecutionError>;
 
+    fn on_feedback(
+        &mut self,
+        _context: StrategyFeedbackContext<'_>,
+        _output: &mut StrategyOutputSink,
+    ) -> Result<(), StrategyExecutionError> {
+        Ok(())
+    }
+
     fn finalize(
         &mut self,
         _context: &StrategyFinalizeContext<'_>,
@@ -204,14 +212,17 @@ impl fmt::Display for CapabilityError {
 
 impl Error for CapabilityError {}
 
-impl StrategyOutputSink {
-    pub fn emit_order_intent(&mut self) -> Result<(), CapabilityError> {
-        Err(CapabilityError::OrderIntentUnavailableInM1)
+impl From<CapabilityError> for StrategyExecutionError {
+    fn from(error: CapabilityError) -> Self {
+        Self {
+            message: error.to_string().into_boxed_str(),
+            capability_unavailable: true,
+        }
     }
 }
 
-impl From<CapabilityError> for StrategyExecutionError {
-    fn from(error: CapabilityError) -> Self {
+impl From<crate::OrderIntentError> for StrategyExecutionError {
+    fn from(error: crate::OrderIntentError) -> Self {
         Self {
             message: error.to_string().into_boxed_str(),
             capability_unavailable: true,
