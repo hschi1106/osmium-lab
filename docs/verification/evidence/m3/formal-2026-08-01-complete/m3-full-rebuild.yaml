@@ -1,0 +1,80 @@
+config_version: 2
+data:
+  source: teralion
+  data_root: /Users/hschi1106/Documents/osmium-lab/docs/verification/evidence/m3/.formal-2026-08-01-complete.staging.99969/full-rebuild-data
+  source_policy: strict
+  cache_policy: reuse_or_rebuild
+universe:
+  trading_dates: ["2026-07-20"]
+  instruments:
+    - market: twse
+      symbol: "2330"
+      session_kinds: [regular]
+    - market: taifex
+      symbol: "TXFH6"
+      session_kinds: [after_hours, regular]
+    - market: taifex
+      symbol: "CDFH6"
+      session_kinds: [after_hours, regular]
+    - market: taifex
+      symbol: "CAFH6"
+      session_kinds: [regular]
+strategy:
+  id: acceptance.m3-multi-market
+  version: "1"
+  parameters: {}
+replay:
+  data_policy: strict
+simulation:
+  fill: { evidence: top_of_book, quantity: observed }
+  allocation: acceptance_sequence
+  slippage: { model: adverse_fixed_delta, delta: "0" }
+  fee:
+    model: configured_rate
+    rate: "0"
+    applicable_sides: [buy, sell]
+    minimum: "0"
+    precision: 0
+    rounding: half_up
+    provenance: "M3 planning fixture"
+  tax:
+    model: configured_rate
+    rate: "0"
+    applicable_sides: [sell]
+    minimum: "0"
+    precision: 0
+    rounding: down
+    provenance: "M3 planning fixture"
+  initial_cash: { currency: TWD, amount: "10000000" }
+  position_accounting: average_cost_v1
+  marking: { model: last_observable_mark_v1, allow_midpoint_fallback: false }
+instrument_economics:
+  - market: twse
+    symbol: "2330"
+    quantity_unit: trading_unit
+    units_per_trading_unit: 1000
+    currency: TWD
+    multiplier: "1"
+    provenance: "M3 TWSE planning fixture"
+  - market: taifex
+    symbol: "TXFH6"
+    quantity_unit: contract
+    units_per_trading_unit: 1
+    currency: TWD
+    multiplier: "200"
+    provenance: "M3 TAIFEX planning fixture"
+  - market: taifex
+    symbol: "CDFH6"
+    quantity_unit: contract
+    units_per_trading_unit: 1
+    currency: TWD
+    multiplier: "200"
+    provenance: "M3 TAIFEX planning fixture"
+  - market: taifex
+    symbol: "CAFH6"
+    quantity_unit: contract
+    units_per_trading_unit: 1
+    currency: TWD
+    multiplier: "200"
+    provenance: "M3 TAIFEX planning fixture"
+output: { publication: create_new }

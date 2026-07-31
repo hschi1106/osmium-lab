@@ -1,0 +1,4 @@
+source=verified
+partition=Taifex/Symbol("TXFH6")@2026-07-20 revision=072be041ae71d7e0065f954babbadbf60dc7f874968be464a10f8f8081bcfb91 records=29539
+partition=Taifex/Symbol("CDFH6")@2026-07-20 revision=cea32ef68c16bd1d18ccc910b34393724f2ee1d0c870c54db659c1d10975d6a0 records=30376
+partition=Taifex/Symbol("CAFH6")@2026-07-20 revision=c43cbf99f63ff7fca35f12232416f10636cb320da352fd90942640cbe04b1110 records=14299
