@@ -1,6 +1,9 @@
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
-use m1_runner::M1FixtureInput;
+use m1_runner::{ArtifactExportError, M1FixtureInput};
 
 const NORMALIZED_EVENTS_BLAKE3: &str =
     "7e37ff0ad4a8b15b4c569b295c0f03f26bb6c0f32db1493edac71620e85a28df";
@@ -13,6 +16,21 @@ const STRATEGY_OUTPUT_BLAKE3: &str =
 fn fixture_directory() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/teralion/twse/2330/2026-07-27/regular-quotes")
+}
+
+fn fixture_root() -> PathBuf {
+    fixture_directory().parent().unwrap().to_path_buf()
+}
+
+fn unique_output_directory() -> PathBuf {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
+        "../../target/m1-artifact-export-{}-{nonce}",
+        std::process::id()
+    ))
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -90,6 +108,40 @@ fn m1_vertical_slice_reports_complete_local_run() {
             .trim(),
         STRATEGY_OUTPUT_BLAKE3
     );
+
+    let output = unique_output_directory();
+    artifacts
+        .export(
+            &output,
+            &fixture_root().join("metadata.yaml"),
+            &golden.join("fixture-set.sha256"),
+        )
+        .unwrap();
+    assert_eq!(
+        std::fs::read(output.join("normalized-events.bin")).unwrap(),
+        artifacts.normalized_events()
+    );
+    assert_eq!(
+        std::fs::read(output.join("strategy-output.bin")).unwrap(),
+        artifacts.strategy_output()
+    );
+    assert_eq!(
+        std::fs::read_to_string(output.join("run-summary.yaml")).unwrap(),
+        std::fs::read_to_string(golden.join("run-summary.yaml")).unwrap()
+    );
+    assert_eq!(
+        std::fs::read_to_string(output.join("warnings.yaml")).unwrap(),
+        std::fs::read_to_string(golden.join("warnings.yaml")).unwrap()
+    );
+    assert!(matches!(
+        artifacts.export(
+            &output,
+            &fixture_root().join("metadata.yaml"),
+            &golden.join("fixture-set.sha256"),
+        ),
+        Err(ArtifactExportError::OutputExists(path)) if path == output
+    ));
+    std::fs::remove_dir_all(output).unwrap();
 }
 
 #[test]

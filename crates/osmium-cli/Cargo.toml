@@ -1,0 +1,15 @@
+[package]
+name = "osmium-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "osmium"
+path = "src/main.rs"
+
+[dependencies]
+m1-runner = { path = "../m1-runner" }
+
+[lints]
+workspace = true
