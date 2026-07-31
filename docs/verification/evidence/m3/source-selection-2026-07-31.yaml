@@ -304,6 +304,13 @@ committed_fixture:
       byte_count: 7111736
       sha256: 68992c94466a296c14b35699035b8999eafaab631589d91a2a633ec95df80906
       metadata: fixtures/teralion/taifex/CAFH6/2026-07-20/metadata.yaml
+  daily_instruments:
+    status: passed
+    files:
+      TXFH6: fixtures/teralion/taifex/TXFH6/2026-07-20/daily.json
+      CDFH6: fixtures/teralion/taifex/CDFH6/2026-07-20/daily.json
+      CAFH6: fixtures/teralion/taifex/CAFH6/2026-07-20/daily.json
+    checksum_policy: each file SHA-256 equals source_acquisition.daily_instrument_sha256
 
 metadata_gaps:
   teralion_daily_instrument_null_fields:
