@@ -1,0 +1,14 @@
+[package]
+name = "data-sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+blake3 = "1.8"
+market-types = { path = "../market-types" }
+run-planner = { path = "../run-planner" }
+serde_json = { version = "1", features = ["raw_value"] }
+
+[lints]
+workspace = true
