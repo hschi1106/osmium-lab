@@ -7,7 +7,8 @@ use std::{
 
 use data_sync::{
     ArchiveKind, ArchiveTimestamp, CacheBuilder, CacheReader, FeedArchiveTransport,
-    LocalSourceRepository, StagingRevision, TeralionCredential, TeralionQuery, TeralionSync,
+    LocalSourceRepository, PartitionNormalizerConfig, PartitionedSourceRepository, StagingRevision,
+    TeralionCredential, TeralionQuery, TeralionSync,
 };
 use execution_sim::{
     ChargeModel, ChargeSides, EvidenceMode, FillModel, InstrumentEconomics, Ledger, QuantityPolicy,
@@ -15,18 +16,22 @@ use execution_sim::{
 };
 use m2_config::{M2PlanBundle, load, plan};
 use m3_config::{
-    M3_CONFIG_VERSION, config_version as m3_config_version, load as load_m3, plan as plan_m3,
+    M3_CONFIG_VERSION, M3Config, config_version as m3_config_version, load as load_m3,
+    plan as plan_m3,
 };
 use market_state::{
     MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
 };
-use replay_engine::ReplayCore;
+use market_types::MarketId;
+use replay_engine::{ReplayContextWindow, ReplayCore};
 use run_planner::{
-    ChargeSides as PlanChargeSides, FillEvidence, NetworkRequirement, QuantityEvidence,
-    RoundingPolicy as PlanRounding, SlippageModelConfig, SourceAction,
+    CacheAction, ChargeSides as PlanChargeSides, FillEvidence, NetworkRequirement,
+    QuantityEvidence, RoundingPolicy as PlanRounding, SlippageModelConfig, SourceAction,
+    SourceState,
 };
 use strategy_api::M2AcceptanceStrategy;
-use twse_normalizer::NormalizerConfig;
+use taifex_normalizer::NormalizerConfig as TaifexNormalizerConfig;
+use twse_normalizer::NormalizerConfig as TwseNormalizerConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum M2CommandKind {
@@ -49,29 +54,49 @@ pub fn execute(command: &M2Command) -> Result<String, M2CommandError> {
     match command.kind {
         M2CommandKind::Plan => execute_plan(&command.config),
         M2CommandKind::Sync => {
-            ensure_m2_config(&command.config)?;
-            execute_sync(&command.config)
+            if is_m3_config(&command.config)? {
+                execute_m3_sync(&command.config)
+            } else {
+                execute_sync(&command.config)
+            }
         }
         M2CommandKind::Verify => {
-            ensure_m2_config(&command.config)?;
-            execute_verify(&command.config)
+            if is_m3_config(&command.config)? {
+                execute_m3_verify(&command.config)
+            } else {
+                execute_verify(&command.config)
+            }
         }
         M2CommandKind::Replay => {
-            ensure_m2_config(&command.config)?;
-            execute_replay(&command.config)
+            if is_m3_config(&command.config)? {
+                execute_m3_replay(&command.config)
+            } else {
+                execute_replay(&command.config)
+            }
         }
         M2CommandKind::Backtest => {
-            ensure_m2_config(&command.config)?;
-            execute_backtest(
-                &command.config,
-                command
-                    .output
-                    .as_deref()
-                    .ok_or(M2CommandError::OutputRequired)?,
-            )
+            if is_m3_config(&command.config)? {
+                execute_m3_backtest(
+                    &command.config,
+                    command
+                        .output
+                        .as_deref()
+                        .ok_or(M2CommandError::OutputRequired)?,
+                )
+            } else {
+                execute_backtest(
+                    &command.config,
+                    command
+                        .output
+                        .as_deref()
+                        .ok_or(M2CommandError::OutputRequired)?,
+                )
+            }
         }
         M2CommandKind::Run => {
-            ensure_m2_config(&command.config)?;
+            if is_m3_config(&command.config)? {
+                return execute_m3_run(&command.config, command.output.as_deref());
+            }
             let config = load(&command.config)?;
             let bundle = plan(config)?;
             if bundle.execution.network_requirement() == NetworkRequirement::Required {
@@ -130,12 +155,154 @@ fn execute_plan(path: &Path) -> Result<String, M2CommandError> {
     ))
 }
 
-fn ensure_m2_config(path: &Path) -> Result<(), M2CommandError> {
-    if m3_config_version(path)? == M3_CONFIG_VERSION {
-        Err(M2CommandError::M3Unsupported)
-    } else {
-        Ok(())
+fn is_m3_config(path: &Path) -> Result<bool, M2CommandError> {
+    Ok(m3_config_version(path)? == M3_CONFIG_VERSION)
+}
+
+fn m3_queries(
+    config: &M3Config,
+    key: &run_planner::SourcePartitionKey,
+) -> Result<(TeralionQuery, TeralionQuery, PartitionNormalizerConfig), M2CommandError> {
+    let session_plan = config.session_plan_for(key)?;
+    let replay_start = session_plan
+        .windows()
+        .iter()
+        .map(|window| window.replay_start())
+        .min()
+        .ok_or_else(|| M2CommandError::Other("M3 session plan has no windows".to_owned()))?;
+    let replay_end_exclusive = session_plan
+        .windows()
+        .iter()
+        .map(|window| window.replay_end_exclusive())
+        .max()
+        .ok_or_else(|| M2CommandError::Other("M3 session plan has no windows".to_owned()))?;
+    let ticks = TeralionQuery::ticks(
+        key.instrument().clone(),
+        ArchiveTimestamp::parse(replay_start.to_iso8601(480))?,
+        ArchiveTimestamp::parse(replay_end_exclusive.to_iso8601(480))?,
+        [ArchiveKind::Quote],
+        5_000,
+    )?;
+    let daily = TeralionQuery::daily_instrument(key.instrument().clone(), key.trading_date());
+    let normalizer = match key.instrument().market() {
+        MarketId::Twse => PartitionNormalizerConfig::Twse(TwseNormalizerConfig::new(
+            key.instrument().clone(),
+            key.trading_date(),
+            replay_start,
+            replay_end_exclusive,
+        )?),
+        MarketId::Taifex => PartitionNormalizerConfig::Taifex(TaifexNormalizerConfig::new(
+            key.instrument().clone(),
+            key.trading_date(),
+            replay_start,
+            replay_end_exclusive,
+        )?),
+        market => {
+            return Err(M2CommandError::Other(format!(
+                "M3 does not support market {market:?}"
+            )));
+        }
+    };
+    Ok((ticks, daily, normalizer))
+}
+
+fn m3_attempt_id(key: &run_planner::SourcePartitionKey) -> String {
+    let identity = hex(key.identity().as_bytes());
+    format!("m3-{}", &identity[..24])
+}
+
+fn execute_m3_sync(path: &Path) -> Result<String, M2CommandError> {
+    let config = load_m3(path)?;
+    let bundle = plan_m3(config.clone())?;
+    let needs_network = bundle.execution.partitions().iter().any(|partition| {
+        !matches!(
+            partition.source_action(),
+            SourceAction::ReuseCompleteSource { .. }
+        )
+    });
+    if !needs_network {
+        return Ok("source=reused\nhttp_requests=0".to_owned());
     }
+    let credential = TeralionCredential::new(
+        env::var("TERALION_API_KEY").map_err(|_| M2CommandError::MissingCredential)?,
+    )?;
+    let mut sync = TeralionSync::new(FeedArchiveTransport::new()?);
+    let mut output = String::from("source=partitions\n");
+    let mut total_pages = 0_u64;
+    let mut published = 0_u32;
+    for partition in bundle.execution.partitions() {
+        if matches!(
+            partition.source_action(),
+            SourceAction::ReuseCompleteSource { .. }
+        ) {
+            output.push_str(&format!(
+                "partition={:?}/{:?}@{} status=reused\n",
+                partition.key().instrument().market(),
+                partition.key().instrument().symbol(),
+                partition.key().trading_date()
+            ));
+            continue;
+        }
+        let key = partition.key();
+        let (ticks, daily_query, _) = m3_queries(&config, key)?;
+        validate_json(&sync.fetch_single(
+            TeralionQuery::coverage(key.trading_date(), key.trading_date())?,
+            &credential,
+        )?)?;
+        validate_json(&sync.fetch_single(
+            TeralionQuery::symbol_range(key.instrument().clone()),
+            &credential,
+        )?)?;
+        let daily = sync.fetch_single(daily_query.clone(), &credential)?;
+        validate_json(&daily)?;
+        let repository =
+            PartitionedSourceRepository::new(config.effective().data_root(), key.clone())?;
+        let attempt = m3_attempt_id(key);
+        let checkpoint = repository
+            .root()
+            .join("staging")
+            .join(&attempt)
+            .join("checkpoint.json");
+        let mut staging = if checkpoint.exists() {
+            StagingRevision::resume_for_partition(config.effective().data_root(), key, &attempt)?
+        } else {
+            StagingRevision::create_for_partition(config.effective().data_root(), key, &attempt)?
+        };
+        let report = sync.sync_pages(ticks.clone(), &credential, &mut staging)?;
+        staging.stage_daily_instrument(daily_query.identity(), &daily)?;
+        let revision = staging.publish(ticks.identity(), report.terminal)?;
+        total_pages += u64::from(report.page_count);
+        published += 1;
+        output.push_str(&format!(
+            "partition={:?}/{:?}@{} status=published pages={} revision={}\n",
+            key.instrument().market(),
+            key.instrument().symbol(),
+            key.trading_date(),
+            report.page_count,
+            revision.manifest().revision_identity
+        ));
+    }
+    output.push_str(&format!("published={} pages={}\n", published, total_pages));
+    Ok(output.trim_end().to_owned())
+}
+
+fn execute_m3_verify(path: &Path) -> Result<String, M2CommandError> {
+    let config = load_m3(path)?;
+    let mut output = String::from("source=verified\n");
+    for key in config.partition_keys()? {
+        let repository =
+            PartitionedSourceRepository::new(config.effective().data_root(), key.clone())?;
+        let report = repository.verify_current()?;
+        output.push_str(&format!(
+            "partition={:?}/{:?}@{} revision={} records={}\n",
+            key.instrument().market(),
+            key.instrument().symbol(),
+            key.trading_date(),
+            report.manifest().revision_identity,
+            report.manifest().tick_record_count
+        ));
+    }
+    Ok(output.trim_end().to_owned())
 }
 
 fn execute_sync(path: &Path) -> Result<String, M2CommandError> {
@@ -202,6 +369,9 @@ fn execute_verify(path: &Path) -> Result<String, M2CommandError> {
 }
 
 fn prepare_cache(path: &Path) -> Result<String, M2CommandError> {
+    if is_m3_config(path)? {
+        return prepare_m3_cache(path);
+    }
     let config = load(path)?;
     let planned = plan(config.clone())?;
     if let Some(cache) = planned.cache_path {
@@ -212,13 +382,49 @@ fn prepare_cache(path: &Path) -> Result<String, M2CommandError> {
         ));
     }
     let session = m2_config::materialize_session(&config)?;
-    let built = CacheBuilder::new(config.data_root()).build_current(NormalizerConfig::new(
+    let built = CacheBuilder::new(config.data_root()).build_current(TwseNormalizerConfig::new(
         config.universe()[0].clone(),
         config.trading_dates()[0],
         session.replay_start,
         session.replay_end_exclusive,
     )?)?;
     Ok(format!("cache={}", built.descriptor().cache_identity))
+}
+
+fn prepare_m3_cache(path: &Path) -> Result<String, M2CommandError> {
+    let config = load_m3(path)?;
+    let bundle = plan_m3(config.clone())?;
+    let builder = CacheBuilder::new(config.effective().data_root());
+    let mut output = String::from("cache=partitions\n");
+    for partition in bundle.execution.partitions() {
+        match partition.cache_action() {
+            CacheAction::ReuseValidCache { identity } => {
+                output.push_str(&format!(
+                    "partition={:?}/{:?}@{} status=reused cache_identity={}\n",
+                    partition.key().instrument().market(),
+                    partition.key().instrument().symbol(),
+                    partition.key().trading_date(),
+                    hex(identity.as_bytes())
+                ));
+            }
+            CacheAction::RebuildCacheFromCompleteSource => {
+                if !matches!(partition.source_state(), SourceState::Complete { .. }) {
+                    return Err(M2CommandError::CacheMissing);
+                }
+                let (_, _, normalizer) = m3_queries(&config, partition.key())?;
+                let built = builder.build_partition(partition.key(), normalizer)?;
+                output.push_str(&format!(
+                    "partition={:?}/{:?}@{} status=built cache_identity={}\n",
+                    partition.key().instrument().market(),
+                    partition.key().instrument().symbol(),
+                    partition.key().trading_date(),
+                    built.descriptor().cache_identity
+                ));
+            }
+            CacheAction::AwaitCompleteSource => return Err(M2CommandError::CacheMissing),
+        }
+    }
+    Ok(output.trim_end().to_owned())
 }
 
 fn execute_replay(path: &Path) -> Result<String, M2CommandError> {
@@ -236,6 +442,72 @@ fn execute_replay(path: &Path) -> Result<String, M2CommandError> {
         completed.summary().event_count(),
         hex(completed.summary().event_checksum().as_bytes())
     ))
+}
+
+fn execute_m3_replay(path: &Path) -> Result<String, M2CommandError> {
+    let completed = replay_m3(path)?;
+    Ok(format!(
+        "replay=complete\nevents={}\nevent_checksum={}\nfinal_state_checksum={}",
+        completed.summary().event_count(),
+        hex(completed.summary().event_checksum().as_bytes()),
+        hex(completed.summary().final_state_checksum().as_bytes())
+    ))
+}
+
+fn replay_m3(path: &Path) -> Result<replay_engine::CompletedReplay, M2CommandError> {
+    let config = load_m3(path)?;
+    let bundle = plan_m3(config.clone())?;
+    let replay = bundle.replay.as_ref().ok_or(M2CommandError::CacheMissing)?;
+    let mut states = Vec::new();
+    let mut reducers = Vec::new();
+    let mut contexts = Vec::new();
+    let mut schedules = Vec::new();
+    for partition in bundle.execution.partitions() {
+        let key = partition.key();
+        let session_plan = config.session_plan_for(key)?;
+        let mut windows = Vec::new();
+        let mut default_context = None;
+        for window in session_plan.windows() {
+            let segment = match window.kind() {
+                strategy_api::SessionKind::Regular => "regular",
+                strategy_api::SessionKind::AfterHours => "after_hours",
+            };
+            let context = ReducerContext::new(
+                key.trading_date(),
+                SessionSegmentId::new(segment)?,
+                SegmentBoundaryPolicy::ResetObservableFields,
+                1,
+            );
+            default_context.get_or_insert(context.clone());
+            windows.push(ReplayContextWindow::new(
+                window.replay_start(),
+                window.replay_end_exclusive(),
+                context,
+            )?);
+        }
+        let context = default_context
+            .ok_or_else(|| M2CommandError::Other("M3 session plan has no windows".to_owned()))?;
+        let reducer = match key.instrument().market() {
+            MarketId::Twse => MarketStateReducer::twse_regular(),
+            MarketId::Taifex => MarketStateReducer::taifex_futures(),
+            market => {
+                return Err(M2CommandError::Other(format!(
+                    "M3 does not support market {market:?}"
+                )));
+            }
+        };
+        states.push(MarketState::new(
+            key.instrument().clone(),
+            key.trading_date(),
+        ));
+        reducers.push((key.instrument().clone(), reducer));
+        contexts.push((key.instrument().clone(), context));
+        schedules.push((key.instrument().clone(), windows));
+    }
+    let mut core = ReplayCore::new_multi_with_schedules(states, reducers, contexts, schedules)?;
+    let mut factory = data_sync::LocalCacheFactory::new_partitioned(config.effective().data_root());
+    core.replay_frozen_multi(replay, &mut factory)?;
+    Ok(core.complete()?)
 }
 
 fn execute_backtest(path: &Path, output: &Path) -> Result<String, M2CommandError> {
@@ -309,6 +581,46 @@ fn execute_backtest(path: &Path, output: &Path) -> Result<String, M2CommandError
     ))
 }
 
+fn execute_m3_backtest(path: &Path, output: &Path) -> Result<String, M2CommandError> {
+    let completed = replay_m3(path)?;
+    if output.exists() {
+        return Err(M2CommandError::Artifact(
+            m2_runner::ArtifactError::OutputExists(output.to_path_buf()),
+        ));
+    }
+    std::fs::create_dir_all(output)?;
+    let summary = serde_json::json!({
+        "format": "osmium-m3-replay-summary-v1",
+        "status": "replay_complete",
+        "event_count": completed.summary().event_count(),
+        "event_checksum": hex(completed.summary().event_checksum().as_bytes()),
+        "final_state_checksum": hex(completed.summary().final_state_checksum().as_bytes()),
+    });
+    std::fs::write(
+        output.join("replay-summary.json"),
+        serde_json::to_vec_pretty(&summary)
+            .map_err(|error| M2CommandError::Other(error.to_string()))?,
+    )?;
+    Ok(format!(
+        "backtest=replay_only\nevents={}\norders=0\nfills=0\noutput={}",
+        completed.summary().event_count(),
+        output.display()
+    ))
+}
+
+fn execute_m3_run(path: &Path, output: Option<&Path>) -> Result<String, M2CommandError> {
+    let config = load_m3(path)?;
+    let bundle = plan_m3(config)?;
+    if bundle.execution.network_requirement() == NetworkRequirement::Required {
+        execute_m3_sync(path)?;
+    }
+    prepare_m3_cache(path)?;
+    match output {
+        Some(output) => execute_m3_backtest(path, output),
+        None => execute_m3_replay(path),
+    }
+}
+
 fn ready_bundle(path: &Path) -> Result<M2PlanBundle, M2CommandError> {
     let bundle = plan(load(path)?)?;
     if bundle.replay.is_none() {
@@ -374,11 +686,15 @@ pub enum M2CommandError {
     CacheBuild(data_sync::CacheBuildError),
     CacheRead(data_sync::CacheReadError),
     Normalizer(twse_normalizer::ConfigError),
+    TaifexNormalizer(taifex_normalizer::ConfigError),
     Replay(replay_engine::ReplayError),
     State(market_state::SessionSegmentIdError),
     Strategy(strategy_api::DeclarationError),
     Backtest(m2_runner::BacktestError),
     Artifact(m2_runner::ArtifactError),
+    Io(std::io::Error),
+    Partition(data_sync::PartitionRepositoryError),
+    ReplayContextWindow(replay_engine::ReplayContextWindowError),
     MissingCredential,
     CacheMissing,
     OutputRequired,
@@ -393,6 +709,7 @@ impl M2CommandError {
             Self::Config(_)
             | Self::Query(_)
             | Self::Normalizer(_)
+            | Self::TaifexNormalizer(_)
             | Self::State(_)
             | Self::Strategy(_)
             | Self::OutputRequired
@@ -406,7 +723,7 @@ impl M2CommandError {
             | Self::CacheMissing => 20,
             Self::Transport(_) | Self::Sync(_) | Self::MissingCredential => 30,
             Self::Replay(_) | Self::Backtest(_) => 50,
-            Self::Other(_) => 1,
+            Self::Partition(_) | Self::Io(_) | Self::ReplayContextWindow(_) | Self::Other(_) => 1,
         }
     }
 }
@@ -430,11 +747,15 @@ convert!(Verify, data_sync::VerificationError);
 convert!(CacheBuild, data_sync::CacheBuildError);
 convert!(CacheRead, data_sync::CacheReadError);
 convert!(Normalizer, twse_normalizer::ConfigError);
+convert!(TaifexNormalizer, taifex_normalizer::ConfigError);
 convert!(Replay, replay_engine::ReplayError);
 convert!(State, market_state::SessionSegmentIdError);
 convert!(Strategy, strategy_api::DeclarationError);
 convert!(Backtest, m2_runner::BacktestError);
 convert!(Artifact, m2_runner::ArtifactError);
+convert!(Partition, data_sync::PartitionRepositoryError);
+convert!(ReplayContextWindow, replay_engine::ReplayContextWindowError);
+convert!(Io, std::io::Error);
 
 impl fmt::Display for M2CommandError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {

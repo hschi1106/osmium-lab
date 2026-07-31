@@ -15,5 +15,11 @@ universe:
 ```
 
 `osmium plan --config <file>` 會自動辨識版本 2 並列出所有 partitions、session
-selection、source action 與 cache action。版本 1 仍走 M2 planner；M3 的 sync、cache
-build、multi-stream replay 尚未在此階段開放，避免把未完成的執行路徑誤當成可用功能。
+selection、source action 與 cache action。版本 1 仍走 M2 planner。M3 的 `sync`、
+`verify`、partition cache build 與 offline multi-stream `replay`／`run` 會沿用同一份
+plan；source 與 cache 尚未完成時，offline execution 會明確回報缺少 artifact，不會
+退回讀取 raw source 或建立網路連線。
+
+目前 M3 CLI 的 `backtest` 只發布 deterministic replay summary（`replay_only`）；
+multi-instrument strategy、fill isolation 與 per-instrument accounting 仍由後續 M3
+strategy/simulation work 交付，不會把這個 summary 假稱為已完成的 P&L backtest。
