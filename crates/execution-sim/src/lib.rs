@@ -1,6 +1,6 @@
 mod accounting;
 
-use std::{collections::BTreeSet, error::Error, fmt};
+use std::{collections::BTreeMap, collections::BTreeSet, error::Error, fmt};
 
 use market_types::{
     DomainEvent, EventPayload, InstrumentId, MatchTime, Price, Quantity, QuantityUnit,
@@ -8,7 +8,8 @@ use market_types::{
 use replay_engine::EventOccurrence;
 use strategy_api::{
     CancellationReason, MatchingState, NewOrderEntry, OrderFeedback, OrderId, OrderIntent,
-    OrderRestrictionReason, OrderSide, OrderType, RejectionReason, TradingContext,
+    OrderRestrictionReason, OrderSide, OrderType, RejectionReason, SessionSegmentId,
+    TradingContext,
 };
 
 pub const EXECUTION_SIM_VERSION: u16 = 1;
@@ -51,6 +52,7 @@ pub struct SimOrder {
     id: OrderId,
     intent: OrderIntent,
     origin_ordinal: u64,
+    origin_segment_id: SessionSegmentId,
     acceptance_sequence: u64,
     filled: u64,
     status: OrderStatus,
@@ -76,6 +78,11 @@ impl SimOrder {
     #[must_use]
     pub const fn status(&self) -> OrderStatus {
         self.status
+    }
+
+    #[must_use]
+    pub const fn origin_segment_id(&self) -> &SessionSegmentId {
+        &self.origin_segment_id
     }
 }
 
@@ -193,6 +200,7 @@ impl Simulator {
             id,
             intent,
             origin_ordinal: occurrence.run_event_ordinal(),
+            origin_segment_id: trading.session().segment_id().clone(),
             acceptance_sequence: sequence,
             filled: 0,
             status: OrderStatus::Pending,
@@ -207,6 +215,12 @@ impl Simulator {
         trading: &TradingContext,
     ) -> Result<Vec<OrderFeedback>, SimulationError> {
         if !matches!(trading.matching(), MatchingState::Enabled(_)) {
+            return Ok(Vec::new());
+        }
+        if matches!(
+            trading.new_order_entry(),
+            NewOrderEntry::Blocked(_) | NewOrderEntry::Unknown
+        ) {
             return Ok(Vec::new());
         }
         let model = self.model;
@@ -231,6 +245,9 @@ impl Simulator {
             let Some((evidence_price, evidence_quantity)) = *available else {
                 continue;
             };
+            if evidence_quantity.unit() != order.intent.quantity().unit() {
+                continue;
+            }
             if !limit_touched(&order.intent, evidence_price) {
                 continue;
             }
@@ -308,6 +325,26 @@ impl Simulator {
             .collect()
     }
 
+    pub fn cancel_segment_end(&mut self, segment_id: &SessionSegmentId) -> Vec<OrderFeedback> {
+        self.orders
+            .iter_mut()
+            .filter(|order| {
+                order.origin_segment_id == *segment_id
+                    && matches!(
+                        order.status,
+                        OrderStatus::Pending | OrderStatus::PartiallyFilled
+                    )
+            })
+            .map(|order| {
+                order.status = OrderStatus::Cancelled;
+                OrderFeedback::Cancelled {
+                    order_id: order.id,
+                    reason: CancellationReason::SegmentEnd,
+                }
+            })
+            .collect()
+    }
+
     #[must_use]
     pub fn orders(&self) -> &[SimOrder] {
         &self.orders
@@ -321,6 +358,13 @@ impl Simulator {
 fn evidence(event: &DomainEvent, mode: EvidenceMode, side: OrderSide) -> Option<(Price, Quantity)> {
     match (mode, event.payload()) {
         (EvidenceMode::TopOfBook, EventPayload::QuoteSnapshot(snapshot)) => {
+            let level = match side {
+                OrderSide::Buy => snapshot.book().asks().levels().next(),
+                OrderSide::Sell => snapshot.book().bids().levels().next(),
+            };
+            level.map(|level| (level.price(), level.displayed_quantity()))
+        }
+        (EvidenceMode::TopOfBook, EventPayload::BookSnapshot(snapshot)) => {
             let level = match side {
                 OrderSide::Buy => snapshot.book().asks().levels().next(),
                 OrderSide::Sell => snapshot.book().bids().levels().next(),
@@ -372,6 +416,8 @@ pub enum SimulationError {
     QuantityOverflow,
     InvalidQuantity,
     InvalidSlippage,
+    EmptyUniverse,
+    DuplicateInstrument,
 }
 
 impl fmt::Display for SimulationError {
@@ -381,6 +427,136 @@ impl fmt::Display for SimulationError {
 }
 
 impl Error for SimulationError {}
+
+/// Instrument-isolated simulation facade for an M3 universe.
+#[derive(Debug)]
+pub struct MultiSimulator {
+    simulators: BTreeMap<InstrumentId, Simulator>,
+}
+
+impl MultiSimulator {
+    pub fn new(
+        configs: impl IntoIterator<Item = (InstrumentId, QuantityUnit, FillModel)>,
+    ) -> Result<Self, SimulationError> {
+        let mut simulators = BTreeMap::new();
+        for (instrument, quantity_unit, model) in configs {
+            if simulators
+                .insert(
+                    instrument.clone(),
+                    Simulator::new([instrument], quantity_unit, model),
+                )
+                .is_some()
+            {
+                return Err(SimulationError::DuplicateInstrument);
+            }
+        }
+        if simulators.is_empty() {
+            return Err(SimulationError::EmptyUniverse);
+        }
+        Ok(Self { simulators })
+    }
+
+    pub fn submit(
+        &mut self,
+        strategy_id: &str,
+        occurrence: &EventOccurrence,
+        trading: &TradingContext,
+        output_sequence: u32,
+        intent: OrderIntent,
+    ) -> Result<OrderFeedback, SimulationError> {
+        let Some(simulator) = self.simulators.get_mut(intent.instrument()) else {
+            return Ok(OrderFeedback::Rejected {
+                reason: RejectionReason::InstrumentOutsideUniverse,
+            });
+        };
+        simulator.submit(strategy_id, occurrence, trading, output_sequence, intent)
+    }
+
+    pub fn evaluate(
+        &mut self,
+        event: &DomainEvent,
+        occurrence: &EventOccurrence,
+        trading: &TradingContext,
+    ) -> Result<Vec<OrderFeedback>, SimulationError> {
+        self.simulators.get_mut(event.instrument()).map_or_else(
+            || Ok(Vec::new()),
+            |simulator| simulator.evaluate(event, occurrence, trading),
+        )
+    }
+
+    pub fn cancel_segment_end(&mut self, segment_id: &SessionSegmentId) -> Vec<OrderFeedback> {
+        self.simulators
+            .values_mut()
+            .flat_map(|simulator| simulator.cancel_segment_end(segment_id))
+            .collect()
+    }
+
+    pub fn cancel_segment_end_for(
+        &mut self,
+        instrument: &InstrumentId,
+        segment_id: &SessionSegmentId,
+    ) -> Vec<OrderFeedback> {
+        self.simulators
+            .get_mut(instrument)
+            .map_or_else(Vec::new, |simulator| {
+                simulator.cancel_segment_end(segment_id)
+            })
+    }
+
+    pub fn cancel_end_of_run(&mut self) -> Vec<OrderFeedback> {
+        self.simulators
+            .values_mut()
+            .flat_map(Simulator::cancel_end_of_run)
+            .collect()
+    }
+
+    pub fn cancel_end_of_run_for(&mut self, instrument: &InstrumentId) -> Vec<OrderFeedback> {
+        self.simulators
+            .get_mut(instrument)
+            .map_or_else(Vec::new, Simulator::cancel_end_of_run)
+    }
+
+    #[must_use]
+    pub fn simulator(&self, instrument: &InstrumentId) -> Option<&Simulator> {
+        self.simulators.get(instrument)
+    }
+
+    pub fn instruments(&self) -> impl Iterator<Item = &InstrumentId> {
+        self.simulators.keys()
+    }
+
+    #[must_use]
+    pub fn orders(&self) -> Vec<&SimOrder> {
+        self.simulators
+            .values()
+            .flat_map(Simulator::orders)
+            .collect()
+    }
+
+    #[must_use]
+    pub fn fills(&self) -> Vec<&FillRecord> {
+        self.simulators
+            .values()
+            .flat_map(Simulator::fills)
+            .collect()
+    }
+
+    #[must_use]
+    pub fn order_count(&self) -> usize {
+        self.simulators
+            .values()
+            .map(|simulator| simulator.orders().len())
+            .sum()
+    }
+
+    #[must_use]
+    pub fn fill_count(&self) -> usize {
+        self.simulators
+            .values()
+            .map(|simulator| simulator.fills().len())
+            .sum()
+    }
+}
 
 #[cfg(test)]
 mod tests {

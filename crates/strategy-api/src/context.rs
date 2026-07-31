@@ -2,8 +2,8 @@ use std::{error::Error, fmt};
 
 use market_state::{MarketStateView, SessionSegmentId, StateField};
 use market_types::{
-    DomainEvent, InstantTrend, LimitPosition, MarketAnnotations, MatchTime, MatchingMethod,
-    TradingDate,
+    DomainEvent, EventPayload, InstantTrend, LimitPosition, MarketAnnotations, MarketId, MatchTime,
+    MatchingMethod, TradingDate,
 };
 use replay_engine::EventOccurrence;
 
@@ -338,6 +338,109 @@ impl TwseTradingContextEvaluator {
     }
 }
 
+/// Evaluates the market-specific trading rules used by the M3 multi-market run.
+///
+/// TWSE keeps its annotation-driven evaluator. TAIFEX events currently carry no
+/// market annotation flags, so its context is derived only from the session
+/// phase and explicit indicative-auction domain events.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MarketTradingContextEvaluator;
+
+impl MarketTradingContextEvaluator {
+    pub fn evaluate(
+        self,
+        event: &DomainEvent,
+        occurrence: &EventOccurrence,
+        state: MarketStateView<'_>,
+        segment: &SessionSegment,
+    ) -> Result<TradingContext, ContextError> {
+        match event.instrument().market() {
+            MarketId::Twse => {
+                TwseTradingContextEvaluator.evaluate(event, occurrence, state, segment)
+            }
+            MarketId::Taifex => self.evaluate_taifex(event, occurrence, state, segment),
+            market => Err(ContextError::UnsupportedMarket(market)),
+        }
+    }
+
+    fn evaluate_taifex(
+        self,
+        event: &DomainEvent,
+        occurrence: &EventOccurrence,
+        state: MarketStateView<'_>,
+        segment: &SessionSegment,
+    ) -> Result<TradingContext, ContextError> {
+        validate_event_state(event, occurrence, state, segment)?;
+        let phase = segment.phase(event.match_time())?;
+        let session = SessionCallbackContext {
+            segment_id: segment.id().clone(),
+            session_kind: segment.kind(),
+            phase,
+        };
+        let indicative = matches!(
+            event.payload(),
+            EventPayload::IndicativeOpeningAuction(_) | EventPayload::IndicativeClosingAuction(_)
+        );
+        let matching = if indicative {
+            MatchingState::Indicative(IndicativeReason::UnclassifiedTrial)
+        } else if phase == SessionPhase::WarmUp {
+            MatchingState::Indicative(IndicativeReason::PreOpenTrial)
+        } else {
+            MatchingState::Enabled(MatchingMethod::Continuous)
+        };
+        let new_order_entry = if phase == SessionPhase::CoolDown {
+            NewOrderEntry::Blocked(OrderBlockReason::CoolDown)
+        } else if indicative {
+            NewOrderEntry::Restricted(OrderRestrictionReason::IndicativeMarket)
+        } else if phase == SessionPhase::WarmUp {
+            NewOrderEntry::Restricted(OrderRestrictionReason::PreOpenLimitOrdersOnly)
+        } else {
+            NewOrderEntry::Allowed
+        };
+
+        Ok(TradingContext {
+            event_fingerprint: *occurrence.event_fingerprint().as_bytes(),
+            instrument_state_version: occurrence.instrument_state_version(),
+            session,
+            new_order_entry,
+            matching,
+            market_rule_name: "taifex.futures-session",
+            market_rule_version: 1,
+        })
+    }
+}
+
+fn validate_event_state(
+    event: &DomainEvent,
+    occurrence: &EventOccurrence,
+    state: MarketStateView<'_>,
+    segment: &SessionSegment,
+) -> Result<(), ContextError> {
+    if event.trading_date() != segment.trading_date()
+        || state.trading_date() != segment.trading_date()
+    {
+        return Err(ContextError::TradingDateMismatch);
+    }
+    if event.instrument() != state.instrument() {
+        return Err(ContextError::InstrumentMismatch);
+    }
+    if state.current_segment_id() != Some(segment.id()) {
+        return Err(ContextError::SegmentMismatch);
+    }
+    if occurrence.instrument_state_version() != state.state_version() {
+        return Err(ContextError::StateVersionMismatch);
+    }
+    let last_event = state
+        .last_event()
+        .ok_or(ContextError::MissingAppliedEvent)?;
+    if last_event.event_fingerprint() != occurrence.event_fingerprint()
+        || last_event.match_time() != event.match_time()
+    {
+        return Err(ContextError::EventIdentityMismatch);
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextError {
     InvalidSessionWindow,
@@ -350,6 +453,7 @@ pub enum ContextError {
     MissingAppliedEvent,
     EventIdentityMismatch,
     MissingTwseAnnotations,
+    UnsupportedMarket(MarketId),
 }
 
 impl fmt::Display for ContextError {
@@ -365,6 +469,9 @@ impl fmt::Display for ContextError {
             Self::MissingAppliedEvent => "post-event state has no applied event identity",
             Self::EventIdentityMismatch => "event, occurrence, and state identities differ",
             Self::MissingTwseAnnotations => "TWSE trading context requires known TWSE annotations",
+            Self::UnsupportedMarket(market) => {
+                return write!(formatter, "unsupported trading-context market: {market:?}");
+            }
         };
         formatter.write_str(message)
     }

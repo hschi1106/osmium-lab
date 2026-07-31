@@ -2,15 +2,16 @@ mod context;
 mod example;
 mod identity;
 mod m2_acceptance;
+mod m3_acceptance;
 mod orders;
 mod output;
 mod runner;
 mod strategy;
 
 pub use context::{
-    ContextError, IndicativeReason, MatchingState, NewOrderEntry, OrderBlockReason,
-    OrderRestrictionReason, SessionCallbackContext, SessionKind, SessionPhase, SessionSegment,
-    TradingContext, TwseTradingContextEvaluator,
+    ContextError, IndicativeReason, MarketTradingContextEvaluator, MatchingState, NewOrderEntry,
+    OrderBlockReason, OrderRestrictionReason, SessionCallbackContext, SessionKind, SessionPhase,
+    SessionSegment, TradingContext, TwseTradingContextEvaluator,
 };
 pub use example::{EXAMPLE_STRATEGY_ID, EXAMPLE_STRATEGY_VERSION, ExampleStrategy};
 pub use identity::{
@@ -20,6 +21,10 @@ pub use identity::{
 pub use m2_acceptance::{
     M2_ACCEPTANCE_STRATEGY_ID, M2_ACCEPTANCE_STRATEGY_VERSION, M2AcceptanceStrategy,
 };
+pub use m3_acceptance::{
+    M3_ACCEPTANCE_STRATEGY_ID, M3_ACCEPTANCE_STRATEGY_VERSION, M3AcceptanceStrategy,
+};
+pub use market_state::SessionSegmentId;
 pub use orders::{
     CancellationReason, ORDER_INTENT_VERSION, OrderFeedback, OrderId, OrderIntent,
     OrderIntentError, OrderSide, OrderType, RejectionReason, StrategyFeedbackContext, TimeInForce,

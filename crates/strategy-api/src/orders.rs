@@ -113,6 +113,7 @@ pub enum RejectionReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CancellationReason {
     EndOfRun,
+    SegmentEnd,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

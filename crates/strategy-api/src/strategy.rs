@@ -47,6 +47,7 @@ pub struct StrategyEventContext<'event> {
     occurrence: &'event EventOccurrence,
     event: &'event DomainEvent,
     market_state: MarketStateView<'event>,
+    market_states: &'event [MarketStateView<'event>],
     trading: &'event TradingContext,
     session: &'event SessionCallbackContext,
 }
@@ -58,10 +59,21 @@ impl<'event> StrategyEventContext<'event> {
         market_state: MarketStateView<'event>,
         trading: &'event TradingContext,
     ) -> Self {
+        Self::new_with_states(occurrence, event, market_state, &[], trading)
+    }
+
+    pub const fn new_with_states(
+        occurrence: &'event EventOccurrence,
+        event: &'event DomainEvent,
+        market_state: MarketStateView<'event>,
+        market_states: &'event [MarketStateView<'event>],
+        trading: &'event TradingContext,
+    ) -> Self {
         Self {
             occurrence,
             event,
             market_state,
+            market_states,
             trading,
             session: trading.session(),
         }
@@ -80,6 +92,12 @@ impl<'event> StrategyEventContext<'event> {
     #[must_use]
     pub const fn market_state(self) -> MarketStateView<'event> {
         self.market_state
+    }
+
+    /// Returns the post-event views for every instrument in deterministic order.
+    #[must_use]
+    pub const fn market_states(self) -> &'event [MarketStateView<'event>] {
+        self.market_states
     }
 
     #[must_use]

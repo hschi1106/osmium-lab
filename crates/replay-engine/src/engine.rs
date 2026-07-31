@@ -330,6 +330,21 @@ impl ReplayCore {
         plan: &ReplayPlan,
         factory: &mut F,
     ) -> Result<(), ReplayError> {
+        self.replay_frozen_multi_with(plan, factory, |_, _, _| Ok(()))
+    }
+
+    /// Opens and merges every selected stream, invoking a callback after each
+    /// event has been committed to all instrument state owned by this core.
+    pub fn replay_frozen_multi_with<F, C>(
+        &mut self,
+        plan: &ReplayPlan,
+        factory: &mut F,
+        mut callback: C,
+    ) -> Result<(), ReplayError>
+    where
+        F: ReplayStreamFactory,
+        C: FnMut(&mut Self, &DomainEvent, &CoreCommit) -> Result<(), Box<str>>,
+    {
         let mut streams = Vec::with_capacity(plan.bindings().len());
         for binding in plan.bindings() {
             let state = self
@@ -374,7 +389,8 @@ impl ReplayCore {
             let event = heads[selected_index]
                 .take()
                 .expect("selected merge head is present");
-            self.apply_ordered(&event)?;
+            let commit = self.apply_ordered(&event)?;
+            callback(self, &event, &commit).map_err(ReplayError::Callback)?;
         }
         Ok(())
     }
@@ -569,6 +585,7 @@ pub enum ReplayError {
     PlanTradingDateMismatch,
     StreamOpen(Box<str>),
     Stream(Box<str>),
+    Callback(Box<str>),
 }
 
 impl fmt::Display for ReplayError {
@@ -616,6 +633,7 @@ impl fmt::Display for ReplayError {
             }
             Self::StreamOpen(error) => write!(formatter, "event stream open failed: {error}"),
             Self::Stream(error) => write!(formatter, "event stream failed: {error}"),
+            Self::Callback(error) => write!(formatter, "replay callback failed: {error}"),
         }
     }
 }
