@@ -95,13 +95,22 @@ impl MarketStateProfile {
                 SourceFormatRule::new(
                     SourceFormatId::new("STOCK_REALTIME")
                         .expect("TWSE source format constant is non-empty"),
-                    vec![EventKind::QuoteSnapshot, EventKind::TradeBatch],
+                    vec![
+                        EventKind::QuoteSnapshot,
+                        EventKind::TradeBatch,
+                        EventKind::IndicativeOpeningAuction,
+                        EventKind::IndicativeClosingAuction,
+                    ],
                 )
                 .expect("TWSE realtime profile has accepted event kinds"),
                 SourceFormatRule::new(
                     SourceFormatId::new("STOCK_SNAPSHOT")
                         .expect("TWSE source format constant is non-empty"),
-                    vec![EventKind::QuoteSnapshot],
+                    vec![
+                        EventKind::QuoteSnapshot,
+                        EventKind::IndicativeOpeningAuction,
+                        EventKind::IndicativeClosingAuction,
+                    ],
                 )
                 .expect("TWSE snapshot profile has accepted event kinds"),
             ],
@@ -148,6 +157,8 @@ impl MarketStateProfile {
             EventPayload::QuoteSnapshot(snapshot) => snapshot.annotations(),
             EventPayload::BookSnapshot(snapshot) => snapshot.annotations(),
             EventPayload::TradeBatch(batch) => batch.annotations(),
+            EventPayload::IndicativeOpeningAuction(auction)
+            | EventPayload::IndicativeClosingAuction(auction) => auction.annotations(),
         };
         let compatible = matches!(
             (self.annotation_policy, annotations),

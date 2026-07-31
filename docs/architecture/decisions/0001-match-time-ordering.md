@@ -2,9 +2,9 @@
 
 - 狀態：Accepted
 - 決策日期：2026-07-29
-- 最後修訂：2026-07-30（加入 TWSE realtime source phase tie-break）
+- 最後修訂：2026-07-31（加入 TWSE auction source phase tie-break）
 - 適用契約：`OrderingRule`
-- ordering rule version：`2`
+- ordering rule version：`3`
 - 主要需求：`REPLAY-02`、`REPLAY-04`、`NFR-01`、`NFR-03`
 
 ## 1. Context
@@ -115,7 +115,9 @@ TWSE `STOCK_REALTIME` 依
 | Source phase | Rank |
 | --- | ---: |
 | intermediate `TradeBatch` | 10 |
+| trial intermediate auction event | 10 |
 | final `QuoteSnapshot` | 20 |
+| trial final auction event | 20 |
 
 rank 由 event 的 market、source format、event kind 與 `TradePrintKind` 純函式
 重建，不使用 `received_at`、API order 或 ingestion ordinal。
@@ -132,9 +134,11 @@ TWSE realtime shape 必須由 mapping 拒絕，不能臨時分配 rank。
 | `QuoteSnapshot` | 10 |
 | `BookSnapshot` | 20 |
 | `TradeBatch` | 30 |
+| `IndicativeOpeningAuction` | 40 |
+| `IndicativeClosingAuction` | 50 |
 
-第一版不分配 standalone status event rank；TAIFEX `close`／`stats` source
-records 也不進入 domain event timeline。
+auction event 是 timeline event，但不是 standalone status event；TAIFEX close／stats
+source records 仍不進入 domain event timeline。
 
 rank 保留間隔以便未來新增事件，但新增 kind 仍必須 review 並更新 event schema；
 不能只插入數字後宣稱完全相容。

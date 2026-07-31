@@ -1,7 +1,8 @@
 use std::{error::Error, fmt};
 
 use crate::{
-    CompleteBookSnapshot, MarketAnnotations, Observation, TradePrint, UnknownValue, Volume,
+    CompleteBookSnapshot, MarketAnnotations, Observation, Price, Quantity, TradePrint,
+    UnknownValue, Volume,
 };
 
 /// Error produced when a variable-length canonical value cannot use its fixed u32 frame.
@@ -55,6 +56,20 @@ impl CanonicalValue for TradePrint {
 }
 
 impl CanonicalValue for Volume {
+    fn append_canonical(&self, bytes: &mut Vec<u8>) -> Result<(), CanonicalEncodingError> {
+        bytes.extend_from_slice(&self.to_canonical_bytes());
+        Ok(())
+    }
+}
+
+impl CanonicalValue for Price {
+    fn append_canonical(&self, bytes: &mut Vec<u8>) -> Result<(), CanonicalEncodingError> {
+        bytes.extend_from_slice(&self.to_canonical_bytes());
+        Ok(())
+    }
+}
+
+impl CanonicalValue for Quantity {
     fn append_canonical(&self, bytes: &mut Vec<u8>) -> Result<(), CanonicalEncodingError> {
         bytes.extend_from_slice(&self.to_canonical_bytes());
         Ok(())

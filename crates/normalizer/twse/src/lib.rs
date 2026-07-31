@@ -2,8 +2,8 @@ use std::{collections::BTreeMap, error::Error, fmt};
 
 use market_types::{
     BookError, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventError,
-    EventPayload, InstantTrend, InstrumentId, LimitPosition, MarketAnnotations, MarketId,
-    MatchTime, MatchTimeError, Observation, Price, PriceError, Quantity, QuantityError,
+    EventPayload, IndicativeAuction, InstantTrend, InstrumentId, LimitPosition, MarketAnnotations,
+    MarketId, MatchTime, MatchTimeError, Observation, Price, PriceError, Quantity, QuantityError,
     QuantityUnit, QuoteSnapshot, SourceFormatId, TradeBatch, TradeOrder, TradePrint,
     TradePrintKind, TradingDate, TwseQuoteAnnotations, Volume,
 };
@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::value::RawValue;
 
 pub const MAPPING_NAME: &str = "TeralionTwseQuote";
-pub const MAPPING_VERSION: u16 = 3;
+pub const MAPPING_VERSION: u16 = 4;
 
 const STOCK_SNAPSHOT: &str = "STOCK_SNAPSHOT";
 const STOCK_REALTIME: &str = "STOCK_REALTIME";
@@ -373,6 +373,22 @@ impl TwseNormalizer {
             ));
         }
 
+        let intermediate_phase = self.auction_phase(intermediate)?;
+        let final_phase = self.auction_phase(final_record)?;
+        if intermediate_phase != final_phase {
+            return Err(group_error(
+                first,
+                RealtimeGroupError::MixedAuctionTrialState,
+            ));
+        }
+
+        if intermediate_phase.is_some() {
+            return Ok(vec![
+                self.intermediate_event(intermediate)?,
+                self.final_event(final_record)?,
+            ]);
+        }
+
         let final_trade = final_record
             .deal
             .ok_or_else(|| group_error(first, RealtimeGroupError::FinalDealMissing))?;
@@ -407,6 +423,9 @@ impl TwseNormalizer {
                 NormalizationErrorKind::InvalidPayload("final quote is missing a complete book"),
             )
         })?;
+        if let Some(phase) = self.auction_phase(record)? {
+            return self.auction_event(record, phase, Observation::Set(book));
+        }
         let trade = record
             .deal
             .map(Observation::Set)
@@ -428,6 +447,9 @@ impl TwseNormalizer {
         let trade = record
             .deal
             .ok_or_else(|| group_error(record, RealtimeGroupError::IntermediateDealMissing))?;
+        if let Some(phase) = self.auction_phase(record)? {
+            return self.auction_event(record, phase, Observation::NoObservation);
+        }
         let trade = TradePrint::new(
             trade.price(),
             trade.quantity(),
@@ -441,6 +463,71 @@ impl TwseNormalizer {
         )
         .map_err(|error| event_error(record, error))?;
         Ok(self.domain_event(record, EventPayload::TradeBatch(batch)))
+    }
+
+    fn auction_event(
+        &self,
+        record: &ValidatedRecord,
+        phase: AuctionPhase,
+        book: Observation<CompleteBookSnapshot>,
+    ) -> Result<DomainEvent, NormalizationError> {
+        let (price, quantity) = match record.deal {
+            Some(trade) => (
+                Observation::Set(trade.price()),
+                Observation::Set(trade.quantity()),
+            ),
+            None => (Observation::NoObservation, Observation::NoObservation),
+        };
+        let auction = IndicativeAuction::new(
+            price,
+            quantity,
+            book,
+            Observation::Set(record.cumulative_volume),
+            MarketAnnotations::TwseQuote(record.annotations),
+        )
+        .map_err(|error| event_error(record, error))?;
+        let payload = match phase {
+            AuctionPhase::Opening => EventPayload::IndicativeOpeningAuction(auction),
+            AuctionPhase::Closing => EventPayload::IndicativeClosingAuction(auction),
+        };
+        Ok(self.domain_event(record, payload))
+    }
+
+    fn auction_phase(
+        &self,
+        record: &ValidatedRecord,
+    ) -> Result<Option<AuctionPhase>, NormalizationError> {
+        let status = record.annotations.status();
+        if !status.trial() {
+            return Ok(None);
+        }
+
+        let opening_window_start = self.session_time("08:30:00");
+        let opening_window_end = self.session_time("09:00:00");
+        let closing_window_start = self.session_time("13:25:00");
+        let closing_window_end = self.session_time("13:30:00");
+        let in_opening_window =
+            record.match_time >= opening_window_start && record.match_time < opening_window_end;
+        let in_closing_window =
+            record.match_time >= closing_window_start && record.match_time < closing_window_end;
+        let opening = status.delayed_open() || status.opening_marker() || in_opening_window;
+        let closing = status.delayed_close() || status.closing_marker() || in_closing_window;
+        match (opening, closing) {
+            (true, false) => Ok(Some(AuctionPhase::Opening)),
+            (false, true) => Ok(Some(AuctionPhase::Closing)),
+            (false, false) | (true, true) => Err(NormalizationError::new(
+                record.record_number,
+                record.context.clone(),
+                NormalizationErrorKind::InvalidPayload(
+                    "trial quote cannot be classified as exactly one auction phase",
+                ),
+            )),
+        }
+    }
+
+    fn session_time(&self, time: &str) -> MatchTime {
+        let value = format!("{}T{time}+08:00", self.config.trading_date());
+        MatchTime::parse(&value).expect("TWSE session constants are valid timestamps")
     }
 
     fn domain_event(&self, record: &ValidatedRecord, payload: EventPayload) -> DomainEvent {
@@ -717,6 +804,7 @@ pub enum RealtimeGroupError {
     IntermediateDealMissing,
     FinalDealMissing,
     CumulativeVolumeMismatch,
+    MixedAuctionTrialState,
 }
 
 impl fmt::Display for RealtimeGroupError {
@@ -733,6 +821,9 @@ impl fmt::Display for RealtimeGroupError {
             Self::CumulativeVolumeMismatch => formatter.write_str(
                 "final cumulative volume does not equal intermediate cumulative volume plus final deal quantity",
             ),
+            Self::MixedAuctionTrialState => {
+                formatter.write_str("realtime group mixes trial and non-trial auction records")
+            }
         }
     }
 }
@@ -741,6 +832,12 @@ impl fmt::Display for RealtimeGroupError {
 enum WireFormat {
     StockSnapshot,
     StockRealtime,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuctionPhase {
+    Opening,
+    Closing,
 }
 
 #[derive(Debug)]

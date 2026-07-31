@@ -15,7 +15,7 @@ type definition；具體 exact price／quantity type 與 canonical encoding 由
 - [TWSE 集中市場即時交易資訊傳輸規格書 B.12.13](https://dsp.twse.com.tw/public/static/downloads/computerPlanningOperationsDepartment/TWSE%E9%9B%86%E4%B8%AD%E5%B8%82%E5%A0%B4%E5%8D%B3%E6%99%82%E4%BA%A4%E6%98%93%E8%B3%87%E8%A8%8A%E5%82%B3%E8%BC%B8%E8%A6%8F%E6%A0%BC%E6%9B%B8%28B.12.13%29%28202612%29_20260515151841.pdf)。
 - 2026-07-27 TWSE `2330` 08:55–13:35 的 77,213 筆實際 response。
 
-適用 mapping：`TeralionTwseQuote`，`mapping_version = 3`。
+適用 mapping：`TeralionTwseQuote`，`mapping_version = 4`。
 
 ## 2. 支援範圍
 
@@ -24,7 +24,7 @@ type definition；具體 exact price／quantity type 與 canonical encoding 由
 
 | `format` | 實測筆數 | 第一版行為 |
 | --- | ---: | --- |
-| `STOCK_SNAPSHOT` | 3,597 | M1 支援；正規化為 `QuoteSnapshot` |
+| `STOCK_SNAPSHOT` | 3,597 | M1 支援；一般 quote 為 `QuoteSnapshot`，試算揭示為 auction event |
 | `STOCK_REALTIME` | 70,199 | M1 支援完整 book 與已驗證的 intermediate/final `1+1` group；見第 7 節 |
 | `INTRADAY_ODDLOT_REALTIME` | 3,417 | 已知但不支援；保存 raw、計數略過、不產生 event |
 
@@ -42,8 +42,9 @@ type definition；具體 exact price／quantity type 與 canonical encoding 由
 內就視為支援。
 
 M1 committed fixture 必須保存全部 regular `STOCK_SNAPSHOT` 與
-`STOCK_REALTIME` records。兩種 format 共同驗證完整 quote；realtime
-intermediate／final group 另外驗證 `TradeBatch -> QuoteSnapshot`。
+`STOCK_REALTIME` records。兩種 format 共同驗證完整 quote；試算揭示映射為
+`IndicativeOpeningAuction`／`IndicativeClosingAuction`，一般 realtime
+intermediate／final group 則維持 `TradeBatch -> QuoteSnapshot`。
 
 ## 3. TWSE session
 
@@ -206,7 +207,7 @@ shape 判斷：
 | `symbol` | `symbol` |
 | `source_format` | exact `format` |
 | `match_time` | parsed `match_time` |
-| `event_kind` | `QuoteSnapshot` |
+| `event_kind` | non-trial `QuoteSnapshot`；trial 為對應 auction event |
 | `source_sequence` | absent；TWSE quote sample 沒有可用 counter |
 
 `received_at` 不進 replay clock，也不是 `OrderingRule` 的 source sequence。
@@ -220,13 +221,13 @@ source page、cursor、file line 或 ingestion ordinal 都不得補成 sequence�
 | --- | --- |
 | complete bid slots | `bids` array，依序轉成最多五 slots |
 | complete ask slots | `asks` array，依序轉成最多五 slots |
-| trade observation | `deal` present → `Set`；`null` → `NoObservation` |
-| cumulative volume | `Set(cum_volume)` |
+| trade observation | non-trial `deal` present → `Set`；`null` → `NoObservation` |
+| cumulative volume | non-trial `Set(cum_volume)` |
 | book／trade quantity unit | constant `TradingUnit` for regular `STOCK_*` formats |
 | cumulative volume unit | constant `TradingUnit` for regular `STOCK_*` formats |
 | limit annotations | 保存 raw `limit_flags`，並依第 8.2 節解碼四組 2-bit value |
 | status annotations | 保存 raw `status_flags`，並依第 8.1 節解碼獨立 bits |
-| standalone status event | 不產生；annotations 留在同一 atomic quote event |
+| standalone status event | 不產生；status 與 observation 留在同一 atomic event |
 
 book、deal、cumulative volume 與 raw flags 必須組成單一 atomic event。event
 accepted 後，一次完整取代 book、一次更新其他明確 observation，且 state version
@@ -247,6 +248,25 @@ checksum 保護，未來加入 domain event 時必須更新 event schema／mappi
 
 array 少於五筆代表該側剩餘 slots 為 empty，不代表從前一 event merge。若來源
 field 缺少、type 不符或大於五檔，視為 invalid payload。
+
+### 6.4 Indicative auction events
+
+`status_flags` 的 Bit 7 為 `1` 時，source record 是試算揭示，不得映射成
+`QuoteSnapshot`、`TradeBatch` 或 actual cumulative volume。normalizer 依明確
+opening／closing marker、delayed bit 或 session window 分類：
+
+| Source condition | Domain event |
+| --- | --- |
+| 08:30–09:00 trial／opening marker／delayed open | `IndicativeOpeningAuction` |
+| 13:25–13:30 trial／closing marker／delayed close | `IndicativeClosingAuction` |
+
+auction payload 保留 indicative price／quantity、可用的 complete book、source
+`cum_volume` observation 與 raw annotations；這些欄位不會更新 actual trade 或
+fill evidence。無法唯一分類的 trial record 在 strict mode reject，不可猜測。
+
+`STOCK_REALTIME` trial intermediate／final pair 仍須恰好一筆一筆；intermediate
+auction event 沒有 book，final auction event 才可帶 complete book。兩者依 source
+phase rank deterministic ordering。
 
 ## 7. `intermediate_print` edge case
 
@@ -345,9 +365,9 @@ Bit 6／5 只有 Bit 7 為 `1` 的試算揭示才具有語意；Bit 7 為 `0` �
 的 fixture 證據。未來若看到組合值，必須逐 bit 解碼，例如 `144 = 128 + 16`
 表示「試算揭示」與「逐筆撮合註記」同時 set；不得把 `144` 當成新 enum variant。
 
-`status_flags` annotations 隨原 quote event 原子更新。replayer 不因 clock 穿越
-09:00／13:30 合成另一個 status event，也不能把 `16` 簡化成永久的
-`MarketOpen`。
+`status_flags` annotations 隨原 quote 或 auction event 原子更新。replayer 不因
+clock 穿越 09:00／13:30 合成另一個 status event，也不能把 `16` 簡化成永久的
+`MarketOpen`。Bit 7 trial record 必須使用第 6.4 節的 auction event。
 
 ### 8.2 `limit_flags`：漲跌停註記
 
@@ -506,6 +526,9 @@ records；不得手工重造 payload。
 | --- | --- |
 | 合法 `STOCK_SNAPSHOT` complete book | 一個 atomic `QuoteSnapshot` |
 | 合法 non-intermediate `STOCK_REALTIME` | 一個 atomic `QuoteSnapshot` |
+| trial quote in pre-open window | 一個 `IndicativeOpeningAuction` |
+| trial quote in pre-close window | 一個 `IndicativeClosingAuction` |
+| trial `STOCK_REALTIME` intermediate/final `1+1` | 兩個同 phase auction events，intermediate 先 |
 | regular book／deal／cum quantity | `TradingUnit`；不乘以 1,000 |
 | `deal=null` | trade `NoObservation`，不清除 recent trade |
 | `cum_volume=0` | 保留合法 zero |

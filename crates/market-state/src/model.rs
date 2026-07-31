@@ -77,6 +77,7 @@ impl Error for SessionSegmentIdError {}
 pub struct AppliedEventRef {
     match_time: MatchTime,
     source_format: SourceFormatId,
+    source_phase: u8,
     event_kind: EventKind,
     source_sequence: Option<u64>,
     event_fingerprint: EventFingerprint,
@@ -87,6 +88,7 @@ impl AppliedEventRef {
         Ok(Self {
             match_time: event.match_time(),
             source_format: event.source_format().clone(),
+            source_phase: source_phase_for_event(event),
             event_kind: event.payload().kind(),
             source_sequence: event.source_sequence(),
             event_fingerprint: event.fingerprint()?,
@@ -109,6 +111,11 @@ impl AppliedEventRef {
     }
 
     #[must_use]
+    pub const fn source_phase(&self) -> u8 {
+        self.source_phase
+    }
+
+    #[must_use]
     pub const fn source_sequence(&self) -> Option<u64> {
         self.source_sequence
     }
@@ -116,6 +123,27 @@ impl AppliedEventRef {
     #[must_use]
     pub const fn event_fingerprint(&self) -> EventFingerprint {
         self.event_fingerprint
+    }
+}
+
+fn source_phase_for_event(event: &DomainEvent) -> u8 {
+    if event.instrument().market() != market_types::MarketId::Twse
+        || event.source_format().as_str() != "STOCK_REALTIME"
+    {
+        return 0;
+    }
+    match event.payload() {
+        market_types::EventPayload::TradeBatch(_) => 10,
+        market_types::EventPayload::QuoteSnapshot(_)
+        | market_types::EventPayload::BookSnapshot(_) => 20,
+        market_types::EventPayload::IndicativeOpeningAuction(auction)
+        | market_types::EventPayload::IndicativeClosingAuction(auction) => {
+            if auction.book().as_set().is_some() {
+                20
+            } else {
+                10
+            }
+        }
     }
 }
 

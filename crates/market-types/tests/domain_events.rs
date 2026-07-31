@@ -1,7 +1,7 @@
 use market_types::{
     BookError, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventError,
-    EventPayload, InstantTrend, InstrumentId, LimitPosition, MarketAnnotations, MarketId,
-    MatchTime, MatchingMethod, Observation, Price, Quantity, QuantityUnit, QuoteSnapshot,
+    EventPayload, IndicativeAuction, InstantTrend, InstrumentId, LimitPosition, MarketAnnotations,
+    MarketId, MatchTime, MatchingMethod, Observation, Price, Quantity, QuantityUnit, QuoteSnapshot,
     SourceFormatId, Symbol, TradeBatch, TradeOrder, TradePrint, TradePrintKind, TradingDate,
     TwseQuoteAnnotations, Volume,
 };
@@ -162,8 +162,8 @@ fn canonical_quote_frame_has_the_documented_field_order() {
 
     let mut expected = Vec::new();
     expected.extend_from_slice(b"OSME");
-    expected.extend_from_slice(&1_u16.to_be_bytes());
-    expected.extend_from_slice(&1_u16.to_be_bytes());
+    expected.extend_from_slice(&2_u16.to_be_bytes());
+    expected.extend_from_slice(&2_u16.to_be_bytes());
     expected.push(1);
     expected.extend_from_slice(&1_u32.to_be_bytes());
     expected.push(b'A');
@@ -213,5 +213,34 @@ fn canonical_event_changes_for_distinct_observation_semantics() {
     assert_ne!(
         make_event(Observation::NoObservation),
         make_event(Observation::Clear)
+    );
+}
+
+#[test]
+fn indicative_auction_roundtrips_without_becoming_a_trade() {
+    let auction = IndicativeAuction::new(
+        Observation::Set(Price::parse("100").unwrap()),
+        Observation::Set(Quantity::new(2, QuantityUnit::Contract).unwrap()),
+        Observation::NoObservation,
+        Observation::NoObservation,
+        MarketAnnotations::None,
+    )
+    .unwrap();
+    let event = DomainEvent::new(
+        InstrumentId::new(MarketId::Taifex, Symbol::new("TXFH6").unwrap()),
+        TradingDate::parse("2026-07-20").unwrap(),
+        SourceFormatId::new("I022").unwrap(),
+        MatchTime::parse("2026-07-20T08:40:00+08:00").unwrap(),
+        None,
+        EventPayload::IndicativeOpeningAuction(auction),
+    );
+    let canonical = event.to_canonical_bytes().unwrap();
+    assert_eq!(
+        DomainEvent::from_canonical_bytes(&canonical).unwrap(),
+        event
+    );
+    assert_eq!(
+        event.payload().kind(),
+        market_types::EventKind::IndicativeOpeningAuction
     );
 }

@@ -385,9 +385,9 @@ impl Error for SimulationError {}
 #[cfg(test)]
 mod tests {
     use market_types::{
-        BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, MarketAnnotations, MarketId,
-        Observation, QuoteSnapshot, SourceFormatId, Symbol, TradePrint, TradePrintKind,
-        TradingDate, Volume,
+        BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, EventPayload, IndicativeAuction,
+        MarketAnnotations, MarketId, Observation, QuoteSnapshot, SourceFormatId, Symbol,
+        TradePrint, TradePrintKind, TradingDate, Volume,
     };
 
     use super::*;
@@ -456,5 +456,32 @@ mod tests {
             apply_slippage(Price::parse("100").unwrap(), OrderSide::Buy, model).unwrap(),
             Price::parse("101").unwrap()
         );
+    }
+
+    #[test]
+    fn indicative_auction_is_never_fill_evidence() {
+        let actual = event();
+        let EventPayload::QuoteSnapshot(snapshot) = actual.payload() else {
+            panic!("fixture helper must create a quote snapshot")
+        };
+        let auction = DomainEvent::new(
+            actual.instrument().clone(),
+            actual.trading_date(),
+            actual.source_format().clone(),
+            actual.match_time(),
+            None,
+            EventPayload::IndicativeOpeningAuction(
+                IndicativeAuction::new(
+                    Observation::Set(Price::parse("100").unwrap()),
+                    Observation::Set(Quantity::new(1, QuantityUnit::TradingUnit).unwrap()),
+                    Observation::Set(snapshot.book().clone()),
+                    Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
+                    MarketAnnotations::None,
+                )
+                .unwrap(),
+            ),
+        );
+        assert!(evidence(&auction, EvidenceMode::TopOfBook, OrderSide::Buy).is_none());
+        assert!(evidence(&auction, EvidenceMode::TradePrint, OrderSide::Buy).is_none());
     }
 }

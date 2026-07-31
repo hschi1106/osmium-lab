@@ -1,8 +1,8 @@
 use std::{cmp::Ordering, collections::BTreeSet, error::Error, fmt};
 
 use market_types::{
-    CanonicalEncodingError, DomainEvent, EventKind, EventPayload, Observation, QuantityUnit,
-    TradePrintKind, Volume,
+    CanonicalEncodingError, DomainEvent, EventPayload, Observation, QuantityUnit, TradePrintKind,
+    Volume,
 };
 
 use crate::{
@@ -10,8 +10,8 @@ use crate::{
     SessionSegmentId, StateField, TradeObservation, UnavailableReason,
 };
 
-pub const MARKET_STATE_VERSION: u16 = 1;
-pub const STATE_REDUCER_VERSION: u16 = 1;
+pub const MARKET_STATE_VERSION: u16 = 2;
+pub const STATE_REDUCER_VERSION: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SegmentBoundaryPolicy {
@@ -180,6 +180,17 @@ impl MarketStateReducer {
                 )?;
                 next.set_last_annotations(StateField::Known {
                     value: batch.annotations().clone(),
+                    observed_at: event_ref.clone(),
+                });
+                changed.insert(ChangedField::LastAnnotations);
+            }
+            EventPayload::IndicativeOpeningAuction(auction)
+            | EventPayload::IndicativeClosingAuction(auction) => {
+                // Indicative values are timeline observations, but they are not
+                // actual trades or cumulative volume and must not overwrite
+                // executable market state.
+                next.set_last_annotations(StateField::Known {
+                    value: auction.annotations().clone(),
                     observed_at: event_ref.clone(),
                 });
                 changed.insert(ChangedField::LastAnnotations);
@@ -369,6 +380,9 @@ fn validate_twse_realtime_shape(event: &DomainEvent) -> Result<(), StateTransiti
         {
             Ok(())
         }
+        EventPayload::IndicativeOpeningAuction(_) | EventPayload::IndicativeClosingAuction(_) => {
+            Ok(())
+        }
         EventPayload::BookSnapshot(_) | EventPayload::TradeBatch(_) => {
             Err(StateTransitionError::InvalidTwseRealtimeShape)
         }
@@ -386,15 +400,7 @@ fn compare_within_instrument(left: &AppliedEventRef, right: &AppliedEventRef) ->
 }
 
 fn source_phase_for_ref(event: &AppliedEventRef) -> u8 {
-    if event.source_format().as_str() == "STOCK_REALTIME" {
-        match event.event_kind() {
-            EventKind::TradeBatch => 10,
-            EventKind::QuoteSnapshot => 20,
-            EventKind::BookSnapshot => 0,
-        }
-    } else {
-        0
-    }
+    event.source_phase()
 }
 
 #[derive(Debug, Clone)]

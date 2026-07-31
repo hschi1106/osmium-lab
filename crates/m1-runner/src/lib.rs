@@ -127,6 +127,16 @@ impl M1FixtureInput {
             .iter()
             .filter(|event| matches!(event.payload(), EventPayload::TradeBatch(_)))
             .count();
+        let indicative_opening_auction_count = self
+            .events
+            .iter()
+            .filter(|event| matches!(event.payload(), EventPayload::IndicativeOpeningAuction(_)))
+            .count();
+        let indicative_closing_auction_count = self
+            .events
+            .iter()
+            .filter(|event| matches!(event.payload(), EventPayload::IndicativeClosingAuction(_)))
+            .count();
 
         Ok(M1RunArtifacts {
             normalized_events,
@@ -153,6 +163,8 @@ impl M1FixtureInput {
                 normalized_event_count: self.events.len(),
                 quote_snapshot_count,
                 trade_batch_count,
+                indicative_opening_auction_count,
+                indicative_closing_auction_count,
                 callback_count: completed.callback_count(),
                 strategy_output_record_count: completed.strategy_output().records().len(),
                 warning_count: self.warnings.len(),
@@ -351,6 +363,8 @@ pub struct M1RunSummary {
     pub normalized_event_count: usize,
     pub quote_snapshot_count: usize,
     pub trade_batch_count: usize,
+    pub indicative_opening_auction_count: usize,
+    pub indicative_closing_auction_count: usize,
     pub callback_count: u64,
     pub strategy_output_record_count: usize,
     pub warning_count: usize,
@@ -390,6 +404,8 @@ impl M1RunSummary {
                 "  normalized_events: {normalized_event_count}\n",
                 "  quote_snapshots: {quote_snapshot_count}\n",
                 "  trade_batches: {trade_batch_count}\n",
+                "  indicative_opening_auctions: {indicative_opening_auction_count}\n",
+                "  indicative_closing_auctions: {indicative_closing_auction_count}\n",
                 "  strategy_callbacks: {callback_count}\n",
                 "  strategy_output_records: {strategy_output_record_count}\n",
                 "  warnings: {warning_count}\n",
@@ -421,6 +437,8 @@ impl M1RunSummary {
             normalized_event_count = self.normalized_event_count,
             quote_snapshot_count = self.quote_snapshot_count,
             trade_batch_count = self.trade_batch_count,
+            indicative_opening_auction_count = self.indicative_opening_auction_count,
+            indicative_closing_auction_count = self.indicative_closing_auction_count,
             callback_count = self.callback_count,
             strategy_output_record_count = self.strategy_output_record_count,
             warning_count = self.warning_count,

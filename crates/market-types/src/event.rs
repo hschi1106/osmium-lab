@@ -8,9 +8,9 @@ use crate::{
     append_bytes, append_length, append_optional_u64, trade::validate_trade_units,
 };
 
-pub const MARKET_TYPES_VERSION: u16 = 1;
-pub const EVENT_SCHEMA_VERSION: u16 = 1;
-pub const CANONICAL_EVENT_VERSION: u16 = 1;
+pub const MARKET_TYPES_VERSION: u16 = 2;
+pub const EVENT_SCHEMA_VERSION: u16 = 2;
+pub const CANONICAL_EVENT_VERSION: u16 = 2;
 const CANONICAL_MAGIC: &[u8; 4] = b"OSME";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -134,11 +134,67 @@ impl TradeBatch {
     }
 }
 
+/// An indicative call-auction observation that is not an executed trade.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct IndicativeAuction {
+    price: Observation<Price>,
+    quantity: Observation<Quantity>,
+    book: Observation<CompleteBookSnapshot>,
+    cumulative_volume: Observation<Volume>,
+    annotations: MarketAnnotations,
+}
+
+impl IndicativeAuction {
+    pub fn new(
+        price: Observation<Price>,
+        quantity: Observation<Quantity>,
+        book: Observation<CompleteBookSnapshot>,
+        cumulative_volume: Observation<Volume>,
+        annotations: MarketAnnotations,
+    ) -> Result<Self, EventError> {
+        validate_auction_units(&quantity, &book, &cumulative_volume)?;
+        Ok(Self {
+            price,
+            quantity,
+            book,
+            cumulative_volume,
+            annotations,
+        })
+    }
+
+    #[must_use]
+    pub const fn price(&self) -> &Observation<Price> {
+        &self.price
+    }
+
+    #[must_use]
+    pub const fn quantity(&self) -> &Observation<Quantity> {
+        &self.quantity
+    }
+
+    #[must_use]
+    pub const fn book(&self) -> &Observation<CompleteBookSnapshot> {
+        &self.book
+    }
+
+    #[must_use]
+    pub const fn cumulative_volume(&self) -> &Observation<Volume> {
+        &self.cumulative_volume
+    }
+
+    #[must_use]
+    pub const fn annotations(&self) -> &MarketAnnotations {
+        &self.annotations
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum EventPayload {
     QuoteSnapshot(QuoteSnapshot),
     BookSnapshot(BookSnapshot),
     TradeBatch(TradeBatch),
+    IndicativeOpeningAuction(IndicativeAuction),
+    IndicativeClosingAuction(IndicativeAuction),
 }
 
 impl EventPayload {
@@ -153,6 +209,8 @@ impl EventPayload {
             Self::QuoteSnapshot(_) => EventKind::QuoteSnapshot,
             Self::BookSnapshot(_) => EventKind::BookSnapshot,
             Self::TradeBatch(_) => EventKind::TradeBatch,
+            Self::IndicativeOpeningAuction(_) => EventKind::IndicativeOpeningAuction,
+            Self::IndicativeClosingAuction(_) => EventKind::IndicativeClosingAuction,
         }
     }
 }
@@ -163,6 +221,8 @@ pub enum EventKind {
     QuoteSnapshot = 10,
     BookSnapshot = 20,
     TradeBatch = 30,
+    IndicativeOpeningAuction = 40,
+    IndicativeClosingAuction = 50,
 }
 
 impl EventKind {
@@ -233,7 +293,7 @@ impl DomainEvent {
         &self.payload
     }
 
-    /// Encodes the version-1 canonical event frame.
+    /// Encodes the version-2 canonical event frame.
     pub fn to_canonical_bytes(&self) -> Result<Vec<u8>, CanonicalEncodingError> {
         let mut bytes = Vec::with_capacity(256);
         bytes.extend_from_slice(CANONICAL_MAGIC);
@@ -250,7 +310,7 @@ impl DomainEvent {
         Ok(bytes)
     }
 
-    /// Decodes and validates one complete version-1 canonical event frame.
+    /// Decodes and validates one complete version-2 canonical event frame.
     pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, CanonicalDecodingError> {
         let mut parser = CanonicalParser::new(bytes);
         if parser.take(4)? != CANONICAL_MAGIC
@@ -306,6 +366,26 @@ impl DomainEvent {
                     .map_err(|_| CanonicalDecodingError::InvalidValue)?,
                 )
             }
+            40 => EventPayload::IndicativeOpeningAuction(
+                IndicativeAuction::new(
+                    parser.observation(CanonicalParser::price)?,
+                    parser.observation(CanonicalParser::quantity)?,
+                    parser.observation(CanonicalParser::book)?,
+                    parser.observation(CanonicalParser::volume)?,
+                    parser.annotations()?,
+                )
+                .map_err(|_| CanonicalDecodingError::InvalidValue)?,
+            ),
+            50 => EventPayload::IndicativeClosingAuction(
+                IndicativeAuction::new(
+                    parser.observation(CanonicalParser::price)?,
+                    parser.observation(CanonicalParser::quantity)?,
+                    parser.observation(CanonicalParser::book)?,
+                    parser.observation(CanonicalParser::volume)?,
+                    parser.annotations()?,
+                )
+                .map_err(|_| CanonicalDecodingError::InvalidValue)?,
+            ),
             _ => return Err(CanonicalDecodingError::InvalidValue),
         };
         if !parser.is_finished() {
@@ -552,6 +632,26 @@ fn validate_snapshot_units(
     Ok(())
 }
 
+fn validate_auction_units(
+    quantity: &Observation<Quantity>,
+    book: &Observation<CompleteBookSnapshot>,
+    cumulative_volume: &Observation<Volume>,
+) -> Result<(), EventError> {
+    let mut expected = None;
+    if let Observation::Set(quantity) = quantity {
+        validate_unit(&mut expected, quantity.unit())?;
+    }
+    if let Observation::Set(book) = book
+        && let Some(unit) = book.quantity_unit()
+    {
+        validate_unit(&mut expected, unit)?;
+    }
+    if let Observation::Set(volume) = cumulative_volume {
+        validate_unit(&mut expected, volume.unit())?;
+    }
+    Ok(())
+}
+
 fn validate_unit(
     expected: &mut Option<QuantityUnit>,
     actual: QuantityUnit,
@@ -592,6 +692,14 @@ fn encode_payload(
             bytes.push(batch.trade_order().discriminant());
             batch.cumulative_volume().append_canonical(bytes)?;
             batch.annotations().append_canonical(bytes)?;
+        }
+        EventPayload::IndicativeOpeningAuction(auction)
+        | EventPayload::IndicativeClosingAuction(auction) => {
+            auction.price().append_canonical(bytes)?;
+            auction.quantity().append_canonical(bytes)?;
+            auction.book().append_canonical(bytes)?;
+            auction.cumulative_volume().append_canonical(bytes)?;
+            auction.annotations().append_canonical(bytes)?;
         }
     }
     Ok(())

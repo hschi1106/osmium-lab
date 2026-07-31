@@ -43,21 +43,22 @@ fn complete_committed_regular_fixture_normalizes_offline() {
     assert!(report.known_skipped().is_empty());
     assert!(report.warnings().is_empty());
 
-    let (quotes, trades) =
-        report
-            .events()
-            .iter()
-            .fold((0_usize, 0_usize), |(quotes, trades), event| {
-                match event.payload() {
-                    EventPayload::QuoteSnapshot(_) => (quotes + 1, trades),
-                    EventPayload::TradeBatch(_) => (quotes, trades + 1),
-                    EventPayload::BookSnapshot(_) => {
-                        panic!("TWSE M1 fixture must not produce BookSnapshot")
-                    }
-                }
-            });
-    assert_eq!(quotes, 73_792);
+    let (quotes, trades, opening, closing) = report.events().iter().fold(
+        (0_usize, 0_usize, 0_usize, 0_usize),
+        |(quotes, trades, opening, closing), event| match event.payload() {
+            EventPayload::QuoteSnapshot(_) => (quotes + 1, trades, opening, closing),
+            EventPayload::TradeBatch(_) => (quotes, trades + 1, opening, closing),
+            EventPayload::IndicativeOpeningAuction(_) => (quotes, trades, opening + 1, closing),
+            EventPayload::IndicativeClosingAuction(_) => (quotes, trades, opening, closing + 1),
+            EventPayload::BookSnapshot(_) => {
+                panic!("TWSE M1 fixture must not produce BookSnapshot")
+            }
+        },
+    );
+    assert_eq!(quotes, 73_435);
     assert_eq!(trades, 3);
+    assert_eq!(opening, 180);
+    assert_eq!(closing, 177);
 
     for match_time in [
         "2026-07-27T09:28:49.274622+08:00",

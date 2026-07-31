@@ -319,9 +319,9 @@ fn empty_selected_event_sequence_has_a_framed_checksum_and_initial_state() {
     let mut canonical = Vec::new();
     canonical.extend_from_slice(b"OSRS");
     canonical.extend_from_slice(&1_u16.to_be_bytes());
-    canonical.extend_from_slice(&1_u16.to_be_bytes());
-    canonical.extend_from_slice(&1_u16.to_be_bytes());
     canonical.extend_from_slice(&2_u16.to_be_bytes());
+    canonical.extend_from_slice(&2_u16.to_be_bytes());
+    canonical.extend_from_slice(&3_u16.to_be_bytes());
     canonical.push(0);
     canonical.extend_from_slice(&0_u64.to_be_bytes());
     assert_eq!(
