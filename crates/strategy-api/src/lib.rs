@@ -11,7 +11,7 @@ pub use context::{
     OrderRestrictionReason, SessionCallbackContext, SessionKind, SessionPhase, SessionSegment,
     TradingContext, TwseTradingContextEvaluator,
 };
-pub use example::ExampleStrategy;
+pub use example::{EXAMPLE_STRATEGY_ID, EXAMPLE_STRATEGY_VERSION, ExampleStrategy};
 pub use identity::{
     BinaryIdentity, CanonicalParamsChecksum, DeclarationError, StrategyDeclaration,
     StrategyIdentity,

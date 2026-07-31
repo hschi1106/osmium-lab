@@ -4,6 +4,7 @@ members = [
     "crates/market-state",
     "crates/market-types",
     "crates/m2-runner",
+    "crates/m2-config",
     "crates/normalizer/twse",
     "crates/osmium-cli",
     "crates/data-sync",
