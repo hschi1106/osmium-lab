@@ -1,0 +1,4 @@
+warrant 03003T: records=111 formats={"WARRANT_REALTIME"=>60, "WARRANT_SNAPSHOT"=>51} sha256=8dd6671cfd005a823d8df2a5373c4e8791cd580c5c817696aeacf8a0d167e137
+future TXFH6: records=515258 formats={"I022"=>120, "I082"=>120, "I030"=>13796, "I072"=>48, "I020"=>86464, "I021"=>1308, "I080"=>413393, "I023"=>6, "I070"=>3} sha256=c47ce0b6a2e1670d1d80a1232132ef3cf6c5167cbf236de743933b4117227528
+option TXO24000U6: records=540 formats={"I072"=>22, "I080"=>85, "I030"=>68, "I070"=>4, "I022"=>177, "I082"=>177, "I020"=>2, "I021"=>2, "I023"=>3} sha256=af8a33734d34d68ead116f579816930feabc7750d721ab4b405abfb6e4304f28
+M5 fixture integrity and secret scan: passed

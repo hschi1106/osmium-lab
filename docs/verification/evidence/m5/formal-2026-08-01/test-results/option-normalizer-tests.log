@@ -1,0 +1,9 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running tests/m5_option_fixture.rs (target/debug/deps/m5_option_fixture-18cbdc6305936638)
+
+running 2 tests
+test m5_option_profile_rejects_futures_wire_market_and_unknown_format ... ok
+test m5_option_fixture_normalizes_cross_day_book_trade_and_opening_events ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

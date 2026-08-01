@@ -1,0 +1,8 @@
+backtest=complete
+events=500304
+orders=4
+fills=4
+final_cash_atoms=100012500000000000000000000
+realized_pnl_atoms=12500000000000000000000
+unrealized_pnl_atoms=0
+output=/Users/hschi1106/Documents/osmium-lab/docs/verification/evidence/m5/.formal-2026-08-01.staging.27123/runs/option-permutation-1

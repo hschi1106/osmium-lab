@@ -1,0 +1,77 @@
+acceptance_contract_version: 1
+milestone: M5
+status: Passed
+completion_quality: full
+git_commit: 88c2523aaec46b4c7a6865ebfcde9bf20fb817c6
+rust_toolchain: "rustc 1.97.1 (8bab26f4f 2026-07-14)"
+scope:
+  M5_W: passed
+  M5_O: passed
+prerequisite:
+  M4: passed
+fixture_gate:
+  warrant: passed
+  option: passed
+  daily_instrument: passed
+  source_checksums: passed
+  secret_scan: passed
+  redistribution_scope: private-internal-review-only
+network_policy:
+  status: disabled
+  runner: sandbox-exec
+  credential: absent
+run:
+  warrant:
+    config: config/m5-warrant.yaml
+    events: 181854
+    opened_streams: 3
+    orders: 6
+    fills: 6
+    event_stream_blake3: c3e2512a9e3034434cf376365b4a41aee8a8a8035f1f4dadec34c8563727a825
+    final_state_blake3: 1a9a74b51f444985827b27ad5a6ec68acdd6030619e51e96b22c4c4f3496fb70
+    strategy_output_blake3: 232343ee03a260b956cf026e84eff11b6f5e8eb3340fb0fb9c6ab47561e81b7b
+    orders_blake3: c23b2b5bfa1e38e72b8bf3ec25a679f9a7fe48cfc23b2eeb348cbf238650a28d
+    fills_blake3: 2477bc1fc0f787b4c3a7eb3485156aa30e1579b491970405edc787c3cab38824
+    ledger_blake3: b3d9bb5aadf83ba4e9783900d0bd108a35d834875a0239d05f14511610ff8c6b
+  option:
+    config: config/m5-option.yaml
+    events: 500304
+    opened_streams: 2
+    orders: 4
+    fills: 4
+    event_stream_blake3: e494a32aa1713bf723697eeb363612ce38e46bd9e2135bb844e376f67f52c1d2
+    final_state_blake3: b8d0c6679c2aa95d26ff0443732849af72c9876ddb7d11ed53628b90297ca559
+    strategy_output_blake3: 9abde9a5daf74ac317f701a6cf0bf57e283ba0c7beb76ef84e18f63586cb389d
+    orders_blake3: 72a17d026ed7850d7c0980f53b38858af752596a351e0953917efb25728d7c2f
+    fills_blake3: d942d33c599e6f4d2a85676942398107e83a0300c8552f3b62cfc3af9ec4e30d
+    ledger_blake3: c0fea389cf0587b836cc4589c43c5b7d49fccc1a8c0fb6c3339136f23edad461
+determinism:
+  repeated_runs_per_scope: 10
+  repeated_run_directories_byte_identical: true
+  discovery_permutations_per_scope: 3
+  discovery_permutations_byte_identical: true
+  cache_rebuild_byte_identical: true
+  debug_release_byte_identical: true
+accounting:
+  futures_options_isolation: passed
+  options_model: options_v1
+  futures_model: futures_v1
+inspection:
+  inspect_success: passed
+  corruption_rejection: passed
+performance:
+  warrant: test-results/performance-warrant.yaml
+  option: test-results/performance-option.yaml
+  threshold: not_set
+acceptance:
+  M5-AC-01: { status: Passed, evidence: fixture-integrity.log + M4 evidence + official links in fixture metadata }
+  M5-AC-02: { status: Passed, evidence: fixture metadata + config references + interface documents }
+  M5-AC-03: { status: Passed, evidence: fixture-integrity.log + fixture-data-warrant.log + fixture-data-option.log + plan/verify logs }
+  M5-AC-04: { status: Passed, evidence: warrant-normalizer-tests.log + option-normalizer-tests.log + artifact checksums }
+  M5-AC-05: { status: Passed, evidence: normalizer tests + replay logs + market-state profiles }
+  M5-AC-06: { status: Passed, evidence: plan/verify logs + cache-rebuild-warrant.log + cache-rebuild-option.log + network policy }
+  M5-AC-07: { status: Passed, evidence: stream-open-warrant.log + stream-open-option.log + replay/backtest logs }
+  M5-AC-08: { status: Passed, evidence: accounting-tests.log + accounting-isolation.log + option positions }
+  M5-AC-09: { status: Passed, evidence: repeated-runs-* + discovery-permutations-* + debug-release-* }
+  M5-AC-10: { status: Passed, evidence: corruption-* + fixture-integrity.log + secret-scan.log + performance-* + this report }
+approver: tools/run_m5_acceptance.sh
