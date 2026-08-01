@@ -414,11 +414,7 @@ fn parse_selection(raw: &InstrumentConfig) -> Result<M3InstrumentSelection, M3Co
         .map(parse_instrument_kind)
         .transpose()?
         .unwrap_or_else(|| default_kind(market));
-    let reference = raw
-        .reference
-        .as_ref()
-        .map(|reference| parse_reference(reference))
-        .transpose()?;
+    let reference = raw.reference.as_ref().map(parse_reference).transpose()?;
     match (market, kind) {
         (MarketId::Twse | MarketId::Tpex, InstrumentKind::Equity)
         | (MarketId::Twse | MarketId::Tpex, InstrumentKind::Warrant)
