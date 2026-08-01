@@ -1,0 +1,4 @@
+source=verified
+partition=Twse/Symbol("2330")@2026-07-20 revision=94a230dd623c853d4fd8f6f18e700ea0ec7a0b6ce40a57bb51e99ec217895c51 records=101869
+partition=Tpex/Symbol("6488")@2026-07-20 revision=858bc0931a2463ea4b4cd9bfe5f03bc983f79ccb215d19a702800faaf0cd270a records=79876
+partition=Twse/Symbol("03003T")@2026-07-20 revision=8c60ed4ad847875b8a14b1cbedcb082159951b41c527c351651ab7ed535b0a6d records=111
