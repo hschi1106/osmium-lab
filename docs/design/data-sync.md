@@ -154,7 +154,8 @@ download。
 ## 4. Online boundary 與 credential
 
 只有 `sync` 可以建立 Feed Archive HTTP client。credential 從 runtime secret source
-取得，僅存在 request adapter scope：
+取得，僅存在 request adapter scope；本地 CLI 可在需要同步時從工作目錄 `.env` 載入
+`TERALION_API_KEY`，已存在的 process environment 值優先：
 
 ```text
 CLI sync
@@ -172,7 +173,7 @@ CLI sync
 - log、error、metrics、HTTP recording。
 - request URL query、header dump 或 panic message。
 
-`verify`、cache build、`replay`、`backtest` 與 `inspect` 不讀
+`verify`、cache build、`replay`、`backtest`、`display` 與 `inspect` 不讀 `.env` 或
 `TERALION_API_KEY`，也不因 local data 不足而 fallback 至 `sync`。
 
 ## 5. Source compression

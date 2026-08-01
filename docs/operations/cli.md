@@ -36,6 +36,7 @@ osmium sync          --config <file>
 osmium verify        --config <file>
 osmium cache prepare --config <file>
 osmium replay        --config <file> --output <new-directory>
+osmium display        --config <file>
 osmium backtest      --config <file> --output <new-directory>
 osmium inspect       --run <run-directory>
 osmium run           --config <file> --output <new-directory>
@@ -224,6 +225,8 @@ cargo run -p osmium-cli -- sync --config <file>
 - 只執行 frozen plan 中的 `DownloadMissingSource` 或
   `ResumeOrRestartBuilding`。
 - 是唯一可讀 Teralion credential、建立 HTTP client 的 command。
+- 本地開發可將 `TERALION_API_KEY` 放在工作目錄的 `.env`；已存在的 process environment
+  值優先，`.env` 只在需要同步時載入。
 - 完成 coverage、cursor pages、daily instrument、verify 與 atomic source publish。
 - complete source action 是 reuse，HTTP request count 必須為零。
 - 不建立 replay cache、不執行 strategy/simulation。
@@ -372,6 +375,28 @@ M1 mode：
 - 不建立 HTTP client、source revision 或 cache。
 - 不執行 order/fill/accounting。
 - 維持既有 M1 artifact schema及 error compatibility。
+
+### 8.3 Market replay TUI
+
+```sh
+cargo run --release -p osmium-cli -- display \
+  --config config/m4-day-multi.yaml
+```
+
+此命令是簡化看盤介面，不產生回測 artifacts。第一版接受既有 M2
+`config_version: 1` 或 M3 `config_version: 2`，且只處理一個 `trading_date`；執行前必須完成 source verify 與
+`cache prepare`。命令完全離線、不讀取 `.env` 或 `TERALION_API_KEY`，並依 frozen `ReplayPlan`
+只開啟 explicit universe 的 cache streams。
+
+所有 selected symbols 共用同一個 `match_time` 時鐘。`←`／`→` 只切換顯示標的，不改變
+播放狀態或時間；`Space` 暫停／繼續；`+`／`-` 使用固定倍率
+`0.1x, 0.25x, 0.5x, 1.0x, 2.0x, 5.0x, 10.0x, 25.0x, 50.0x`；`R` 重設並恢復
+`1.0x`；`Q` 離開。
+
+價格與一分鐘桶成交量使用同一個 replay start/end 範圍；左下顯示完整五檔，右下顯示最新成交在
+最上方的明細。domain event 沒有可驗證的 aggressor side，因此 `SIDE` 顯示 `—`，不推測
+`BUY`／`SELL`；畫面不顯示 imbalance、trade delta、queue position 或其他未由來源支持的
+指標。完整 UI 邊界與清理行為見[Market replay TUI 設計](../design/market-replay-ui.md)。
 
 ## 9. `backtest`
 

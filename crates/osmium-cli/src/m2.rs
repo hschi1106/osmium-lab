@@ -231,6 +231,12 @@ fn m3_attempt_id(key: &run_planner::SourcePartitionKey) -> String {
     format!("m3-{}", &identity[..24])
 }
 
+fn load_dotenv() {
+    if Path::new(".env").is_file() {
+        let _ = dotenvy::dotenv();
+    }
+}
+
 fn execute_m3_sync(path: &Path) -> Result<String, M2CommandError> {
     let config = load_m3(path)?;
     let bundle = plan_m3(config.clone())?;
@@ -243,6 +249,7 @@ fn execute_m3_sync(path: &Path) -> Result<String, M2CommandError> {
     if !needs_network {
         return Ok("source=reused\nhttp_requests=0".to_owned());
     }
+    load_dotenv();
     let credential = TeralionCredential::new(
         env::var("TERALION_API_KEY").map_err(|_| M2CommandError::MissingCredential)?,
     )?;
@@ -334,6 +341,7 @@ fn execute_sync(path: &Path) -> Result<String, M2CommandError> {
     ) {
         return Ok("source=reused\nhttp_requests=0".to_owned());
     }
+    load_dotenv();
     let credential = TeralionCredential::new(
         env::var("TERALION_API_KEY").map_err(|_| M2CommandError::MissingCredential)?,
     )?;
@@ -484,7 +492,7 @@ fn replay_m3(path: &Path) -> Result<replay_engine::CompletedReplay, M2CommandErr
     Ok(core.complete()?)
 }
 
-fn m3_core(
+pub(crate) fn m3_core(
     config: &M3Config,
     bundle: &m3_config::M3PlanBundle,
 ) -> Result<ReplayCore, M2CommandError> {
@@ -786,7 +794,7 @@ fn ready_bundle(path: &Path) -> Result<M2PlanBundle, M2CommandError> {
     Ok(bundle)
 }
 
-fn core(bundle: &M2PlanBundle) -> Result<ReplayCore, M2CommandError> {
+pub(crate) fn core(bundle: &M2PlanBundle) -> Result<ReplayCore, M2CommandError> {
     let config = bundle.execution.config();
     Ok(ReplayCore::new(
         vec![MarketState::new(

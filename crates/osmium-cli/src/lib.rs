@@ -8,15 +8,22 @@ use std::{
 use m1_runner::{ArtifactExportError, M1FixtureInput, M1RunError, M1RunSummary};
 
 mod m2;
+mod market_replay;
+mod market_replay_ui;
 pub use m2::{
     M2Command, M2CommandError, M2CommandKind, execute as execute_m2,
     execute_inspect as execute_m2_inspect,
+};
+pub use market_replay::{
+    MarketReplay, MarketReplayError, PLAYBACK_SPEEDS_MILLI, PlaybackSpeed, PlaybackStatus,
+    ReplayHistory, TradeRow,
 };
 
 pub const USAGE: &str = "\
 Usage:
   osmium replay --fixture <fixture-root> --output <output-directory>
   osmium plan|sync|verify|replay|backtest|run --config <file> [--output <directory>]
+  osmium display --config <file>
   osmium cache prepare --config <file>
   osmium inspect --run <run-directory>
 
@@ -29,7 +36,25 @@ pub enum ParsedCommand {
     Help,
     Replay(ReplayCommand),
     M2(M2Command),
+    MarketReplay(MarketReplayCommand),
     Inspect(PathBuf),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarketReplayCommand {
+    config: PathBuf,
+}
+
+impl MarketReplayCommand {
+    #[must_use]
+    pub const fn new(config: PathBuf) -> Self {
+        Self { config }
+    }
+
+    #[must_use]
+    pub fn config(&self) -> &Path {
+        &self.config
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,6 +108,9 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<ParsedComm
     };
     if command == "--help" || command == "-h" {
         return Ok(ParsedCommand::Help);
+    }
+    if command == "display" {
+        return parse_display(args);
     }
     if command == "inspect" {
         let flag = args
@@ -171,6 +199,32 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<ParsedComm
     )))
 }
 
+fn parse_display(args: impl Iterator<Item = OsString>) -> Result<ParsedCommand, CliError> {
+    let mut config = None;
+    let mut args = args;
+    while let Some(flag) = args.next() {
+        if flag == "--help" || flag == "-h" {
+            return Ok(ParsedCommand::Help);
+        }
+        let value = args.next().ok_or_else(|| {
+            CliError::usage(format!("missing value for {}", flag.to_string_lossy()))
+        })?;
+        if flag == "--config" && config.is_none() {
+            config = Some(PathBuf::from(value));
+        } else if flag == "--config" {
+            return Err(CliError::usage("duplicate option: --config"));
+        } else {
+            return Err(CliError::usage(format!(
+                "unknown display option: {}",
+                flag.to_string_lossy()
+            )));
+        }
+    }
+    Ok(ParsedCommand::MarketReplay(MarketReplayCommand::new(
+        config.ok_or_else(|| CliError::usage("missing required --config option"))?,
+    )))
+}
+
 fn parse_m2(
     kind: M2CommandKind,
     args: impl Iterator<Item = OsString>,
@@ -232,6 +286,10 @@ pub fn execute_replay(command: &ReplayCommand) -> Result<ReplayOutcome, CliError
     })
 }
 
+pub fn execute_market_replay(command: &MarketReplayCommand) -> Result<(), CliError> {
+    market_replay_ui::run(command.config()).map_err(CliError::MarketReplay)
+}
+
 fn required_path(
     root: &Path,
     relative: &str,
@@ -256,6 +314,7 @@ pub enum CliError {
         fixture_root: PathBuf,
         source: Box<M1RunError>,
     },
+    MarketReplay(MarketReplayError),
     Export {
         output_directory: PathBuf,
         source: ArtifactExportError,
@@ -272,6 +331,7 @@ impl CliError {
         match self {
             Self::Usage(_) => 2,
             Self::MissingFixturePath { .. } | Self::Replay { .. } | Self::Export { .. } => 1,
+            Self::MarketReplay(error) => error.exit_code(),
         }
     }
 
@@ -304,6 +364,7 @@ impl fmt::Display for CliError {
                 "artifact export failed for {}: {source}",
                 output_directory.display()
             ),
+            Self::MarketReplay(source) => write!(formatter, "{source}"),
         }
     }
 }
@@ -313,6 +374,7 @@ impl Error for CliError {
         match self {
             Self::Replay { source, .. } => Some(source.as_ref()),
             Self::Export { source, .. } => Some(source),
+            Self::MarketReplay(source) => Some(source),
             Self::Usage(_) | Self::MissingFixturePath { .. } => None,
         }
     }
@@ -377,6 +439,23 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn display_accepts_a_frozen_config_path() {
+        assert_eq!(
+            parse_args([
+                "display".into(),
+                "--config".into(),
+                "config/m4-day-multi.yaml".into(),
+            ])
+            .unwrap(),
+            ParsedCommand::MarketReplay(MarketReplayCommand::new(
+                "config/m4-day-multi.yaml".into()
+            ))
+        );
+        assert!(parse_args(["display".into()]).is_err());
+        assert!(parse_args(["market".into(), "replay".into()]).is_err());
     }
 
     #[test]
