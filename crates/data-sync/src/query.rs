@@ -5,6 +5,46 @@ use market_types::{InstrumentId, MatchTime, MatchTimeError, TradingDate};
 pub const TERALION_INTERFACE_VERSION: u16 = 1;
 pub const MAX_PAGE_LIMIT: u16 = 5_000;
 
+/// Teralion source market, kept separate from the domain `MarketId`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u8)]
+pub enum ArchiveMarket {
+    Twse = 1,
+    Tpex = 2,
+    TaifexFutures = 3,
+    TaifexOptions = 4,
+}
+
+impl ArchiveMarket {
+    #[must_use]
+    pub const fn for_instrument(instrument: &InstrumentId) -> Self {
+        match instrument.market() {
+            market_types::MarketId::Twse => Self::Twse,
+            market_types::MarketId::Tpex => Self::Tpex,
+            market_types::MarketId::Taifex => Self::TaifexFutures,
+        }
+    }
+
+    #[must_use]
+    pub const fn wire_market(self) -> &'static str {
+        match self {
+            Self::Twse => "twse",
+            Self::Tpex => "tpex",
+            Self::TaifexFutures => "taifex_fut",
+            Self::TaifexOptions => "taifex_opt",
+        }
+    }
+
+    #[must_use]
+    pub const fn domain_market(self) -> market_types::MarketId {
+        match self {
+            Self::Twse => market_types::MarketId::Twse,
+            Self::Tpex => market_types::MarketId::Tpex,
+            Self::TaifexFutures | Self::TaifexOptions => market_types::MarketId::Taifex,
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct TeralionCredential(Box<str>);
 
@@ -107,6 +147,9 @@ pub enum TeralionQuery {
         end: ArchiveTimestamp,
         kinds: Box<[ArchiveKind]>,
         limit: u16,
+        /// `None` preserves the original query identity. M5 sets this for
+        /// `taifex_opt` so options cannot be read as futures.
+        archive_market: Option<ArchiveMarket>,
     },
     DailyInstrument {
         instrument: InstrumentId,
@@ -134,6 +177,31 @@ impl TeralionQuery {
         kinds: impl IntoIterator<Item = ArchiveKind>,
         limit: u16,
     ) -> Result<Self, QueryError> {
+        Self::ticks_with_archive_market(instrument, start, end, kinds, limit, None)
+    }
+
+    pub fn ticks_for_market(
+        instrument: InstrumentId,
+        start: ArchiveTimestamp,
+        end: ArchiveTimestamp,
+        kinds: impl IntoIterator<Item = ArchiveKind>,
+        limit: u16,
+        archive_market: ArchiveMarket,
+    ) -> Result<Self, QueryError> {
+        if archive_market.domain_market() != instrument.market() {
+            return Err(QueryError::ArchiveMarketMismatch);
+        }
+        Self::ticks_with_archive_market(instrument, start, end, kinds, limit, Some(archive_market))
+    }
+
+    fn ticks_with_archive_market(
+        instrument: InstrumentId,
+        start: ArchiveTimestamp,
+        end: ArchiveTimestamp,
+        kinds: impl IntoIterator<Item = ArchiveKind>,
+        limit: u16,
+        archive_market: Option<ArchiveMarket>,
+    ) -> Result<Self, QueryError> {
         if start.utc() >= end.utc() {
             return Err(QueryError::InvalidTimestampWindow);
         }
@@ -150,6 +218,7 @@ impl TeralionQuery {
             end,
             kinds: kinds.into_iter().collect(),
             limit,
+            archive_market,
         })
     }
 
@@ -173,6 +242,18 @@ impl TeralionQuery {
             Self::SymbolRange { instrument }
             | Self::Ticks { instrument, .. }
             | Self::DailyInstrument { instrument, .. } => Some(instrument),
+        }
+    }
+
+    #[must_use]
+    pub fn archive_market(&self) -> Option<ArchiveMarket> {
+        match self {
+            Self::Ticks {
+                instrument,
+                archive_market,
+                ..
+            } => Some(archive_market.unwrap_or_else(|| ArchiveMarket::for_instrument(instrument))),
+            _ => None,
         }
     }
 
@@ -201,6 +282,7 @@ impl TeralionQuery {
                 end,
                 kinds,
                 limit,
+                archive_market,
             } => {
                 bytes.push(3);
                 append_instrument(instrument, &mut bytes);
@@ -209,6 +291,10 @@ impl TeralionQuery {
                 bytes.extend_from_slice(&(kinds.len() as u32).to_be_bytes());
                 bytes.extend(kinds.iter().map(|kind| *kind as u8));
                 bytes.extend_from_slice(&limit.to_be_bytes());
+                if let Some(archive_market) = archive_market {
+                    bytes.push(1);
+                    bytes.push(*archive_market as u8);
+                }
             }
             Self::DailyInstrument {
                 instrument,
@@ -241,6 +327,7 @@ pub enum QueryError {
     InvalidDateWindow,
     InvalidPageLimit(u16),
     EmptyKinds,
+    ArchiveMarketMismatch,
 }
 
 impl fmt::Display for QueryError {
@@ -261,6 +348,9 @@ impl fmt::Display for QueryError {
                 )
             }
             Self::EmptyKinds => formatter.write_str("ticks query requires a source kind"),
+            Self::ArchiveMarketMismatch => {
+                formatter.write_str("archive market does not match the domain instrument market")
+            }
         }
     }
 }
@@ -304,5 +394,42 @@ mod tests {
         let credential = TeralionCredential::new("not-a-real-secret").unwrap();
         assert_eq!(format!("{credential:?}"), "TeralionCredential([REDACTED])");
         assert_eq!(credential.expose_secret(), "not-a-real-secret");
+    }
+
+    #[test]
+    fn option_archive_market_is_explicit_and_identity_bound() {
+        let instrument = InstrumentId::new(MarketId::Taifex, Symbol::new("TXO24000U6").unwrap());
+        let start = ArchiveTimestamp::parse("2026-07-27T14:55:00+08:00").unwrap();
+        let end = ArchiveTimestamp::parse("2026-07-28T13:50:00+08:00").unwrap();
+        let option = TeralionQuery::ticks_for_market(
+            instrument.clone(),
+            start.clone(),
+            end.clone(),
+            [
+                ArchiveKind::Book,
+                ArchiveKind::Close,
+                ArchiveKind::Stats,
+                ArchiveKind::Trade,
+            ],
+            5_000,
+            ArchiveMarket::TaifexOptions,
+        )
+        .unwrap();
+        let futures =
+            TeralionQuery::ticks(instrument, start, end, [ArchiveKind::Book], 5_000).unwrap();
+        assert_eq!(option.archive_market(), Some(ArchiveMarket::TaifexOptions));
+        assert_eq!(option.archive_market().unwrap().wire_market(), "taifex_opt");
+        assert_ne!(option.identity(), futures.identity());
+        assert!(matches!(
+            TeralionQuery::ticks_for_market(
+                InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap()),
+                ArchiveTimestamp::parse("2026-07-27T08:55:00+08:00").unwrap(),
+                ArchiveTimestamp::parse("2026-07-27T13:35:00+08:00").unwrap(),
+                [ArchiveKind::Quote],
+                5_000,
+                ArchiveMarket::TaifexOptions,
+            ),
+            Err(QueryError::ArchiveMarketMismatch)
+        ));
     }
 }

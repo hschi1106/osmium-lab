@@ -124,6 +124,41 @@ impl MarketStateProfile {
         .expect("built-in TWSE market-state profile is valid")
     }
 
+    pub fn twse_warrant() -> Self {
+        Self::new(
+            MarketId::Twse,
+            vec![
+                SourceFormatRule::new(
+                    SourceFormatId::new("WARRANT_REALTIME")
+                        .expect("TWSE warrant format is non-empty"),
+                    vec![
+                        EventKind::QuoteSnapshot,
+                        EventKind::TradeBatch,
+                        EventKind::IndicativeOpeningAuction,
+                        EventKind::IndicativeClosingAuction,
+                    ],
+                )
+                .expect("TWSE warrant realtime profile has accepted event kinds"),
+                SourceFormatRule::new(
+                    SourceFormatId::new("WARRANT_SNAPSHOT")
+                        .expect("TWSE warrant format is non-empty"),
+                    vec![
+                        EventKind::QuoteSnapshot,
+                        EventKind::IndicativeOpeningAuction,
+                        EventKind::IndicativeClosingAuction,
+                    ],
+                )
+                .expect("TWSE warrant snapshot profile has accepted event kinds"),
+            ],
+            CumulativeVolumePolicy::NonDecreasingWithinSegment {
+                unit: QuantityUnit::TradingUnit,
+            },
+            AnnotationPolicy::TwseQuote,
+            1,
+        )
+        .expect("built-in TWSE warrant market-state profile is valid")
+    }
+
     pub fn taifex_futures() -> Self {
         Self::new(
             MarketId::Taifex,
@@ -154,6 +189,38 @@ impl MarketStateProfile {
             1,
         )
         .expect("built-in TAIFEX market-state profile is valid")
+    }
+
+    pub fn taifex_options() -> Self {
+        Self::new(
+            MarketId::Taifex,
+            vec![
+                SourceFormatRule::new(
+                    SourceFormatId::new("I020").expect("TAIFEX option format is non-empty"),
+                    vec![EventKind::TradeBatch],
+                )
+                .expect("TAIFEX option trade profile has accepted event kinds"),
+                SourceFormatRule::new(
+                    SourceFormatId::new("I022").expect("TAIFEX option format is non-empty"),
+                    vec![EventKind::IndicativeOpeningAuction],
+                )
+                .expect("TAIFEX option opening profile has accepted event kinds"),
+                SourceFormatRule::new(
+                    SourceFormatId::new("I080").expect("TAIFEX option format is non-empty"),
+                    vec![EventKind::BookSnapshot],
+                )
+                .expect("TAIFEX option book profile has accepted event kinds"),
+                SourceFormatRule::new(
+                    SourceFormatId::new("I082").expect("TAIFEX option format is non-empty"),
+                    vec![EventKind::BookSnapshot],
+                )
+                .expect("TAIFEX option reference book profile has accepted event kinds"),
+            ],
+            CumulativeVolumePolicy::Unconstrained,
+            AnnotationPolicy::NoneOnly,
+            1,
+        )
+        .expect("built-in TAIFEX option market-state profile is valid")
     }
 
     pub fn tpex_regular() -> Self {

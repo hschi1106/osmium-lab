@@ -23,7 +23,7 @@ use m3_config::{
 use market_state::{
     MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
 };
-use market_types::MarketId;
+use market_types::{InstrumentKind, MarketId};
 use replay_engine::{ReplayContextWindow, ReplayCore};
 use run_planner::{
     CacheAction, ChargeSides as PlanChargeSides, FillEvidence, NetworkRequirement,
@@ -195,28 +195,62 @@ fn m3_queries(
         ]
         .as_slice(),
     };
-    let ticks = TeralionQuery::ticks(
-        key.instrument().clone(),
-        ArchiveTimestamp::parse(replay_start.to_iso8601(480))?,
-        ArchiveTimestamp::parse(replay_end_exclusive.to_iso8601(480))?,
-        kinds.iter().copied(),
-        5_000,
-    )?;
+    let kind = config.instrument_kind_for(key.instrument());
+    let source_market = config.archive_market_for(key.instrument());
+    let start = ArchiveTimestamp::parse(replay_start.to_iso8601(480))?;
+    let end = ArchiveTimestamp::parse(replay_end_exclusive.to_iso8601(480))?;
+    let ticks = match kind {
+        InstrumentKind::Warrant | InstrumentKind::Option => TeralionQuery::ticks_for_market(
+            key.instrument().clone(),
+            start,
+            end,
+            kinds.iter().copied(),
+            5_000,
+            source_market,
+        )?,
+        _ => TeralionQuery::ticks(
+            key.instrument().clone(),
+            start,
+            end,
+            kinds.iter().copied(),
+            5_000,
+        )?,
+    };
     let daily = TeralionQuery::daily_instrument(key.instrument().clone(), key.trading_date());
-    let normalizer = match key.instrument().market() {
-        MarketId::Twse => PartitionNormalizerConfig::Twse(TwseNormalizerConfig::new(
+    let normalizer = match (key.instrument().market(), kind) {
+        (MarketId::Twse, InstrumentKind::Warrant) => {
+            PartitionNormalizerConfig::Warrant(TwseNormalizerConfig::new_warrant(
+                key.instrument().clone(),
+                key.trading_date(),
+                replay_start,
+                replay_end_exclusive,
+            )?)
+        }
+        (MarketId::Twse, _) => PartitionNormalizerConfig::Twse(TwseNormalizerConfig::new(
             key.instrument().clone(),
             key.trading_date(),
             replay_start,
             replay_end_exclusive,
         )?),
-        MarketId::Tpex => PartitionNormalizerConfig::Tpex(TpexNormalizerConfig::new(
+        (MarketId::Tpex, _) => PartitionNormalizerConfig::Tpex(TpexNormalizerConfig::new(
             key.instrument().clone(),
             key.trading_date(),
             replay_start,
             replay_end_exclusive,
         )?),
-        MarketId::Taifex => PartitionNormalizerConfig::Taifex(TaifexNormalizerConfig::new(
+        (MarketId::Taifex, InstrumentKind::Option) => {
+            let windows = session_plan
+                .windows()
+                .iter()
+                .map(|window| (window.replay_start(), window.replay_end_exclusive()));
+            PartitionNormalizerConfig::TaifexOption(TaifexNormalizerConfig::for_profile(
+                key.instrument().clone(),
+                key.trading_date(),
+                taifex_normalizer::InstrumentProfile::IndexOptions,
+                windows,
+            )?)
+        }
+        (MarketId::Taifex, _) => PartitionNormalizerConfig::Taifex(TaifexNormalizerConfig::new(
             key.instrument().clone(),
             key.trading_date(),
             replay_start,
@@ -525,10 +559,13 @@ pub(crate) fn m3_core(
         }
         let context = default_context
             .ok_or_else(|| M2CommandError::Other("M3 session plan has no windows".to_owned()))?;
-        let reducer = match key.instrument().market() {
-            MarketId::Twse => MarketStateReducer::twse_regular(),
-            MarketId::Tpex => MarketStateReducer::tpex_regular(),
-            MarketId::Taifex => MarketStateReducer::taifex_futures(),
+        let kind = config.instrument_kind_for(key.instrument());
+        let reducer = match (key.instrument().market(), kind) {
+            (MarketId::Twse, InstrumentKind::Warrant) => MarketStateReducer::twse_warrant(),
+            (MarketId::Twse, _) => MarketStateReducer::twse_regular(),
+            (MarketId::Tpex, _) => MarketStateReducer::tpex_regular(),
+            (MarketId::Taifex, InstrumentKind::Option) => MarketStateReducer::taifex_options(),
+            (MarketId::Taifex, _) => MarketStateReducer::taifex_futures(),
         };
         states.push(MarketState::new(
             key.instrument().clone(),
@@ -698,9 +735,12 @@ fn execute_m3_backtest(path: &Path, output: &Path) -> Result<String, M2CommandEr
             .instrument_economics()
             .iter()
             .map(|economics| {
-                let model = match economics.instrument().market() {
-                    MarketId::Taifex => AccountingModel::FuturesV1,
-                    MarketId::Twse | MarketId::Tpex => AccountingModel::EquityV1,
+                let model = match config.instrument_kind_for(economics.instrument()) {
+                    InstrumentKind::Option => AccountingModel::OptionsV1,
+                    InstrumentKind::Future => AccountingModel::FuturesV1,
+                    InstrumentKind::Equity | InstrumentKind::Warrant | InstrumentKind::Unknown => {
+                        AccountingModel::EquityV1
+                    }
                 };
                 InstrumentLedgerConfig::new(
                     economics.instrument().clone(),

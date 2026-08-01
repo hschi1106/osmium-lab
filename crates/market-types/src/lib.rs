@@ -4,6 +4,7 @@ mod canonical;
 mod decimal;
 mod event;
 mod instrument;
+mod instrument_kind;
 mod market;
 mod observation;
 mod price;
@@ -30,6 +31,7 @@ pub use event::{
     MARKET_TYPES_VERSION, QuoteSnapshot, TradeBatch,
 };
 pub use instrument::InstrumentId;
+pub use instrument_kind::{InstrumentKind, OptionSide};
 pub use market::{MarketId, MarketIdError};
 pub use observation::{Observation, UnknownValue};
 pub use price::{Price, PriceError};

@@ -51,6 +51,7 @@ impl FeedArchiveTransport {
                 end,
                 kinds,
                 limit,
+                ..
             } => self
                 .client
                 .get(format!(

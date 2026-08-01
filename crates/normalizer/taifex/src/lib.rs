@@ -11,8 +11,14 @@ use serde_json::value::RawValue;
 
 pub const MAPPING_NAME: &str = "TeralionTaifexFutures";
 pub const MAPPING_VERSION: u16 = 2;
+pub const OPTION_MAPPING_NAME: &str = "TeralionTaifexOptions";
+pub const OPTION_MAPPING_VERSION: u16 = 1;
 
-const MARKET: &str = "taifex_fut";
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstrumentProfile {
+    Futures,
+    IndexOptions,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NormalizerConfig {
@@ -20,6 +26,8 @@ pub struct NormalizerConfig {
     trading_date: TradingDate,
     replay_start: MatchTime,
     replay_end_exclusive: MatchTime,
+    replay_windows: Box<[(MatchTime, MatchTime)]>,
+    profile: InstrumentProfile,
 }
 
 impl NormalizerConfig {
@@ -29,17 +37,62 @@ impl NormalizerConfig {
         replay_start: MatchTime,
         replay_end_exclusive: MatchTime,
     ) -> Result<Self, ConfigError> {
+        Self::for_profile(
+            instrument,
+            trading_date,
+            InstrumentProfile::Futures,
+            [(replay_start, replay_end_exclusive)],
+        )
+    }
+
+    pub fn new_options(
+        instrument: InstrumentId,
+        trading_date: TradingDate,
+        replay_start: MatchTime,
+        replay_end_exclusive: MatchTime,
+    ) -> Result<Self, ConfigError> {
+        Self::for_profile(
+            instrument,
+            trading_date,
+            InstrumentProfile::IndexOptions,
+            [(replay_start, replay_end_exclusive)],
+        )
+    }
+
+    pub fn for_profile(
+        instrument: InstrumentId,
+        trading_date: TradingDate,
+        profile: InstrumentProfile,
+        windows: impl IntoIterator<Item = (MatchTime, MatchTime)>,
+    ) -> Result<Self, ConfigError> {
         if instrument.market() != MarketId::Taifex {
             return Err(ConfigError::WrongMarket(instrument.market()));
         }
-        if replay_start >= replay_end_exclusive {
+        let mut replay_windows = windows.into_iter().collect::<Vec<_>>();
+        replay_windows.sort_by_key(|(start, _)| *start);
+        if replay_windows.is_empty()
+            || replay_windows.iter().any(|(start, end)| start >= end)
+            || replay_windows.windows(2).any(|pair| pair[0].1 > pair[1].0)
+        {
             return Err(ConfigError::InvalidReplayWindow);
         }
+        let replay_start = replay_windows
+            .iter()
+            .map(|(start, _)| *start)
+            .min()
+            .expect("non-empty replay windows");
+        let replay_end_exclusive = replay_windows
+            .iter()
+            .map(|(_, end)| *end)
+            .max()
+            .expect("non-empty replay windows");
         Ok(Self {
             instrument,
             trading_date,
             replay_start,
             replay_end_exclusive,
+            replay_windows: replay_windows.into_boxed_slice(),
+            profile,
         })
     }
 
@@ -61,6 +114,31 @@ impl NormalizerConfig {
     #[must_use]
     pub const fn replay_end_exclusive(&self) -> MatchTime {
         self.replay_end_exclusive
+    }
+
+    #[must_use]
+    pub const fn profile(&self) -> InstrumentProfile {
+        self.profile
+    }
+
+    #[must_use]
+    pub const fn replay_windows(&self) -> &[(MatchTime, MatchTime)] {
+        &self.replay_windows
+    }
+
+    #[must_use]
+    pub fn source_market(&self) -> &'static str {
+        match self.profile {
+            InstrumentProfile::Futures => "taifex_fut",
+            InstrumentProfile::IndexOptions => "taifex_opt",
+        }
+    }
+
+    #[must_use]
+    pub fn contains_match_time(&self, match_time: MatchTime) -> bool {
+        self.replay_windows
+            .iter()
+            .any(|(start, end)| *start <= match_time && match_time < *end)
     }
 }
 
@@ -165,7 +243,13 @@ impl TaifexNormalizer {
             })?,
             envelope.record_type,
         )?;
-        validate_identity(record_number, &context, "market", MARKET, envelope.market)?;
+        validate_identity(
+            record_number,
+            &context,
+            "market",
+            self.config.source_market(),
+            envelope.market,
+        )?;
         validate_identity(
             record_number,
             &context,
@@ -190,7 +274,7 @@ impl TaifexNormalizer {
             )
         })?;
 
-        if match_time < self.config.replay_start || match_time >= self.config.replay_end_exclusive {
+        if !self.config.contains_match_time(match_time) {
             return Ok(ClassifiedRecord::OutsideReplayWindow(context));
         }
 

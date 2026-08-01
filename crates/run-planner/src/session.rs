@@ -1,6 +1,6 @@
 use std::{error::Error, fmt};
 
-use market_types::{InstrumentId, MarketId, MatchTime, TradingDate};
+use market_types::{InstrumentId, InstrumentKind, MarketId, MatchTime, TradingDate};
 use strategy_api::SessionKind;
 
 use crate::partition::SessionPlanIdentity;
@@ -22,18 +22,40 @@ pub enum SessionProfileId {
     TaifexStockFutures = 3,
     TaifexStockFuturesRegularOnly = 4,
     TpexRegular = 5,
+    TaifexIndexOptions = 6,
 }
 
 impl SessionProfileId {
     /// Resolves the profile for the M3 acceptance instruments.
     pub fn for_instrument(instrument: &InstrumentId) -> Result<Self, SessionPlanError> {
+        let kind = match instrument.market() {
+            MarketId::Twse | MarketId::Tpex => InstrumentKind::Equity,
+            MarketId::Taifex => InstrumentKind::Future,
+        };
+        Self::for_instrument_kind(instrument, kind)
+    }
+
+    pub fn for_instrument_kind(
+        instrument: &InstrumentId,
+        kind: InstrumentKind,
+    ) -> Result<Self, SessionPlanError> {
         match instrument.market() {
-            MarketId::Twse => Ok(Self::TwseRegular),
-            MarketId::Tpex => Ok(Self::TpexRegular),
-            MarketId::Taifex => match instrument.symbol().as_str() {
-                "TXFH6" => Ok(Self::TaifexIndexFutures),
-                "CDFH6" => Ok(Self::TaifexStockFutures),
-                "CAFH6" => Ok(Self::TaifexStockFuturesRegularOnly),
+            MarketId::Twse => match kind {
+                InstrumentKind::Equity | InstrumentKind::Warrant => Ok(Self::TwseRegular),
+                _ => Err(SessionPlanError::UnsupportedInstrument(instrument.clone())),
+            },
+            MarketId::Tpex => match kind {
+                InstrumentKind::Equity | InstrumentKind::Warrant => Ok(Self::TpexRegular),
+                _ => Err(SessionPlanError::UnsupportedInstrument(instrument.clone())),
+            },
+            MarketId::Taifex => match kind {
+                InstrumentKind::Option => Ok(Self::TaifexIndexOptions),
+                InstrumentKind::Future => match instrument.symbol().as_str() {
+                    "TXFH6" => Ok(Self::TaifexIndexFutures),
+                    "CDFH6" => Ok(Self::TaifexStockFutures),
+                    "CAFH6" => Ok(Self::TaifexStockFuturesRegularOnly),
+                    _ => Err(SessionPlanError::UnsupportedInstrument(instrument.clone())),
+                },
                 _ => Err(SessionPlanError::UnsupportedInstrument(instrument.clone())),
             },
         }
@@ -45,7 +67,7 @@ impl SessionProfileId {
             Self::TwseRegular | Self::TpexRegular | Self::TaifexStockFuturesRegularOnly => {
                 matches!(kind, SessionKind::Regular)
             }
-            Self::TaifexIndexFutures | Self::TaifexStockFutures => true,
+            Self::TaifexIndexFutures | Self::TaifexStockFutures | Self::TaifexIndexOptions => true,
         }
     }
 }
@@ -111,6 +133,16 @@ impl SessionPlan {
         session_kinds: impl IntoIterator<Item = SessionKind>,
     ) -> Result<Self, SessionPlanError> {
         let profile = SessionProfileId::for_instrument(instrument)?;
+        Self::with_profile(instrument, trading_date, profile, session_kinds)
+    }
+
+    pub fn for_instrument_kind(
+        instrument: &InstrumentId,
+        kind: InstrumentKind,
+        trading_date: TradingDate,
+        session_kinds: impl IntoIterator<Item = SessionKind>,
+    ) -> Result<Self, SessionPlanError> {
+        let profile = SessionProfileId::for_instrument_kind(instrument, kind)?;
         Self::with_profile(instrument, trading_date, profile, session_kinds)
     }
 
@@ -215,12 +247,18 @@ fn build_window(
         (SessionProfileId::TwseRegular | SessionProfileId::TpexRegular, SessionKind::Regular) => {
             (trading_date, "09:00:00", trading_date, "13:30:00")
         }
-        (SessionProfileId::TaifexIndexFutures, SessionKind::Regular)
+        (
+            SessionProfileId::TaifexIndexFutures | SessionProfileId::TaifexIndexOptions,
+            SessionKind::Regular,
+        )
         | (SessionProfileId::TaifexStockFutures, SessionKind::Regular)
         | (SessionProfileId::TaifexStockFuturesRegularOnly, SessionKind::Regular) => {
             (trading_date, "08:45:00", trading_date, "13:45:00")
         }
-        (SessionProfileId::TaifexIndexFutures, SessionKind::AfterHours) => (
+        (
+            SessionProfileId::TaifexIndexFutures | SessionProfileId::TaifexIndexOptions,
+            SessionKind::AfterHours,
+        ) => (
             previous_business_date(trading_date)?,
             "15:00:00",
             trading_date,

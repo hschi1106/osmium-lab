@@ -493,7 +493,14 @@ fn parse_page(query: &TeralionQuery, body: &[u8]) -> Result<ParsedPage, CursorEr
     } = query
     {
         for item in items {
-            validate_tick(item, instrument, kinds)?;
+            validate_tick(
+                item,
+                instrument,
+                kinds,
+                query
+                    .archive_market()
+                    .expect("tick query has a source market"),
+            )?;
         }
     }
     let next_cursor = match object.get("next_cursor") {
@@ -511,6 +518,7 @@ fn validate_tick(
     item: &Value,
     instrument: &market_types::InstrumentId,
     kinds: &[ArchiveKind],
+    archive_market: crate::ArchiveMarket,
 ) -> Result<(), CursorError> {
     let item = item.as_object().ok_or(CursorError::InvalidTickEnvelope)?;
     let kind = required_string(item, "type")?;
@@ -518,11 +526,7 @@ fn validate_tick(
         return Err(CursorError::TickIdentityMismatch("type"));
     }
     let market = required_string(item, "market")?;
-    let expected_market = match instrument.market() {
-        market_types::MarketId::Twse => "twse",
-        market_types::MarketId::Tpex => "tpex",
-        market_types::MarketId::Taifex => "taifex_fut",
-    };
+    let expected_market = archive_market.wire_market();
     if market != expected_market {
         return Err(CursorError::TickIdentityMismatch("market"));
     }
@@ -580,7 +584,7 @@ mod tests {
     use market_types::{InstrumentId, MarketId, Symbol};
 
     use super::*;
-    use crate::ArchiveTimestamp;
+    use crate::{ArchiveMarket, ArchiveTimestamp};
 
     fn query() -> TeralionQuery {
         TeralionQuery::ticks(
@@ -640,6 +644,26 @@ mod tests {
         let request = machine.request_next().unwrap();
         let pending = machine.accept_response(&request, body.to_vec()).unwrap();
         assert_eq!(pending.record_count(), 1);
+    }
+
+    #[test]
+    fn explicit_option_query_rejects_futures_market_payload() {
+        let query = TeralionQuery::ticks_for_market(
+            InstrumentId::new(MarketId::Taifex, Symbol::new("TXO24000U6").unwrap()),
+            ArchiveTimestamp::parse("2026-07-27T14:55:00+08:00").unwrap(),
+            ArchiveTimestamp::parse("2026-07-28T13:50:00+08:00").unwrap(),
+            [ArchiveKind::Book, ArchiveKind::Trade],
+            5_000,
+            ArchiveMarket::TaifexOptions,
+        )
+        .unwrap();
+        let body = br#"{"items":[{"type":"book","market":"taifex_fut","format":"I080","symbol":"TXO24000U6","match_time":"2026-07-28T09:00:00+08:00","received_at":"2026-07-28T09:00:00+08:00"}],"next_cursor":null}"#;
+        let mut machine = CursorStateMachine::new(query).unwrap();
+        let request = machine.request_next().unwrap();
+        assert!(matches!(
+            machine.accept_response(&request, body.to_vec()),
+            Err(CursorError::TickIdentityMismatch("market"))
+        ));
     }
 
     #[test]

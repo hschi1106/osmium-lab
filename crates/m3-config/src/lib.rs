@@ -5,8 +5,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use data_sync::{PartitionCacheCatalog, PartitionedSourceRepository};
-use market_types::{Decimal, InstrumentId, MarketId, QuantityUnit, Symbol, TradingDate};
+use data_sync::{ArchiveMarket, PartitionCacheCatalog, PartitionedSourceRepository};
+use market_types::{
+    Decimal, InstrumentId, InstrumentKind, MarketId, OptionSide, QuantityUnit, Symbol, TradingDate,
+};
 use replay_engine::{ReplayPlan, ReplayStreamBinding, StableStreamDescriptorId};
 use run_planner::{
     CacheIdentity, CachePolicy, CacheState, ChargeConfig, ChargeSides, Currency, CurrencyAmount,
@@ -27,6 +29,68 @@ pub const M3_CONFIG_VERSION: u16 = 2;
 pub struct M3InstrumentSelection {
     instrument: InstrumentId,
     session_kinds: Box<[SessionKind]>,
+    kind: InstrumentKind,
+    reference: Option<M3InstrumentReference>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct M3InstrumentReference {
+    underlying: Box<str>,
+    expiry: TradingDate,
+    strike: Decimal,
+    option_side: OptionSide,
+    currency: Currency,
+    multiplier: Decimal,
+    quantity_unit: QuantityUnit,
+    units_per_trading_unit: u64,
+    provenance: Box<str>,
+}
+
+impl M3InstrumentReference {
+    #[must_use]
+    pub fn underlying(&self) -> &str {
+        &self.underlying
+    }
+
+    #[must_use]
+    pub const fn expiry(&self) -> TradingDate {
+        self.expiry
+    }
+
+    #[must_use]
+    pub const fn strike(&self) -> Decimal {
+        self.strike
+    }
+
+    #[must_use]
+    pub const fn option_side(&self) -> OptionSide {
+        self.option_side
+    }
+
+    #[must_use]
+    pub const fn currency(&self) -> Currency {
+        self.currency
+    }
+
+    #[must_use]
+    pub const fn multiplier(&self) -> Decimal {
+        self.multiplier
+    }
+
+    #[must_use]
+    pub const fn quantity_unit(&self) -> QuantityUnit {
+        self.quantity_unit
+    }
+
+    #[must_use]
+    pub const fn units_per_trading_unit(&self) -> u64 {
+        self.units_per_trading_unit
+    }
+
+    #[must_use]
+    pub fn provenance(&self) -> &str {
+        &self.provenance
+    }
 }
 
 impl M3InstrumentSelection {
@@ -38,6 +102,16 @@ impl M3InstrumentSelection {
     #[must_use]
     pub const fn session_kinds(&self) -> &[SessionKind] {
         &self.session_kinds
+    }
+
+    #[must_use]
+    pub const fn kind(&self) -> InstrumentKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub const fn reference(&self) -> Option<&M3InstrumentReference> {
+        self.reference.as_ref()
     }
 }
 
@@ -58,9 +132,34 @@ impl M3Config {
         &self.selections
     }
 
+    #[must_use]
+    pub fn selection_for(&self, instrument: &InstrumentId) -> Option<&M3InstrumentSelection> {
+        self.selections
+            .iter()
+            .find(|selection| selection.instrument() == instrument)
+    }
+
+    #[must_use]
+    pub fn instrument_kind_for(&self, instrument: &InstrumentId) -> InstrumentKind {
+        self.selection_for(instrument).map_or_else(
+            || default_kind(instrument.market()),
+            M3InstrumentSelection::kind,
+        )
+    }
+
+    #[must_use]
+    pub fn archive_market_for(&self, instrument: &InstrumentId) -> ArchiveMarket {
+        match self.instrument_kind_for(instrument) {
+            InstrumentKind::Option => ArchiveMarket::TaifexOptions,
+            _ => ArchiveMarket::for_instrument(instrument),
+        }
+    }
+
     pub fn session_plan_for(&self, key: &SourcePartitionKey) -> Result<SessionPlan, M3ConfigError> {
-        SessionPlan::for_instrument(
+        let kind = self.instrument_kind_for(key.instrument());
+        SessionPlan::for_instrument_kind(
             key.instrument(),
+            kind,
             key.trading_date(),
             key.session_kinds().iter().copied(),
         )
@@ -71,8 +170,9 @@ impl M3Config {
         let mut keys = Vec::new();
         for selection in &self.selections {
             for trading_date in self.effective.trading_dates() {
-                let session_plan = SessionPlan::for_instrument(
+                let session_plan = SessionPlan::for_instrument_kind(
                     &selection.instrument,
+                    selection.kind,
                     *trading_date,
                     selection.session_kinds.iter().copied(),
                 )
@@ -126,8 +226,9 @@ pub fn plan(config: M3Config) -> Result<M3PlanBundle, M3ConfigError> {
     let cache_catalog = PartitionCacheCatalog::new(config.effective.data_root());
     for selection in &config.selections {
         for trading_date in config.effective.trading_dates() {
-            let session_plan = SessionPlan::for_instrument(
+            let session_plan = SessionPlan::for_instrument_kind(
                 &selection.instrument,
+                selection.kind,
                 *trading_date,
                 selection.session_kinds.iter().copied(),
             )
@@ -252,7 +353,14 @@ fn resolve(raw: FileConfig) -> Result<M3Config, M3ConfigError> {
     let sessions = sessions.into_iter().collect::<Vec<_>>();
     let declaration = StrategyDeclaration::new(instruments.clone(), sessions.clone())
         .map_err(|error| M3ConfigError::Value(error.to_string()))?;
-    let params_checksum = params_checksum(&raw.strategy.parameters)?;
+    let date_values = trading_dates.clone();
+    let economics = raw
+        .instrument_economics
+        .into_iter()
+        .map(parse_economics)
+        .collect::<Result<Vec<_>, _>>()?;
+    validate_reference_economics(&selections, &economics)?;
+    let params_checksum = params_checksum_with_references(&raw.strategy.parameters, &selections)?;
     let binary_digest = strategy_digest(&raw.strategy.id, &raw.strategy.version, params_checksum);
     let strategy_identity = StrategyIdentity::new(
         raw.strategy.id,
@@ -262,12 +370,6 @@ fn resolve(raw: FileConfig) -> Result<M3Config, M3ConfigError> {
     )
     .map_err(|error| M3ConfigError::Value(error.to_string()))?;
     let strategy = StrategyBinding::new(strategy_identity, params_checksum, declaration);
-    let date_values = trading_dates.clone();
-    let economics = raw
-        .instrument_economics
-        .into_iter()
-        .map(parse_economics)
-        .collect::<Result<Vec<_>, _>>()?;
     let effective = EffectiveRunConfig::resolve(RunConfig {
         // The effective schema is unchanged; M3 is the file-format version.
         config_version: 1,
@@ -291,8 +393,9 @@ fn resolve(raw: FileConfig) -> Result<M3Config, M3ConfigError> {
 }
 
 fn parse_selection(raw: &InstrumentConfig) -> Result<M3InstrumentSelection, M3ConfigError> {
+    let market = parse_market(&raw.market)?;
     let instrument = InstrumentId::new(
-        parse_market(&raw.market)?,
+        market,
         Symbol::new(raw.symbol.clone()).map_err(|error| M3ConfigError::Value(error.to_string()))?,
     );
     let mut session_kinds = raw
@@ -305,10 +408,126 @@ fn parse_selection(raw: &InstrumentConfig) -> Result<M3InstrumentSelection, M3Co
     if session_kinds.is_empty() {
         return Err(M3ConfigError::Invalid("universe.instruments.session_kinds"));
     }
+    let kind = raw
+        .instrument_kind
+        .as_deref()
+        .map(parse_instrument_kind)
+        .transpose()?
+        .unwrap_or_else(|| default_kind(market));
+    let reference = raw
+        .reference
+        .as_ref()
+        .map(|reference| parse_reference(reference))
+        .transpose()?;
+    match (market, kind) {
+        (MarketId::Twse | MarketId::Tpex, InstrumentKind::Equity)
+        | (MarketId::Twse | MarketId::Tpex, InstrumentKind::Warrant)
+        | (MarketId::Taifex, InstrumentKind::Future)
+        | (MarketId::Taifex, InstrumentKind::Option) => {}
+        _ => {
+            return Err(M3ConfigError::Invalid(
+                "universe.instruments.instrument_kind",
+            ));
+        }
+    }
+    if matches!(kind, InstrumentKind::Warrant | InstrumentKind::Option) && reference.is_none() {
+        return Err(M3ConfigError::Invalid("universe.instruments.reference"));
+    }
     Ok(M3InstrumentSelection {
         instrument,
         session_kinds: session_kinds.into_boxed_slice(),
+        kind,
+        reference,
     })
+}
+
+fn default_kind(market: MarketId) -> InstrumentKind {
+    match market {
+        MarketId::Twse | MarketId::Tpex => InstrumentKind::Equity,
+        MarketId::Taifex => InstrumentKind::Future,
+    }
+}
+
+fn parse_instrument_kind(value: &str) -> Result<InstrumentKind, M3ConfigError> {
+    match value {
+        "equity" => Ok(InstrumentKind::Equity),
+        "warrant" => Ok(InstrumentKind::Warrant),
+        "future" => Ok(InstrumentKind::Future),
+        "option" => Ok(InstrumentKind::Option),
+        _ => Err(M3ConfigError::Invalid(
+            "universe.instruments.instrument_kind",
+        )),
+    }
+}
+
+fn parse_reference(raw: &ReferenceConfig) -> Result<M3InstrumentReference, M3ConfigError> {
+    if raw.underlying.trim().is_empty() || raw.provenance.trim().is_empty() {
+        return Err(M3ConfigError::Invalid("universe.instruments.reference"));
+    }
+    let expiry = raw
+        .expiry
+        .parse::<TradingDate>()
+        .map_err(|error| M3ConfigError::Value(error.to_string()))?;
+    let strike = decimal(&raw.strike)?;
+    let multiplier = decimal(&raw.multiplier)?;
+    if strike <= Decimal::ZERO || multiplier <= Decimal::ZERO || raw.units_per_trading_unit == 0 {
+        return Err(M3ConfigError::Invalid("universe.instruments.reference"));
+    }
+    let option_side = match raw.option_side.as_str() {
+        "call" => OptionSide::Call,
+        "put" => OptionSide::Put,
+        _ => {
+            return Err(M3ConfigError::Invalid(
+                "universe.instruments.reference.option_side",
+            ));
+        }
+    };
+    let quantity_unit = match raw.quantity_unit.as_str() {
+        "share" => QuantityUnit::Share,
+        "trading_unit" => QuantityUnit::TradingUnit,
+        "contract" => QuantityUnit::Contract,
+        _ => {
+            return Err(M3ConfigError::Invalid(
+                "universe.instruments.reference.quantity_unit",
+            ));
+        }
+    };
+    Ok(M3InstrumentReference {
+        underlying: raw.underlying.clone().into_boxed_str(),
+        expiry,
+        strike,
+        option_side,
+        currency: parse_currency(&raw.currency)?,
+        multiplier,
+        quantity_unit,
+        units_per_trading_unit: raw.units_per_trading_unit,
+        provenance: raw.provenance.clone().into_boxed_str(),
+    })
+}
+
+fn validate_reference_economics(
+    selections: &[M3InstrumentSelection],
+    economics: &[InstrumentEconomicsConfig],
+) -> Result<(), M3ConfigError> {
+    for selection in selections {
+        let Some(reference) = selection.reference() else {
+            continue;
+        };
+        let Some(economics) = economics
+            .iter()
+            .find(|economics| economics.instrument() == selection.instrument())
+        else {
+            return Err(M3ConfigError::Invalid("instrument_economics"));
+        };
+        if economics.quantity_unit() != reference.quantity_unit()
+            || economics.units_per_trading_unit() != reference.units_per_trading_unit()
+            || economics.currency() != reference.currency()
+            || economics.multiplier() != reference.multiplier()
+        {
+            return Err(M3ConfigError::Invalid("instrument_economics"));
+        }
+    }
+    Ok(())
 }
 
 fn parse_economics(raw: EconomicsConfig) -> Result<InstrumentEconomicsConfig, M3ConfigError> {
@@ -477,6 +696,49 @@ fn params_checksum(value: &serde_yaml::Value) -> Result<CanonicalParamsChecksum,
     ))
 }
 
+fn params_checksum_with_references(
+    value: &serde_yaml::Value,
+    selections: &[M3InstrumentSelection],
+) -> Result<CanonicalParamsChecksum, M3ConfigError> {
+    let base = params_checksum(value)?;
+    if selections
+        .iter()
+        .all(|selection| selection.reference.is_none())
+    {
+        return Ok(base);
+    }
+    let mut ordered = selections.iter().collect::<Vec<_>>();
+    ordered.sort_by(|left, right| left.instrument.cmp(&right.instrument));
+    let mut canonical = Vec::new();
+    canonical.extend_from_slice(b"OSM5PARAM");
+    canonical.extend_from_slice(base.as_bytes());
+    canonical.extend_from_slice(&(ordered.len() as u32).to_be_bytes());
+    for selection in ordered {
+        canonical.push(selection.instrument.market().discriminant());
+        append_text_for_checksum(selection.instrument.symbol().as_str(), &mut canonical);
+        canonical.push(selection.kind as u8);
+        if let Some(reference) = &selection.reference {
+            append_text_for_checksum(reference.underlying(), &mut canonical);
+            canonical.extend_from_slice(&reference.expiry.to_canonical_bytes());
+            canonical.extend_from_slice(&reference.strike.to_canonical_bytes());
+            canonical.push(reference.option_side as u8);
+            canonical.push(reference.currency as u8);
+            canonical.extend_from_slice(&reference.multiplier.to_canonical_bytes());
+            canonical.push(reference.quantity_unit.discriminant());
+            canonical.extend_from_slice(&reference.units_per_trading_unit.to_be_bytes());
+            append_text_for_checksum(reference.provenance(), &mut canonical);
+        }
+    }
+    Ok(CanonicalParamsChecksum::from_bytes(
+        *blake3::hash(&canonical).as_bytes(),
+    ))
+}
+
+fn append_text_for_checksum(value: &str, output: &mut Vec<u8>) {
+    output.extend_from_slice(&(value.len() as u32).to_be_bytes());
+    output.extend_from_slice(value.as_bytes());
+}
+
 fn strategy_digest(id: &str, version: &str, params: CanonicalParamsChecksum) -> [u8; 32] {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"OSM3STRATEGY");
@@ -564,6 +826,24 @@ struct InstrumentConfig {
     market: String,
     symbol: String,
     session_kinds: Vec<String>,
+    #[serde(default)]
+    instrument_kind: Option<String>,
+    #[serde(default)]
+    reference: Option<ReferenceConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReferenceConfig {
+    underlying: String,
+    expiry: String,
+    strike: String,
+    option_side: String,
+    currency: String,
+    multiplier: String,
+    quantity_unit: String,
+    units_per_trading_unit: u64,
+    provenance: String,
 }
 
 #[derive(Debug, Deserialize)]
