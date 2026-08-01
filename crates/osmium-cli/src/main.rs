@@ -1,7 +1,8 @@
 use std::{env, process::ExitCode};
 
 use osmium_cli::{
-    ParsedCommand, USAGE, execute_m2, execute_m2_inspect, execute_replay, parse_args,
+    ParsedCommand, USAGE, execute_m2, execute_m2_inspect, execute_market_replay, execute_replay,
+    parse_args,
 };
 
 fn main() -> ExitCode {
@@ -25,6 +26,13 @@ fn main() -> ExitCode {
                 println!("output={}", outcome.output_directory().display());
                 ExitCode::SUCCESS
             }
+            Err(error) => {
+                eprintln!("error: {error}");
+                ExitCode::from(error.exit_code())
+            }
+        },
+        Ok(ParsedCommand::MarketReplay(command)) => match execute_market_replay(&command) {
+            Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 eprintln!("error: {error}");
                 ExitCode::from(error.exit_code())

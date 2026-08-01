@@ -9,7 +9,9 @@ name = "osmium"
 path = "src/main.rs"
 
 [dependencies]
+crossterm = "0.28"
 data-sync = { path = "../data-sync" }
+dotenvy = "0.15"
 execution-sim = { path = "../execution-sim" }
 m1-runner = { path = "../m1-runner" }
 m2-config = { path = "../m2-config" }
@@ -19,6 +21,7 @@ market-state = { path = "../market-state" }
 market-types = { path = "../market-types" }
 replay-engine = { path = "../replay-engine" }
 run-planner = { path = "../run-planner" }
+ratatui = "0.29"
 serde_json = "1"
 strategy-api = { path = "../strategy-api" }
 taifex-normalizer = { path = "../normalizer/taifex" }

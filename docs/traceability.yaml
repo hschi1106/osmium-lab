@@ -88,6 +88,7 @@ document_sets:
     - docs/design/data-sync.md
     - docs/design/replay-engine.md
     - docs/design/market-state.md
+    - docs/design/market-replay-ui.md
     - docs/design/strategy-api.md
     - docs/design/execution-sim.md
   increments:
@@ -718,6 +719,7 @@ requirements:
     planned_design_documents:
       - docs/design/data-sync.md
       - docs/design/replay-engine.md
+      - docs/design/market-replay-ui.md
       - docs/operations/local-data.md
     planned_verification:
       methods:
@@ -1243,6 +1245,8 @@ requirements:
       - crates/osmium-cli/src/main.rs
       - crates/m1-runner/src/lib.rs
       - crates/osmium-cli/src/m2.rs
+      - crates/osmium-cli/src/market_replay.rs
+      - crates/osmium-cli/src/market_replay_ui.rs
       - crates/m2-config/src/lib.rs
     lifecycle:
       specification: complete

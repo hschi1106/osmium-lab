@@ -157,6 +157,17 @@ plan 與結果必須清楚記錄該動作。
 `replay` 可以只產生事件／狀態結果；`backtest` 另包含 strategy、simulation 與
 accounting。實際是否使用不同命令由 CLI design 決定。
 
+### OPS-01.6a 歷史行情 TUI
+
+平台應提供只讀的 `display` 入口，使用已驗證的 local replay cache，不在 TUI
+執行期間讀取網路或 credential。TUI 必須依 explicit universe 開啟 streams，讓所有
+selected symbols 共用一個 `match_time` 時鐘；切換顯示 symbol 不得改變時鐘或播放狀態。
+
+第一版至少支援 `1.0x` 預設速度、暫停／繼續、固定速度調整、簡單價格折線、同時間範圍
+成交量、完整五檔與最新成交在最上方的明細。若 domain event 沒有可驗證的 aggressor
+side 或逐筆 order count，介面不得猜測或顯示虛構值；不得新增 imbalance、trade delta
+或 queue position 指標。
+
 ### OPS-01.7 Inspect
 
 inspect 必須能在不重跑 backtest 的情況下讀取並呈現：

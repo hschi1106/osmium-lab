@@ -358,6 +358,12 @@ plan -> sync -> verify -> replay/backtest -> inspect
 
 執行前應顯示需要下載、可直接使用及資料不完整的商品／交易日。
 
+第一版應提供只讀的歷史行情 TUI 入口 `osmium display --config <file>`。介面以
+`match_time` 共用時間軸播放 explicit universe，預設 `1.0x`，支援暫停、繼續、固定倍率
+調整與標的切換；標的切換不得改變播放時間或狀態。畫面應呈現目前標的、時間、播放狀態、
+速度、簡單價格折線、同時間範圍的成交量、完整五檔與最新成交明細。此介面不新增策略、
+撮合、queue position、imbalance 或 trade delta 語意，且行情播放邏輯必須與 UI 分離。
+
 錯誤訊息必須指出 market、symbol、trading date、format 與建議處理方式。
 
 ### OPS-02 執行結果
