@@ -57,9 +57,12 @@ milestone_status:
   M5:
     reference_scope: warrants and options, delivered as independently accepted sub-scopes
     specification: complete
+    prerequisite_m4: complete
+    entry_gate: partial
+    fixture_acquisition_plan: not_started
     fixtures: not_started
     implementation: not_started
-    formal_acceptance: not_run
+    formal_acceptance: not_started
 
 field_meaning:
   planned_milestones: 預定交付範圍，不代表目前已實作
