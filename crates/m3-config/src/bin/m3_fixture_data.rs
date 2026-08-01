@@ -13,7 +13,7 @@ use data_sync::{
     TransportError,
 };
 use m3_config::{M3Config, load};
-use market_types::{InstrumentId, MarketId};
+use market_types::{InstrumentId, InstrumentKind, MarketId};
 use run_planner::SourcePartitionKey;
 use strategy_api::SessionKind;
 
@@ -223,13 +223,24 @@ fn prepare_partition(
     key: &SourcePartitionKey,
 ) -> Result<(), Box<dyn Error>> {
     let (start, end) = replay_window(config, key)?;
-    let query = TeralionQuery::ticks(
-        key.instrument().clone(),
-        start,
-        end,
-        kinds_for(key.instrument()).iter().copied(),
-        5_000,
-    )?;
+    let kind = config.instrument_kind_for(key.instrument());
+    let query = match kind {
+        InstrumentKind::Warrant | InstrumentKind::Option => TeralionQuery::ticks_for_market(
+            key.instrument().clone(),
+            start,
+            end,
+            kinds_for(key.instrument()).iter().copied(),
+            5_000,
+            config.archive_market_for(key.instrument()),
+        )?,
+        _ => TeralionQuery::ticks(
+            key.instrument().clone(),
+            start,
+            end,
+            kinds_for(key.instrument()).iter().copied(),
+            5_000,
+        )?,
+    };
     let daily_query = TeralionQuery::daily_instrument(key.instrument().clone(), key.trading_date());
     let mut sync = TeralionSync::new(FixtureTransport::for_partition(fixture_root, key)?);
     let attempt = format!("fixture-{}", hex(key.identity().as_bytes()));
@@ -245,8 +256,17 @@ fn prepare_partition(
     )?;
     staging.stage_daily_instrument(daily_query.identity(), &daily)?;
     let published = staging.publish(query.identity(), report.terminal)?;
-    let normalizer = match key.instrument().market() {
-        MarketId::Twse => {
+    let normalizer = match (key.instrument().market(), kind) {
+        (MarketId::Twse, InstrumentKind::Warrant) => {
+            let (start, end) = replay_window(config, key)?;
+            PartitionNormalizerConfig::Warrant(twse_normalizer::NormalizerConfig::new_warrant(
+                key.instrument().clone(),
+                key.trading_date(),
+                start.utc(),
+                end.utc(),
+            )?)
+        }
+        (MarketId::Twse, _) => {
             let (start, end) = replay_window(config, key)?;
             PartitionNormalizerConfig::Twse(twse_normalizer::NormalizerConfig::new(
                 key.instrument().clone(),
@@ -255,7 +275,7 @@ fn prepare_partition(
                 end.utc(),
             )?)
         }
-        MarketId::Tpex => {
+        (MarketId::Tpex, _) => {
             let (start, end) = replay_window(config, key)?;
             PartitionNormalizerConfig::Tpex(tpex_normalizer::NormalizerConfig::new(
                 key.instrument().clone(),
@@ -264,7 +284,22 @@ fn prepare_partition(
                 end.utc(),
             )?)
         }
-        MarketId::Taifex => {
+        (MarketId::Taifex, InstrumentKind::Option) => {
+            let plan = config.session_plan_for(key)?;
+            let windows = plan
+                .windows()
+                .iter()
+                .map(|window| (window.replay_start(), window.replay_end_exclusive()));
+            PartitionNormalizerConfig::TaifexOption(
+                taifex_normalizer::NormalizerConfig::for_profile(
+                    key.instrument().clone(),
+                    key.trading_date(),
+                    taifex_normalizer::InstrumentProfile::IndexOptions,
+                    windows,
+                )?,
+            )
+        }
+        (MarketId::Taifex, _) => {
             let (start, end) = replay_window(config, key)?;
             PartitionNormalizerConfig::Taifex(taifex_normalizer::NormalizerConfig::new(
                 key.instrument().clone(),

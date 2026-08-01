@@ -531,6 +531,7 @@ fn accounting_model_name(model: execution_sim::AccountingModel) -> &'static str 
     match model {
         execution_sim::AccountingModel::EquityV1 => "equity_v1",
         execution_sim::AccountingModel::FuturesV1 => "futures_v1",
+        execution_sim::AccountingModel::OptionsV1 => "options_v1",
     }
 }
 

@@ -916,7 +916,7 @@ mod tests {
                 .starts_with(b"OSLEDGR1")
         );
         let performance = std::fs::read_to_string(output.join("performance.yaml")).unwrap();
-        assert!(performance.contains("accounting_version: 2"));
+        assert!(performance.contains("accounting_version: 3"));
         assert!(performance.contains("Taifex:TXFH6"));
     }
 }

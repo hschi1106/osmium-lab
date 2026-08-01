@@ -22,8 +22,8 @@ pub use partition::{
     cache_partition_root, partition_root,
 };
 pub use query::{
-    ArchiveKind, ArchiveTimestamp, QueryError, SanitizedQueryIdentity, TERALION_INTERFACE_VERSION,
-    TeralionCredential, TeralionQuery,
+    ArchiveKind, ArchiveMarket, ArchiveTimestamp, QueryError, SanitizedQueryIdentity,
+    TERALION_INTERFACE_VERSION, TeralionCredential, TeralionQuery,
 };
 pub use storage::{
     CompressionPolicy, ObjectKind, PageMetadata, PublishedRevision, SourceManifest, StagedObject,

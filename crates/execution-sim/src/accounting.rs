@@ -5,13 +5,15 @@ use strategy_api::OrderSide;
 
 use crate::FillRecord;
 
-pub const ACCOUNTING_VERSION: u16 = 2;
+pub const ACCOUNTING_VERSION: u16 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum AccountingModel {
     EquityV1 = 1,
     FuturesV1 = 2,
+    /// Premium-paid/premium-received cash accounting for exchange options.
+    OptionsV1 = 3,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,6 +182,10 @@ impl Ledger {
                 OrderSide::Sell => checked_sub(checked_sub(notional, fee)?, tax)?,
             },
             AccountingModel::FuturesV1 => checked_sub(checked_sub(realized_delta, fee)?, tax)?,
+            AccountingModel::OptionsV1 => match fill.side() {
+                OrderSide::Buy => checked_neg(checked_add(checked_add(notional, fee)?, tax)?)?,
+                OrderSide::Sell => checked_sub(checked_sub(notional, fee)?, tax)?,
+            },
         };
         let next_cash = checked_add(self.cash, cash_delta)?;
         let next_fee = checked_add(self.total_fee, fee)?;
@@ -745,7 +751,12 @@ impl MultiLedger {
 
 fn model_matches_market(instrument: &InstrumentId, model: AccountingModel) -> bool {
     match instrument.market() {
-        MarketId::Taifex => model == AccountingModel::FuturesV1,
+        MarketId::Taifex => {
+            matches!(
+                model,
+                AccountingModel::FuturesV1 | AccountingModel::OptionsV1
+            )
+        }
         MarketId::Twse | MarketId::Tpex => model == AccountingModel::EquityV1,
     }
 }
@@ -935,6 +946,36 @@ mod tests {
         assert_eq!(ledger.cash(), "1000".parse().unwrap());
         assert_eq!(ledger.realized_pnl(), "1000".parse().unwrap());
         assert_eq!(ledger.position(), 0);
+    }
+
+    #[test]
+    fn options_v1_moves_premium_cash_with_contract_multiplier() {
+        let zero = model(ChargeSides::Both);
+        let mut ledger = Ledger::new_with_model(
+            Decimal::ZERO,
+            InstrumentEconomics {
+                units_per_trading_unit: 1,
+                multiplier: "50".parse().unwrap(),
+                provenance: "TAIFEX TXO option contract fixture".into(),
+            },
+            zero,
+            zero,
+            AccountingModel::OptionsV1,
+        );
+
+        ledger
+            .apply_fill(fill_in(OrderSide::Buy, "30", 1, QuantityUnit::Contract))
+            .unwrap();
+        assert_eq!(ledger.cash(), "-1500".parse().unwrap());
+        assert_eq!(ledger.realized_pnl(), Decimal::ZERO);
+
+        ledger
+            .apply_fill(fill_in(OrderSide::Sell, "35", 1, QuantityUnit::Contract))
+            .unwrap();
+        assert_eq!(ledger.cash(), "250".parse().unwrap());
+        assert_eq!(ledger.realized_pnl(), "250".parse().unwrap());
+        assert_eq!(ledger.position(), 0);
+        ledger.reconcile().unwrap();
     }
 
     #[test]

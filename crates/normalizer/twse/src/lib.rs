@@ -12,10 +12,20 @@ use serde_json::value::RawValue;
 
 pub const MAPPING_NAME: &str = "TeralionTwseQuote";
 pub const MAPPING_VERSION: u16 = 4;
+pub const WARRANT_MAPPING_NAME: &str = "TeralionTwseWarrant";
+pub const WARRANT_MAPPING_VERSION: u16 = 1;
 
 const STOCK_SNAPSHOT: &str = "STOCK_SNAPSHOT";
 const STOCK_REALTIME: &str = "STOCK_REALTIME";
+const WARRANT_SNAPSHOT: &str = "WARRANT_SNAPSHOT";
+const WARRANT_REALTIME: &str = "WARRANT_REALTIME";
 const INTRADAY_ODDLOT_REALTIME: &str = "INTRADAY_ODDLOT_REALTIME";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstrumentProfile {
+    Equity,
+    Warrant,
+}
 
 /// Validated source-partition identity and the half-open replay window.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +34,7 @@ pub struct NormalizerConfig {
     trading_date: TradingDate,
     replay_start: MatchTime,
     replay_end_exclusive: MatchTime,
+    profile: InstrumentProfile,
 }
 
 impl NormalizerConfig {
@@ -32,6 +43,37 @@ impl NormalizerConfig {
         trading_date: TradingDate,
         replay_start: MatchTime,
         replay_end_exclusive: MatchTime,
+    ) -> Result<Self, ConfigError> {
+        Self::for_profile(
+            instrument,
+            trading_date,
+            replay_start,
+            replay_end_exclusive,
+            InstrumentProfile::Equity,
+        )
+    }
+
+    pub fn new_warrant(
+        instrument: InstrumentId,
+        trading_date: TradingDate,
+        replay_start: MatchTime,
+        replay_end_exclusive: MatchTime,
+    ) -> Result<Self, ConfigError> {
+        Self::for_profile(
+            instrument,
+            trading_date,
+            replay_start,
+            replay_end_exclusive,
+            InstrumentProfile::Warrant,
+        )
+    }
+
+    pub fn for_profile(
+        instrument: InstrumentId,
+        trading_date: TradingDate,
+        replay_start: MatchTime,
+        replay_end_exclusive: MatchTime,
+        profile: InstrumentProfile,
     ) -> Result<Self, ConfigError> {
         if instrument.market() != MarketId::Twse {
             return Err(ConfigError::WrongMarket(instrument.market()));
@@ -44,6 +86,7 @@ impl NormalizerConfig {
             trading_date,
             replay_start,
             replay_end_exclusive,
+            profile,
         })
     }
 
@@ -65,6 +108,11 @@ impl NormalizerConfig {
     #[must_use]
     pub const fn replay_end_exclusive(&self) -> MatchTime {
         self.replay_end_exclusive
+    }
+
+    #[must_use]
+    pub const fn profile(&self) -> InstrumentProfile {
+        self.profile
     }
 }
 
@@ -201,8 +249,18 @@ impl TwseNormalizer {
         })?;
 
         let format = match envelope.format {
-            STOCK_SNAPSHOT => WireFormat::StockSnapshot,
-            STOCK_REALTIME => WireFormat::StockRealtime,
+            STOCK_SNAPSHOT if self.config.profile == InstrumentProfile::Equity => {
+                WireFormat::StockSnapshot
+            }
+            STOCK_REALTIME if self.config.profile == InstrumentProfile::Equity => {
+                WireFormat::StockRealtime
+            }
+            WARRANT_SNAPSHOT if self.config.profile == InstrumentProfile::Warrant => {
+                WireFormat::StockSnapshot
+            }
+            WARRANT_REALTIME if self.config.profile == InstrumentProfile::Warrant => {
+                WireFormat::StockRealtime
+            }
             INTRADAY_ODDLOT_REALTIME => {
                 return Ok(ClassifiedRecord::KnownSkipped(KnownSkipped {
                     context,
