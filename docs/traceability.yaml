@@ -58,11 +58,58 @@ milestone_status:
     reference_scope: warrants and options, delivered as independently accepted sub-scopes
     specification: complete
     prerequisite_m4: complete
-    entry_gate: partial
-    fixture_acquisition_plan: not_started
-    fixtures: not_started
-    implementation: not_started
-    formal_acceptance: not_started
+    entry_gate: complete
+    fixture_acquisition_plan: complete
+    fixtures: complete
+    implementation: complete
+    formal_acceptance: complete
+    completion_quality: strict
+    evidence:
+      - docs/verification/evidence/m5/source-selection-2026-08-01.yaml
+      - docs/verification/evidence/m5/formal-2026-08-01/acceptance-report.yaml
+
+m5_trace:
+  status: complete
+  implementation_paths:
+    - crates/market-types/src/instrument_kind.rs
+    - crates/data-sync/src/query.rs
+    - crates/data-sync/src/cursor.rs
+    - crates/data-sync/src/cache.rs
+    - crates/normalizer/twse/src/lib.rs
+    - crates/normalizer/taifex/src/lib.rs
+    - crates/market-state/src/profile.rs
+    - crates/run-planner/src/session.rs
+    - crates/m3-config/src/lib.rs
+    - crates/m3-config/src/bin/m3_fixture_data.rs
+    - crates/osmium-cli/src/m2.rs
+    - crates/execution-sim/src/accounting.rs
+  configuration:
+    - config/m5-warrant.yaml
+    - config/m5-option.yaml
+  fixture_and_tools:
+    - fixtures/teralion/twse/03003T/2026-07-20
+    - fixtures/teralion/taifex/TXO24000U6/2026-07-28
+    - tools/acquire_m5_fixtures.sh
+    - tools/extract_m5_fixtures.rs
+    - tools/verify_m5_fixtures.sh
+    - tools/run_m5_acceptance.sh
+  interface_documents:
+    - docs/interfaces/twse.md
+    - docs/interfaces/taifex.md
+    - docs/design/execution-sim.md
+  formal_evidence: docs/verification/evidence/m5/formal-2026-08-01/acceptance-report.yaml
+  acceptance_scope:
+    passed:
+      - M5-AC-01
+      - M5-AC-02
+      - M5-AC-03
+      - M5-AC-04
+      - M5-AC-05
+      - M5-AC-06
+      - M5-AC-07
+      - M5-AC-08
+      - M5-AC-09
+      - M5-AC-10
 
 field_meaning:
   planned_milestones: 預定交付範圍，不代表目前已實作

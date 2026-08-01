@@ -423,6 +423,15 @@ gross_notional =
 
 所有乘法必須 checked exact arithmetic；overflow 是 fatal simulation error。
 
+M5 的 TAIFEX option 使用獨立的 `OptionsV1` accounting model。它沿用同一個
+`economic_quantity` 與 multiplier contract，但成交時以 premium cash accounting：買進
+扣除 `gross_notional + fee + tax`，賣出增加 `gross_notional - fee - tax`；position
+close／reversal 仍由 average-cost ledger 計算 realized P&L。M5 的 TAIFEX futures
+維持 `FuturesV1`（成交時不交換 notional，只在 close／fee／tax 產生 cash），因此
+同一個 multi-instrument run 必須在 positions／performance 中明示並隔離兩個 model。
+`OptionsV1`、contract multiplier 及 provenance 必須進入 ledger/run artifact，不能由
+symbol 名稱或 market default 猜測。
+
 ### 11.2 Fee model
 
 ```text

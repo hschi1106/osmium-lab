@@ -365,9 +365,17 @@ acceptance:
   M5-AC-07: { status: Passed, evidence: stream-open-warrant.log + stream-open-option.log + replay/backtest logs }
   M5-AC-08: { status: Passed, evidence: accounting-tests.log + accounting-isolation.log + option positions }
   M5-AC-09: { status: Passed, evidence: repeated-runs-* + discovery-permutations-* + debug-release-* }
-  M5-AC-10: { status: Passed, evidence: corruption-* + fixture-integrity.log + performance-* + this report }
+  M5-AC-10: { status: Passed, evidence: corruption-* + fixture-integrity.log + secret-scan.log + performance-* + this report }
 approver: tools/run_m5_acceptance.sh
 EOF
+
+if rg -n -i \
+    '"(authorization|api[_-]?key|cookie|password|secret|token|next_cursor)"[[:space:]]*:' \
+    "$staging"; then
+    echo "M5 acceptance output contains a forbidden secret field" >&2
+    exit 1
+fi
+echo "formal evidence secret scan: passed" >"$staging/test-results/secret-scan.log"
 
 rm -rf "$staging/warrant-data" "$staging/option-data" \
     "$staging/warrant-rebuild-data" "$staging/option-rebuild-data" "$staging/runs"
@@ -381,5 +389,3 @@ mv "$staging" "$output_path"
 trap - EXIT HUP INT TERM
 echo "M5 acceptance completed: warrant and option scopes passed"
 echo "output=$output_path"
-
-
