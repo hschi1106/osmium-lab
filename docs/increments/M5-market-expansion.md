@@ -1,16 +1,30 @@
 # M5：warrant 與 option market expansion
 
-## 1. 目的與狀態
+## 1. 目的與目前狀態
 
 M5 承接已完成的 M4 TPEx vertical slice，加入產品需求中的 warrants 與 options。
 M5 不是把所有 market format 做成未驗證的 generic plugin；每一個新 market、
 instrument kind 與 source format 都必須先由實際 Teralion fixture 固定，再加入
 對應 interface、normalizer、session rule 與 acceptance evidence。
 
-目前狀態為 `specification: complete`、`implementation: not_started`。M5 的 entry
-gate 是 M4 formal acceptance complete，以及至少一份 warrant 與一份 option 的
-authorized fixture acquisition plan 已經 review；沒有 fixture 時不得宣稱 mapping
-或 accounting 已支援。
+截至 2026-08-01，目前狀態如下：
+
+| 項目 | 狀態 | 說明 |
+| --- | --- | --- |
+| M4 prerequisite | `complete` | [M4 formal acceptance report](../verification/evidence/m4/formal-2026-08-01/acceptance-report.yaml) 為 `Passed`。 |
+| M5 specification | `complete` | 本文件已固定 M5-W／M5-O 的範圍、entry gates 與 acceptance catalog。 |
+| M5 entry gate | `partial` | M4 prerequisite 已完成；M5-W／M5-O 的 fixture acquisition plan 尚未 review。 |
+| M5-W fixture／provenance | `not_started` | 尚無已 review 的 warrant exact symbol、trading date 與 authorized fixture acquisition record。 |
+| M5-O fixture／provenance | `not_started` | 尚無已 review 的 option exact symbol、trading date 與 authorized fixture acquisition record。 |
+| M5 implementation | `not_started` | 尚無 warrant／option-specific interface、normalizer 或 contract accounting implementation。 |
+| M5 formal acceptance | `not_started` | 尚無 M5 formal evidence。 |
+
+因此 M4 prerequisite 已關閉，但 M5-specific entry gate 尚未關閉；目前 M5 不宣稱
+任何 warrant／option format、mapping、session 或 accounting 已支援。最新的既有
+multi-market display/replay workflow 仍只覆蓋 M3／M4 reference universe，不改變
+上述 M5 狀態。下一個最小可驗證工作是分別完成 M5-W 與 M5-O 的 fixture acquisition
+plan、authorization、provenance 與 official protocol review；在此之前不得以
+synthetic payload 取代來源證據。
 
 ## 2. Scope and sequence
 
