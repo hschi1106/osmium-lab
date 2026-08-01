@@ -1,0 +1,82 @@
+schema_version: 1
+milestone: M5
+status: Passed
+authorization:
+  scope: private-internal-review-only
+  basis: 本 repository 的 internal acceptance fixture；來源資料不得對外重新散布
+  acquisition_tool: tools/acquire_m5_fixtures.sh
+  acquisition_date: 2026-08-01
+  credential_storage: local environment only; TERALION_API_KEY is not committed
+  secret_scan: tools/verify_m5_fixtures.sh passed
+official_review:
+  twse_warrant:
+    protocol: https://www.twse.com.tw/zh/products/securities/warrant/mops.html
+    instrument_reference: https://openapi.twse.com.tw/v1/opendata/t187ap37_L
+    review_note: 03003T 的 official record 在 2026-07-31 可觀察到 underlying 2454、認售、最新履約價 1630.2600、exercise start 2026-10-16；Teralion daily 只補充當日 quote identity，缺少的欄位不由 wire 猜測
+  taifex_option:
+    product: https://www.taifex.com.tw/enl/eng2/tXO
+    contract_names: https://www.taifex.com.tw/enl/eng4/contractName
+    wire_manual: https://www.taifex.com.tw/file/taifex/eng/eng11/TechDocs/19/Market_Data_Transmission_Manual_v2.31.0S.pdf
+    review_note: TXO24000U6 依 TXO product contract、symbol month/put code 與 daily expiry month 固定為 TAIEX put、履約價 24000、到期日 2026-09-16、multiplier 50 TWD/index point
+fixtures:
+  warrant:
+    fixture: fixtures/teralion/twse/03003T/2026-07-20
+    raw_acquisition: raw/teralion/twse/2026-07-20/03003T/complete
+    source_market: twse
+    symbol: 03003T
+    trading_date: 2026-07-20
+    sessions: [regular]
+    query_window: "received_at [2026-07-20T08:55:00+08:00, 2026-07-20T13:35:00+08:00)"
+    records: 111
+    formats:
+      WARRANT_REALTIME: 60
+      WARRANT_SNAPSHOT: 51
+    fixture_sha256: 8dd6671cfd005a823d8df2a5373c4e8791cd580c5c817696aeacf8a0d167e137
+    mapping: { name: TeralionTwseWarrant, version: 1 }
+    reference:
+      underlying: 2454
+      option_side: put
+      strike: 1630.26
+      expiry: 2026-10-16
+      currency: TWD
+      multiplier: 1
+      quantity_unit: trading_unit
+      units_per_trading_unit: 1000
+      provenance: TWSE OpenAPI t187ap37_L plus Teralion daily 2026-07-20; observed official record 2026-07-31
+  option:
+    fixture: fixtures/teralion/taifex/TXO24000U6/2026-07-28
+    raw_acquisition: raw/teralion/taifex_opt/2026-07-28/TXO24000U6/complete
+    source_market: taifex_opt
+    domain_market: taifex
+    symbol: TXO24000U6
+    trading_date: 2026-07-28
+    sessions: [after_hours, regular]
+    query_window: "received_at [2026-07-27T14:55:00+08:00, 2026-07-28T13:50:00+08:00)"
+    records: 540
+    formats:
+      I020: 2
+      I021: 2
+      I022: 177
+      I023: 3
+      I030: 68
+      I070: 4
+      I072: 22
+      I080: 85
+      I082: 177
+    fixture_sha256: af8a33734d34d68ead116f579816930feabc7750d721ab4b405abfb6e4304f28
+    mapping: { name: TeralionTaifexOptions, version: 1 }
+    reference:
+      underlying: TAIEX
+      option_side: put
+      strike: 24000
+      expiry: 2026-09-16
+      currency: TWD
+      multiplier: 50
+      quantity_unit: contract
+      units_per_trading_unit: 1
+      provenance: TAIFEX TXO product specification, symbol code and Teralion daily expiry month
+source_lineage:
+  cursor_requirements: coverage, symbol range, daily instrument, and every tick cursor page were acquired or fixture-replayed
+  identity_checks: source market, symbol, trading date, match_time, received_at, type/format and checksum validated
+  source_cache_policy: source revisions are immutable; replay caches are rebuildable artifacts
+  network_disabled_acceptance: docs/verification/evidence/m5/formal-2026-08-01/acceptance-report.yaml

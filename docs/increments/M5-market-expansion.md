@@ -13,18 +13,28 @@ instrument kind 與 source format 都必須先由實際 Teralion fixture 固定�
 | --- | --- | --- |
 | M4 prerequisite | `complete` | [M4 formal acceptance report](../verification/evidence/m4/formal-2026-08-01/acceptance-report.yaml) 為 `Passed`。 |
 | M5 specification | `complete` | 本文件已固定 M5-W／M5-O 的範圍、entry gates 與 acceptance catalog。 |
-| M5 entry gate | `partial` | M4 prerequisite 已完成；M5-W／M5-O 的 fixture acquisition plan 尚未 review。 |
-| M5-W fixture／provenance | `not_started` | 尚無已 review 的 warrant exact symbol、trading date 與 authorized fixture acquisition record。 |
-| M5-O fixture／provenance | `not_started` | 尚無已 review 的 option exact symbol、trading date 與 authorized fixture acquisition record。 |
-| M5 implementation | `not_started` | 尚無 warrant／option-specific interface、normalizer 或 contract accounting implementation。 |
-| M5 formal acceptance | `not_started` | 尚無 M5 formal evidence。 |
+| M5 entry gate | `complete` | M4 prerequisite、實際 fixture、授權範圍、official protocol review 與 no-secret boundary 均已記錄。 |
+| M5-W fixture／provenance | `complete` | TWSE `03003T`／`2026-07-20` regular fixture，111 筆；underlying／put／strike／expiry／unit provenance 已固定。 |
+| M5-O fixture／provenance | `complete` | TAIFEX `TXO24000U6`／`2026-07-28` cross-day fixture，540 筆；TAIEX／put／strike／expiry／multiplier provenance 已固定。 |
+| M5 implementation | `complete` | 完成 explicit `taifex_opt` query、warrant／option normalizer、session、state、source/cache、config reference 與 `OptionsV1` accounting。 |
+| M5 formal acceptance | `complete` | [M5 formal acceptance report](../verification/evidence/m5/formal-2026-08-01/acceptance-report.yaml) 的 M5-AC-01～10 全部 `Passed`。 |
 
-因此 M4 prerequisite 已關閉，但 M5-specific entry gate 尚未關閉；目前 M5 不宣稱
-任何 warrant／option format、mapping、session 或 accounting 已支援。最新的既有
-multi-market display/replay workflow 仍只覆蓋 M3／M4 reference universe，不改變
-上述 M5 狀態。下一個最小可驗證工作是分別完成 M5-W 與 M5-O 的 fixture acquisition
-plan、authorization、provenance 與 official protocol review；在此之前不得以
-synthetic payload 取代來源證據。
+M5-W 與 M5-O 都已在實際 fixture 上完成 source、mapping、session、state、cache、
+offline replay、simulation、accounting 與 determinism 驗證；未宣稱 fixture 未覆蓋的
+其他 warrant／option format 自動支援。來源授權與欄位 provenance 見
+[M5 source selection evidence](../verification/evidence/m5/source-selection-2026-08-01.yaml)。
+
+本次交付的關鍵結果：
+
+- M5-W：`WARRANT_REALTIME` 60 筆、`WARRANT_SNAPSHOT` 51 筆；全部正常化為 99 個
+  `QuoteSnapshot` 與 12 個 closing indicative events，TWSE raw status／limit flags
+  維持 atomic annotation。
+- M5-O：`I020`／`I022`／`I080`／`I082` 進入 timeline；`I021`／`I023`／`I030`／
+  `I070`／`I072` 保留為 known-skipped diagnostics；跨日 after-hours 與 regular
+  window 以 `match_time` 判定，未把 close／stats 假造為 domain event。
+- formal run 在 network disabled sandbox 中完成：warrant 181,854 events／6 fills，
+  option 500,304 events／4 fills；兩者均通過 10 次 byte-identical rerun、3 次
+  universe permutation、cache rebuild、debug/release comparison 與 corruption rejection。
 
 ## 2. Scope and sequence
 
@@ -77,6 +87,10 @@ M5 必須沿用 M1-M4 已固定的邊界：
 5. mapping version、canonical event version、cache compatibility 與 invalidation policy。
 6. network-disabled acceptance；API key 不進 source、manifest、log、run 或 commit。
 
+上述六項 entry gate 的實際結果與 checksum 集中於
+[source selection evidence](../verification/evidence/m5/source-selection-2026-08-01.yaml)
+及 [formal acceptance evidence](../verification/evidence/m5/formal-2026-08-01/acceptance-report.yaml)。
+
 ## 5. Delivery slices
 
 ### M5-W
@@ -95,20 +109,40 @@ M5 必須沿用 M1-M4 已固定的邊界：
 
 ## 6. Acceptance catalog
 
-| ID | 驗收條件 |
-| --- | --- |
-| M5-AC-01 | M4 complete、warrant/option fixture authorization 與 official protocol review 通過 |
-| M5-AC-02 | instrument identity、underlying、expiry、strike、call/put、multiplier 與 quantity provenance 通過 |
-| M5-AC-03 | source cursor、session、trading-date、format 與 checksum integrity 通過 |
-| M5-AC-04 | warrant 與 option mapping 的 positive/negative/golden tests 通過 |
-| M5-AC-05 | book/trade state atomicity、unknown flags 與 unsupported formats strict handling 通過 |
-| M5-AC-06 | source/cache reuse、offline rebuild、cache compatibility 與 no-network boundary 通過 |
-| M5-AC-07 | mixed-market ordering、state isolation、strategy no-lookahead、stream selection 通過 |
-| M5-AC-08 | contract multiplier、unit conversion、fee/tax、fill 與 ledger reconciliation 通過 |
-| M5-AC-09 | 10 次 rerun、discovery permutation、cache rebuild、debug/release 結果 byte-identical |
-| M5-AC-10 | corruption、secret scan、performance、traceability 與 formal report 完整 |
+| ID | 驗收條件 | 結果／證據 |
+| --- | --- | --- |
+| M5-AC-01 | M4 complete、fixture authorization 與 official protocol review | `Passed`；source-selection evidence、M4 report |
+| M5-AC-02 | instrument identity、underlying、expiry、strike、call/put、multiplier、quantity provenance | `Passed`；fixture metadata、M5 configs、official reference |
+| M5-AC-03 | source cursor、session、trading-date、format、checksum integrity | `Passed`；fixture-integrity、fixture-data、plan/verify logs |
+| M5-AC-04 | warrant／option mapping positive、negative、golden tests | `Passed`；兩個 M5 fixture tests 與 artifact checksums |
+| M5-AC-05 | book/trade state atomicity、raw flags、unsupported format strict handling | `Passed`；normalizer tests、state profiles、replay logs |
+| M5-AC-06 | source/cache reuse、offline rebuild、cache compatibility、no-network boundary | `Passed`；cache-rebuild logs、sandbox report |
+| M5-AC-07 | mixed-market ordering、state isolation、strategy no-lookahead、stream selection | `Passed`；stream-open audit、replay/backtest logs |
+| M5-AC-08 | multiplier、unit conversion、fee/tax、fill、ledger reconciliation | `Passed`；OptionsV1 test、accounting isolation、positions |
+| M5-AC-09 | 10 reruns、3 discovery permutations、cache rebuild、debug/release byte identity | `Passed`；formal determinism logs |
+| M5-AC-10 | corruption、secret scan、performance、traceability、formal report | `Passed`；corruption logs、fixture scan、performance YAML、report |
 
-## 7. Out of scope
+## 7. 完成 M5 的實際步驟
+
+1. 先確認 M4 formal acceptance，再為 warrant 與 option 各選定 exact symbol、trading
+   date、session 與 source market；禁止以 synthetic payload 代替來源證據。
+2. 以 coverage、symbol range、daily、ticks cursor 完整取得來源，保留 raw page、daily
+   metadata、cursor identity、received_at 與 match_time，並執行 secret scan。
+3. 依 official protocol 與 instrument reference 固定 underlying、expiry、strike、
+   call/put、currency、multiplier、quantity unit 及 provenance；缺失欄位維持 unknown。
+4. 將 wire market 與 domain market 分離：warrant 使用既有 TWSE quote shape 的專用
+   mapping；option 使用明確 `taifex_opt` query 與 `TeralionTaifexOptions` mapping。
+5. 實作 strict normalizer、session/calendar、MarketState profile、source/cache descriptor
+   與 invalidation，明確列出 timeline formats 和 known-skipped formats。
+6. 將 instrument kind／reference 綁進 effective config identity，依 unit、multiplier、
+   fee/tax 與 fill model 選擇 accounting；option 使用 `OptionsV1`，future 使用
+   `FuturesV1`。
+7. 以真實 fixture 執行 plan、verify、replay、backtest，檢查 stream audit、state
+   isolation、reconciliation、inspect 與 corruption rejection。
+8. 在禁止網路且沒有 API key 的環境跑完整 formal harness：10 次重跑、3 次 universe
+   permutation、cache rebuild、debug/release byte comparison，最後更新 traceability。
+
+## 8. Out of scope
 
 - 未有實際 fixture 的 market、instrument kind 或 Teralion format。
 - 泛用衍生品定價、volatility surface、risk engine、portfolio margin 或交易所撮合
@@ -116,13 +150,13 @@ M5 必須沿用 M1-M4 已固定的邊界：
 - queue position、逐筆 order book reconstruction、distributed source lake 或 plugin
   marketplace。
 
-## 8. Completion criteria
+## 9. Completion criteria
 
 M5 只有在 M5-W 與 M5-O 各自的 fixture、mapping、source/cache、simulation、determinism
 與 formal acceptance 全部通過後完成。任何一個子範圍 `Blocked` 或 `Partial` 時，
 M5 overall 必須保持 `partial` 或 `blocked`，不得用另一子範圍的證據升格。
 
-## 9. References
+## 10. References
 
 - [product requirements](../product-requirements.md)
 - [TWSE interface](../interfaces/twse.md)

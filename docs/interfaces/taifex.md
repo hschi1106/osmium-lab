@@ -385,3 +385,61 @@ invalid record 改成 zero、沿用前一個 book 或以 `received_at` 補時間
 `taifex-normalizer` 的 I020／I022／I080／I082 mapping 與 TAIFEX MarketState profile。
 cache builder、multi-stream replay、session/calendar 與 TAIFEX-specific annotations 仍
 屬後續 M3 work，不得把 I022 重新降級成 skip 或把 I070／I072 猜成 closing auction。
+
+## 14. M5 index option profile
+
+M5 增加一個由實際來源固定的 TAIFEX index option profile：`TXO24000U6`、trading
+date `2026-07-28`，source market 明確為 `taifex_opt`，domain market 仍為
+`MarketId::Taifex`。fixture 位於
+[`fixtures/teralion/taifex/TXO24000U6/2026-07-28`](../../fixtures/teralion/taifex/TXO24000U6/2026-07-28)，
+適用 mapping 為 `TeralionTaifexOptions`，`mapping_version = 1`。query identity 會
+把 `ArchiveMarket::TaifexOptions` 編入 canonical bytes，不能把 option response
+當成 `taifex_fut`。
+
+### 14.1 Contract 與 session
+
+| 欄位 | M5 固定值 | Provenance |
+| --- | --- | --- |
+| underlying | `TAIEX` | TAIFEX TXO product |
+| option side | `Put` | symbol `U` convention 與 daily identity |
+| strike | `24000` | symbol／daily contract reference |
+| expiry | `2026-09-16` | daily expiry month；third Wednesday calendar |
+| currency | `TWD` | TXO contract specification |
+| multiplier | `50` | TWD per index point |
+| quantity unit | `Contract` | TAIFEX wire quantity semantics |
+
+官方 session 是 regular `08:45–13:45`、after-hours `15:00–次日 05:00`。下載 query
+保留五分鐘 margin，實際 query window 為
+`[2026-07-27T14:55, 2026-07-28T13:50)`；normalizer 以兩個不連續的
+`match_time` replay windows 判定跨日 ownership：after-hours
+`[14:55, 05:05)` 與 regular `[08:40, 13:50)`。因此 05:00–08:40 的 raw records
+會保留在 source，但不會被誤放進 timeline。
+
+### 14.2 Observed format disposition
+
+| Format | Fixture 筆數 | M5 行為 |
+| --- | ---: | --- |
+| `I020` | 2 | atomic `TradeBatch`，quantity 為 `Contract` |
+| `I022` | 177 | 在 replay window 內的 60 筆為 `IndicativeOpeningAuction`；`0/0` 保持 `NoObservation` |
+| `I080` | 85 | atomic `BookSnapshot` |
+| `I082` | 177 | replay window 內的 60 筆為 `BookSnapshot`，保留 source format |
+| `I021`／`I023`／`I030`／`I070`／`I072` | 99 | `KnownSkipped`，保留 raw 與 reason，不產生 domain event |
+
+整個 fixture 為 540 筆，normalizer 在 source replay windows 產生 207 個 events、95
+個 known-skipped、238 個 outside-window records。book 是 snapshot replacement；一側
+為 empty 是合法空槽，不以前一筆補值，也不從 I020 與 I080/I082 猜 aggressor 或
+queue。`close`／`stats` 不會被改寫成 closing event 或成交量。
+
+### 14.3 Accounting 與 strict boundary
+
+Option 使用 `AccountingModel::OptionsV1`：買進／賣出先按
+`price × economic_quantity × multiplier` 移動 premium cash，再以 average cost
+計算 realized P&L；同一 M5 config 中的 `TXFH6` 保持 `FuturesV1`，兩者在 positions
+與 reconciliation 中分開。fee、tax、slippage 仍由 config 明示，fixture acceptance
+使用 zero charge 以隔離 multiplier／unit 行為。
+
+`taifex_opt` query 收到 `taifex_fut` payload、錯誤 symbol、wrong type/format pair、
+unknown format、I020 continuation、超過五檔或 invalid numeric shape 時 strict reject。
+I021/I023/I030/I070/I072 只有在 identity/time/shape 通過後才進 known-skipped 分類；
+不會把 unknown 或 malformed record 當成空頁。positive／negative fixture test 位於
+`crates/normalizer/taifex/tests/m5_option_fixture.rs`。
