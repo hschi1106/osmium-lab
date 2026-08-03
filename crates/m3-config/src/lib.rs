@@ -13,7 +13,7 @@ use replay_engine::{ReplayPlan, ReplayStreamBinding, StableStreamDescriptorId};
 use run_planner::{
     CacheIdentity, CachePolicy, CacheState, ChargeConfig, ChargeSides, Currency, CurrencyAmount,
     EffectiveRunConfig, ExecutionPlan, FillEvidence, FillModelConfig, InstrumentEconomicsConfig,
-    MarkingPolicyConfig, OutputPolicy, PlannedPartition, PositionAccountingConfig,
+    LatencyConfig, MarkingPolicyConfig, OutputPolicy, PlannedPartition, PositionAccountingConfig,
     QuantityAllocationConfig, QuantityEvidence, ReplayDataPolicy, RoundingPolicy, RunConfig,
     SessionPlan, SessionPlanError, SlippageModelConfig, SourceId, SourcePartitionKey, SourcePolicy,
     SourceState, StrategyBinding,
@@ -595,7 +595,11 @@ fn parse_simulation(
         MarkingPolicyConfig::LastObservableV1 {
             allow_midpoint_fallback: raw.marking.allow_midpoint_fallback,
         },
-    ))
+    )
+    .with_latency(LatencyConfig::new(
+        raw.market_data_latency_ms,
+        raw.order_latency_ms,
+    )))
 }
 
 fn parse_charge(raw: ChargeFileConfig) -> Result<ChargeConfig, M3ConfigError> {
@@ -860,6 +864,10 @@ struct ReplayConfig {
 #[serde(deny_unknown_fields)]
 struct SimulationFileConfig {
     fill: FillConfig,
+    #[serde(default)]
+    market_data_latency_ms: u64,
+    #[serde(default)]
+    order_latency_ms: u64,
     allocation: String,
     slippage: SlippageConfig,
     fee: ChargeFileConfig,
@@ -968,6 +976,10 @@ mod tests {
             config.effective().session_kinds(),
             &[SessionKind::Regular, SessionKind::AfterHours]
         );
+        assert_eq!(
+            config.effective().simulation().latency(),
+            run_planner::LatencyConfig::new(0, 0)
+        );
         let bundle = plan(config).unwrap();
         assert_eq!(bundle.execution.partitions().len(), 4);
         assert_eq!(bundle.session_plans.len(), 4);
@@ -977,6 +989,23 @@ mod tests {
                 .partitions()
                 .iter()
                 .any(|partition| partition.key().session_kinds() == [SessionKind::Regular])
+        );
+    }
+
+    #[test]
+    fn m3_config_materializes_nonzero_latency() {
+        let source = fs::read_to_string(fixture())
+            .unwrap()
+            .replace("market_data_latency_ms: 0", "market_data_latency_ms: 12")
+            .replace("order_latency_ms: 0", "order_latency_ms: 34");
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("latency.yaml");
+        fs::write(&path, source).unwrap();
+
+        let config = load(path).unwrap();
+        assert_eq!(
+            config.effective().simulation().latency(),
+            run_planner::LatencyConfig::new(12, 34)
         );
     }
 

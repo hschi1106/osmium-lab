@@ -14,7 +14,7 @@ use crate::canonical::{
 };
 
 pub const CONFIG_SCHEMA_VERSION: u16 = 1;
-pub const EFFECTIVE_CONFIG_VERSION: u16 = 1;
+pub const EFFECTIVE_CONFIG_VERSION: u16 = 2;
 pub const SOURCE_POLICY_VERSION: u16 = 1;
 pub const CACHE_POLICY_VERSION: u16 = 1;
 pub const REPLAY_DATA_POLICY_VERSION: u16 = 1;
@@ -92,6 +92,32 @@ pub enum QuantityEvidence {
 pub struct FillModelConfig {
     evidence: FillEvidence,
     quantity: QuantityEvidence,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LatencyConfig {
+    market_data_latency_ms: u64,
+    order_latency_ms: u64,
+}
+
+impl LatencyConfig {
+    #[must_use]
+    pub const fn new(market_data_latency_ms: u64, order_latency_ms: u64) -> Self {
+        Self {
+            market_data_latency_ms,
+            order_latency_ms,
+        }
+    }
+
+    #[must_use]
+    pub const fn market_data_latency_ms(self) -> u64 {
+        self.market_data_latency_ms
+    }
+
+    #[must_use]
+    pub const fn order_latency_ms(self) -> u64 {
+        self.order_latency_ms
+    }
 }
 
 impl FillModelConfig {
@@ -201,6 +227,7 @@ impl ChargeConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SimulationConfig {
     fill_model: FillModelConfig,
+    latency: LatencyConfig,
     quantity_allocation: QuantityAllocationConfig,
     slippage_model: SlippageModelConfig,
     fee_model: ChargeConfig,
@@ -224,6 +251,7 @@ impl SimulationConfig {
     ) -> Self {
         Self {
             fill_model,
+            latency: LatencyConfig::default(),
             quantity_allocation,
             slippage_model,
             fee_model,
@@ -237,6 +265,17 @@ impl SimulationConfig {
     #[must_use]
     pub const fn fill_model(&self) -> FillModelConfig {
         self.fill_model
+    }
+
+    #[must_use]
+    pub const fn latency(&self) -> LatencyConfig {
+        self.latency
+    }
+
+    #[must_use]
+    pub const fn with_latency(mut self, latency: LatencyConfig) -> Self {
+        self.latency = latency;
+        self
     }
 
     #[must_use]
@@ -605,6 +644,17 @@ fn canonical_non_empty<T: Ord>(
 }
 
 fn validate_simulation(config: &SimulationConfig) -> Result<(), ConfigError> {
+    const MAX_LATENCY_MS: u64 = i64::MAX as u64 / 1_000;
+    let latency = config.latency;
+    let total_latency_ms = latency
+        .market_data_latency_ms
+        .checked_add(latency.order_latency_ms);
+    if latency.market_data_latency_ms > MAX_LATENCY_MS
+        || latency.order_latency_ms > MAX_LATENCY_MS
+        || total_latency_ms.is_none_or(|value| value > MAX_LATENCY_MS)
+    {
+        return Err(ConfigError::InvalidLatency);
+    }
     match config.slippage_model {
         SlippageModelConfig::AdverseFixedDelta { delta } if delta < Decimal::ZERO => {
             return Err(ConfigError::NegativeSlippage);
@@ -668,6 +718,8 @@ fn validate_economics(
 fn append_simulation(config: &SimulationConfig, output: &mut Vec<u8>) -> Result<(), ConfigError> {
     output.push(config.fill_model.evidence as u8);
     output.push(config.fill_model.quantity as u8);
+    output.extend_from_slice(&config.latency.market_data_latency_ms.to_be_bytes());
+    output.extend_from_slice(&config.latency.order_latency_ms.to_be_bytes());
     output.push(config.quantity_allocation as u8);
     match config.slippage_model {
         SlippageModelConfig::AdverseFixedDelta { delta } => {
@@ -722,6 +774,7 @@ pub enum ConfigError {
     StrategyUniverseMismatch,
     StrategySessionsMismatch,
     DegradedPolicyMismatch,
+    InvalidLatency,
     NegativeSlippage,
     InvalidFee,
     InvalidTax,
@@ -751,6 +804,9 @@ impl fmt::Display for ConfigError {
             }
             Self::DegradedPolicyMismatch => formatter.write_str(
                 "source and replay degraded policies must be enabled or disabled together",
+            ),
+            Self::InvalidLatency => formatter.write_str(
+                "latency must fit in the replay time range when represented as milliseconds",
             ),
             Self::NegativeSlippage => formatter.write_str("slippage delta must not be negative"),
             Self::InvalidFee => formatter.write_str("fee configuration is invalid"),

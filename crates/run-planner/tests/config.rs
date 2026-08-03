@@ -4,8 +4,8 @@ use std::path::Path;
 
 use market_types::Decimal;
 use run_planner::{
-    CachePolicy, ConfigError, EffectiveRunConfig, ReplayDataPolicy, SlippageModelConfig,
-    SourcePolicy,
+    CachePolicy, ConfigError, EffectiveRunConfig, LatencyConfig, ReplayDataPolicy,
+    SlippageModelConfig, SourcePolicy,
 };
 use strategy_api::SessionKind;
 
@@ -124,6 +124,41 @@ fn negative_slippage_is_rejected_before_planning() {
     assert_eq!(
         EffectiveRunConfig::resolve(config),
         Err(ConfigError::NegativeSlippage)
+    );
+}
+
+#[test]
+fn latency_is_part_of_effective_identity() {
+    let instrument = instrument("2330");
+    let zero = EffectiveRunConfig::resolve(run_config(
+        vec![date("2026-07-27")],
+        vec![instrument.clone()],
+        "target/m2-data",
+    ))
+    .unwrap();
+    let mut delayed_config =
+        run_config(vec![date("2026-07-27")], vec![instrument], "target/m2-data");
+    delayed_config.simulation = delayed_config
+        .simulation
+        .with_latency(LatencyConfig::new(12, 34));
+    let delayed = EffectiveRunConfig::resolve(delayed_config).unwrap();
+
+    assert_eq!(delayed.simulation().latency(), LatencyConfig::new(12, 34));
+    assert_ne!(zero.checksum(), delayed.checksum());
+    assert_ne!(zero.canonical_semantics(), delayed.canonical_semantics());
+}
+
+#[test]
+fn latency_that_cannot_fit_replay_time_is_rejected_before_planning() {
+    let instrument = instrument("2330");
+    let mut config = run_config(vec![date("2026-07-27")], vec![instrument], "target/m2-data");
+    config.simulation = config
+        .simulation
+        .with_latency(LatencyConfig::new(i64::MAX as u64, 0));
+
+    assert_eq!(
+        EffectiveRunConfig::resolve(config),
+        Err(ConfigError::InvalidLatency)
     );
 }
 

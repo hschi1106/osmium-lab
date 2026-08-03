@@ -6,9 +6,9 @@
 position accounting、P&L、feedback、reconciliation 與 canonical artifacts。
 
 ```text
-execution_sim_version       = 1
+execution_sim_version       = 2
 order_schema_version        = 1
-fill_model_version          = 1
+fill_model_version          = 2
 ledger_schema_version       = 2
 position_accounting_version = 1
 canonical_order_version     = 1
@@ -40,7 +40,7 @@ M2 simulation：
 - 支援 deterministic rejection、pending、partial fill、filled 與 end-of-run
   cancellation。
 - 支援 configurable adverse slippage、quantity cap、fee、tax、unit size、
-  multiplier、Average Cost 與 final marking。
+  multiplier、fixed market-data/order latency、Average Cost 與 final marking。
 - 使用單一 account、TWD cash 與 signed net position。
 
 M2 不提供：
@@ -225,6 +225,32 @@ collision 或同一 identity 對應不同 canonical bytes 是 fatal invariant fa
   failed。
 - fill/accounting transaction failure 不發布 partial ledger state，且不呼叫該
   transaction 的 success feedback。
+
+### 5.1 Latency model
+
+config 可以在 `simulation` 下設定整數毫秒：
+
+```yaml
+simulation:
+  market_data_latency_ms: 0
+  order_latency_ms: 0
+```
+
+兩者的語意是：market event 的 `match_time` 到達 strategy 的固定 market-data delay，
+再加上 order 從 strategy 送出到可被 market evidence 評估的固定 order delay。訂單的
+可成交門檻為：
+
+```text
+eligible_match_time = origin_match_time
+                     + market_data_latency_ms
+                     + order_latency_ms
+```
+
+只有後續 occurrence 且 `event.match_time >= eligible_match_time` 才能評估 fill。
+latency 不改寫 source event、MarketState、`match_time` 或 deterministic ordering；它是
+simulation model 的一部分，並進入 effective config checksum。兩欄缺省為 `0`，維持
+既有 immediate-after-origin 行為；這個 fixed-delay model 不宣稱重建真實網路或交易所
+撮合延遲。
 
 ## 6. Intent validation
 

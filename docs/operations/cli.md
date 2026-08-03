@@ -89,6 +89,8 @@ simulation:
   fill:
     evidence: top_of_book
     quantity: observed
+  market_data_latency_ms: 0
+  order_latency_ms: 0
   allocation: acceptance_sequence
   slippage:
     model: adverse_fixed_delta
@@ -131,7 +133,9 @@ output:
 ```
 
 實際 checked-in config 的 exact fee/tax/slippage values 是 acceptance input，不是平台
-hidden default。所有 exact numeric value 以 YAML string 表達，經 schema parser
+hidden default。latency 欄位是非負整數毫秒，缺省值為 `0`；兩個 latency 會加入
+effective config checksum，並只延後 order 的 eligible `match_time`，不改寫 source event
+或 replay ordering。費率、金額、價格等 exact numeric value 以 YAML string 表達，經 schema parser
 轉成 `Decimal`／Money／Quantity；不得先經 `f64`。
 
 ### 3.1 Required validation
