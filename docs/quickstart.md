@@ -1,6 +1,6 @@
 # osmium quickstart
 
-`osmium` 是 private/internal release tool。先準備一份 v2 config，確認
+`osmium` 是可離線執行的 market replay 與 backtesting tool。先準備一份 v2 config，確認
 `data_root` 指向使用者擁有的資料目錄；repository fixture 不會自動成為 live source。
 
 ```sh

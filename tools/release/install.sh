@@ -6,8 +6,8 @@ usage() {
     cat <<'EOF'
 Usage: tools/release/install.sh --archive <osmium.tar.gz> --prefix <absolute-directory> [--checksum <file>]
 
-Installs an already downloaded internal archive without network access. The external
-checksum and the archive's internal SHA256SUMS are checked before files are copied.
+Installs an already downloaded release archive without network access. The external
+checksum and the archive's embedded SHA256SUMS are checked before files are copied.
 EOF
 }
 
@@ -97,7 +97,7 @@ archive_root=$(find "$staging" -mindepth 1 -maxdepth 1 -type d -print | head -1)
         [ -f "$file" ] || { echo "archive file is missing: $file" >&2; exit 50; }
         actual=$(sha256_file "$file")
         [ "$actual" = "$expected" ] || {
-            echo "archive internal checksum mismatch: $file" >&2
+            echo "archive embedded checksum mismatch: $file" >&2
             exit 50
         }
     done <SHA256SUMS

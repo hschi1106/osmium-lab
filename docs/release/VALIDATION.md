@@ -37,10 +37,10 @@ strategy，預期一筆 order、一筆 fill，並發布含 materialized paramete
 ## Release archive
 
 ```sh
-tools/release/package.sh --output target/osmium-internal.tar.gz
+tools/release/package.sh --output target/osmium-release.tar.gz
 tools/release/smoke_clean_machine.sh \
-  --archive target/osmium-internal.tar.gz \
-  --checksum target/osmium-internal.tar.gz.sha256
+  --archive target/osmium-release.tar.gz \
+  --checksum target/osmium-release.tar.gz.sha256
 SOURCE_DATE_EPOCH=0 tools/release/verify_reproducibility.sh \
   --output target/release-repro
 ```

@@ -1,6 +1,6 @@
 # User guide
 
-這份文件是給使用 `osmium` 的 internal user 與 strategy author。它說明如何準備一份
+這份文件是給使用 `osmium` 的使用者與 strategy author。它說明如何準備一份
 `config_version: 2` config、完成資料生命週期，以及如何依目前 Rust `Strategy` API
 撰寫策略。
 
@@ -10,7 +10,7 @@ Rust strategy。這不是 runtime plugin 系統；只有修改 crate dependency 
 
 ## 1. 準備 `osmium`
 
-使用 internal binary archive 時，確認 binary 已在 `PATH`：
+使用 release binary archive 時，確認 binary 已在 `PATH`：
 
 ```sh
 osmium version
@@ -154,7 +154,7 @@ osmium inspect --run runs/my-first-run
 ### 4.2 Strategy skeleton
 
 以下是一個只產生 indicator、不送單的最小 observer。它沿用 repository 的
-`ExampleStrategy` 模式；實際使用時放在自己的 internal Rust crate／binary 中，並依賴
+`ExampleStrategy` 模式；實際使用時放在自己的 Rust crate／binary 中，並依賴
 workspace 的 `strategy-api`、`market-state` 與 `market-types` path crates。
 
 ```rust
@@ -224,7 +224,7 @@ impl Strategy for MyStrategy {
 }
 ```
 
-上例的 source digest 是 repository sample 的簡化做法；正式 internal deployment 應改成
+上例的 source digest 是 repository sample 的簡化做法；正式 deployment 應改成
 可回溯的 built artifact digest，並在 strategy version 或 build metadata 改變時更新
 identity。`binary_identity` 是 provenance，不是 secret 或 authorization mechanism。
 

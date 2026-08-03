@@ -6,7 +6,7 @@ usage() {
     cat <<'EOF'
 Usage: tools/acceptance/verify_fixture_bundle.sh --bundle <directory> [--manifest <file>] [--report <file>]
 
-Verifies a private/internal or synthetic fixture bundle without contacting Teralion.
+Verifies an authorized external or synthetic fixture bundle without contacting Teralion.
 The manifest records metadata and the payload checksum; credentials are never read.
 EOF
 }
@@ -67,13 +67,13 @@ manifest = YAML.safe_load(
 abort("fixture bundle manifest must be a mapping") unless manifest.is_a?(Hash)
 abort("unsupported fixture bundle format") unless manifest["bundle_format_version"] == 1
 scope = manifest.fetch("distribution_scope")
-unless ["private-internal-review-only", "synthetic-redistributable"].include?(scope)
+unless ["authorized-external-review-only", "synthetic-redistributable"].include?(scope)
   abort("unsupported fixture distribution scope: #{scope}")
 end
-if scope == "private-internal-review-only"
+if scope == "authorized-external-review-only"
   authorization = manifest.fetch("authorization")
-  abort("private fixture bundle must require authorization") unless authorization["required"] == true
-  abort("private fixture bundle must declare a token environment") if authorization["token_env"].to_s.empty?
+  abort("authorized fixture bundle must require authorization") unless authorization["required"] == true
+  abort("authorized fixture bundle must declare a token environment") if authorization["token_env"].to_s.empty?
 end
 entries = manifest.fetch("entries")
 abort("fixture bundle has no entries") unless entries.is_a?(Array) && !entries.empty?

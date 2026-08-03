@@ -90,14 +90,14 @@ cargo run --release -p osmium-cli -- run \
   --output target/example-run
 ```
 
-## 建立 internal binary archive
+## 建立 release binary archive
 
-首個 release 以 private/internal binary archive 交付；archive 不包含 raw data、target、
+release binary archive 不包含 raw data、target、
 `.env` 或 acceptance payload：
 
 ```sh
 tools/release/package.sh \
-  --output target/osmium-internal.tar.gz
+  --output target/osmium-release.tar.gz
 ```
 
 腳本同時產生 `<archive>.sha256`，並將 neutral example、文件、fixture manifest、
@@ -106,8 +106,8 @@ dependency inventory、CycloneDX SBOM 與 third-party license inventory 放入 a
 
 ```sh
 tools/release/smoke_clean_machine.sh \
-  --archive target/osmium-internal.tar.gz \
-  --checksum target/osmium-internal.tar.gz.sha256
+  --archive target/osmium-release.tar.gz \
+  --checksum target/osmium-release.tar.gz.sha256
 tools/release/verify_reproducibility.sh \
   --output target/release-repro-gate
 ```
@@ -127,4 +127,4 @@ full-day market-data acceptance 使用 repository 外、經授權的 user-owned 
 - [Release validation](docs/release/VALIDATION.md)
 - [Fixture policy](fixtures/README.md)
 - [Release cleanup](docs/release/release-cleanup.md)
-- [內部支援政策](docs/release/SUPPORT.md)
+- [支援政策](docs/release/SUPPORT.md)

@@ -1,9 +1,8 @@
-# osmium 內部支援政策
+# osmium 支援政策
 
 ## 支援範圍
 
-`osmium` 首個 release 是 private/internal tool，支援對象是取得授權的內部使用者與
-內部自動化環境。支援範圍固定為：
+`osmium` 是公開原始碼工具，支援範圍固定為：
 
 - target-specific binary archive／installer。
 - `config_version: 2` 的 `RunConfig`。
@@ -44,16 +43,16 @@ schema 或 accounting identity 變更時，release notes 必須說明 migration 
 | S2 | 已支援 workflow 的可重現功能錯誤或資料驗證錯誤 | 排入近期 maintenance release |
 | S3 | 文件、UX、非阻斷警告或新功能建議 | 依容量排程 |
 
-security／integrity 問題不要在 issue 貼出 API key、cookie、signed URL、raw payload 或
-private fixture；先使用內部 security channel，並附 sanitized command、exit category
-與可安全分享的 checksum。
+security／integrity 問題不要在 public issue 貼出 API key、cookie、signed URL、raw
+payload 或受授權限制的 fixture；請使用 repository Security 頁面提供的 private reporting
+channel，並附 sanitized command、exit category 與可安全分享的 checksum。
 
 ## 維護政策
 
 每個 release 都必須重新執行 `cargo test --workspace`、archive checksum、clean-machine
-install 與 reproducibility gate。private fixture 的 redistribution approval 到期或
+install 與 reproducibility gate。受授權限制 fixture 的 redistribution approval 到期或
 scope 改變時，立即停止對應 bundle 的下載，不回填到 binary archive。
 
-未另行公告時，只有最新一個 internal release 接受一般維護；舊版仍可被歷史 acceptance
+未另行公告時，只有最新一個 release 接受一般維護；舊版仍可被歷史 acceptance
 重現，但不保證取得新的 fixture、toolchain 或 provider endpoint。此政策不改變資料提供者
 契約，也不授予 fixture 對外散布權。

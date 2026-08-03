@@ -1,5 +1,5 @@
 # Release example. Replace the data_root, strategy and economics with values
-# approved for your internal deployment before running the workflow.
+# appropriate for your deployment before running the workflow.
 config_version: 2
 data:
   source: teralion
@@ -31,7 +31,7 @@ simulation:
     minimum: "0"
     precision: 0
     rounding: half_up
-    provenance: "internal release configuration"
+    provenance: "user release configuration"
   tax:
     model: configured_rate
     rate: "0"
@@ -39,7 +39,7 @@ simulation:
     minimum: "0"
     precision: 0
     rounding: down
-    provenance: "internal release configuration"
+    provenance: "user release configuration"
   initial_cash: { currency: TWD, amount: "10000000" }
   position_accounting: average_cost_v1
   marking: { model: last_observable_mark_v1, allow_midpoint_fallback: false }
@@ -50,5 +50,5 @@ instrument_economics:
     units_per_trading_unit: 1000
     currency: TWD
     multiplier: "1"
-    provenance: "internal release configuration"
+    provenance: "user release configuration"
 output: { publication: create_new }

@@ -7,12 +7,11 @@
 
 ## 已固定的 release decisions
 
-1. 首個 release 採 private/internal distribution，交付 access-controlled binary
-   archive／installer。
+1. release 採 public source distribution，並提供 target-specific binary archive／installer。
 2. 不維護 M2 `config_version: 1` compatibility。release 只接受目前的 v2 schema；v1
    直接以 upgrade error 拒絕。
-3. binary `osmium` 是 user-facing product；Rust crates 只維持 internal implementation
-   boundary，不承諾 crates.io 或穩定的第三方 library API。
+3. binary `osmium` 是 user-facing product；Rust crates 的原始碼公開，但不承諾 crates.io
+   發布或穩定的第三方 library API。
 
 這些 decisions 不會改變核心 replay、market state、normalizer、simulation 或 source/cache
 語意。
@@ -158,7 +157,7 @@ gate。
 - [x] real fixtures 縮成 representative slices；TWSE 保留 0720、移除 0727。
 - [x] compact fixture manifest、checksum 與 verifier 可在無網路環境執行。
 - [x] README、CLI operations、CI 與 release validation 不再依賴已刪除路徑。
-- [ ] private artifact store／SSO provider-side authorization review（部署責任）。
-- [ ] 如需完整日 formal acceptance，從 private bundle 重新取得並保存外部 report。
+- [x] GitHub 歷史 Actions runs／artifacts 已在 repository 公開前完成清理。
+- [ ] 如需完整日 formal acceptance，從經授權的外部 bundle 取得並保存外部 report。
 
 驗證入口為 [Release validation](VALIDATION.md)。
