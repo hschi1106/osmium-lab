@@ -23,12 +23,20 @@ jobs:
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain
 
+      - name: Run Rust quality gates
+        run: |
+          cargo fmt --check
+          cargo test --workspace --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+
       - name: Run release and acceptance checks
         run: |
           tools/acceptance/verify_compact_fixtures.sh
           tools/acceptance/verify_fixture_bundle.sh \
             --bundle . \
             --manifest fixtures/smoke/manifest.yaml
+          env CARGO_TARGET_DIR=target cargo build --release --locked \
+            -p osmium-cli --bin osmium
           env CARGO_TARGET_DIR=target cargo build --release --locked \
             --manifest-path tools/acceptance/osmium_fixture_data/Cargo.toml
           target/release/osmium_fixture_data \
