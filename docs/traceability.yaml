@@ -170,6 +170,8 @@ document_sets:
       - docs/architecture/decisions/0003-session-windows-and-strategy-activation.md
       - docs/architecture/decisions/0004-trading-context-and-eligibility.md
       - docs/architecture/decisions/0005-twse-intermediate-final-ordering.md
+  release:
+    - docs/release/release-cleanup.md
 
 m3_trace:
   status: complete
