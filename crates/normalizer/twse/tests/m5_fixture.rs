@@ -9,7 +9,7 @@ use twse_normalizer::{NormalizationErrorKind, NormalizerConfig, TwseNormalizer};
 
 fn fixture_lines() -> Vec<String> {
     let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../fixtures/teralion/twse/03003T/2026-07-20/regular-quotes");
+        .join("../../../fixtures/teralion/twse/SYNTH-TWSE-W/2026-07-20/regular-quotes");
     let mut paths = fs::read_dir(directory)
         .unwrap()
         .map(|entry| entry.unwrap().path())
@@ -33,7 +33,7 @@ fn fixture_lines() -> Vec<String> {
 fn warrant_normalizer() -> TwseNormalizer {
     TwseNormalizer::new(
         NormalizerConfig::new_warrant(
-            InstrumentId::new(MarketId::Twse, Symbol::new("03003T").unwrap()),
+            InstrumentId::new(MarketId::Twse, Symbol::new("SYNTH-TWSE-W").unwrap()),
             TradingDate::parse("2026-07-20").unwrap(),
             MatchTime::parse("2026-07-20T08:55:00+08:00").unwrap(),
             MatchTime::parse("2026-07-20T13:35:00+08:00").unwrap(),
@@ -43,7 +43,7 @@ fn warrant_normalizer() -> TwseNormalizer {
 }
 
 #[test]
-fn representative_warrant_fixture_normalizes_offline() {
+fn synthetic_warrant_fixture_normalizes_offline() {
     let report = warrant_normalizer()
         .normalize_json_lines(fixture_lines())
         .unwrap();
@@ -86,7 +86,7 @@ fn m5_warrant_profile_rejects_wrong_market_and_equity_profile_rejects_warrant_fo
 
     let equity = TwseNormalizer::new(
         NormalizerConfig::new(
-            InstrumentId::new(MarketId::Twse, Symbol::new("03003T").unwrap()),
+            InstrumentId::new(MarketId::Twse, Symbol::new("SYNTH-TWSE-W").unwrap()),
             TradingDate::parse("2026-07-20").unwrap(),
             MatchTime::parse("2026-07-20T08:55:00+08:00").unwrap(),
             MatchTime::parse("2026-07-20T13:35:00+08:00").unwrap(),

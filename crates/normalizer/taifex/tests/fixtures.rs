@@ -54,35 +54,40 @@ fn normalizer(symbol: &str) -> TaifexNormalizer {
 }
 
 #[test]
-fn all_m3_futures_fixtures_normalize_with_opening_events_only() {
-    for symbol in ["CAFH6", "CDFH6", "TXFH6"] {
-        let report = normalizer(symbol)
-            .normalize_json_lines(lines(symbol))
-            .unwrap();
-        assert!(report.input_records() > 0, "{symbol}");
-        assert!(report.input_records() <= 1_024, "{symbol}");
-        assert!(!report.events().is_empty(), "{symbol}");
-        assert!(
-            report.known_skipped().len() as u64 <= report.input_records(),
-            "{symbol}"
-        );
-        assert!(report.outside_replay_window().is_empty(), "{symbol}");
+fn synthetic_futures_fixture_normalizes_with_opening_events_only() {
+    let symbol = "SYNTH-FUT";
+    let report = normalizer(symbol)
+        .normalize_json_lines(lines(symbol))
+        .unwrap();
+    assert!(report.input_records() > 0, "{symbol}");
+    assert!(report.input_records() <= 1_024, "{symbol}");
+    assert!(!report.events().is_empty(), "{symbol}");
+    assert!(
+        report.known_skipped().len() as u64 <= report.input_records(),
+        "{symbol}"
+    );
+    assert!(report.outside_replay_window().is_empty(), "{symbol}");
 
-        assert!(report.events().iter().all(|event| {
-            !matches!(event.payload(), EventPayload::IndicativeClosingAuction(_))
-        }));
-        assert!(
-            report.events().iter().any(|event| {
-                matches!(event.payload(), EventPayload::IndicativeOpeningAuction(_))
-            })
-        );
-    }
+    assert!(
+        report
+            .events()
+            .iter()
+            .all(|event| { !matches!(event.payload(), EventPayload::IndicativeClosingAuction(_)) })
+    );
+    assert!(
+        report
+            .events()
+            .iter()
+            .any(|event| { matches!(event.payload(), EventPayload::IndicativeOpeningAuction(_)) })
+    );
 }
 
 #[test]
 fn i022_zero_zero_is_a_no_observation_opening_event() {
-    let line = r#"{"aggregate":{"match_buy_cnt":0,"match_sell_cnt":0,"match_total_qty":0,"status_code":0},"first_packet":true,"format":"I022","market":"taifex_fut","match_time":"2026-07-20T08:40:00+08:00","received_at":"2026-07-20T08:40:00.001000+08:00","symbol":"CDFH6","trades":[{"price":0.0,"quantity":0}],"type":"trade"}"#;
-    let report = normalizer("CDFH6").normalize_json_lines([line]).unwrap();
+    let line = r#"{"first_packet":true,"format":"I022","market":"taifex_fut","match_time":"2026-07-20T08:40:00+08:00","received_at":"2026-07-20T08:40:00.001000+08:00","symbol":"SYNTH-FUT","trades":[{"price":0,"quantity":0}],"type":"trade"}"#;
+    let report = normalizer("SYNTH-FUT")
+        .normalize_json_lines([line])
+        .unwrap();
     let event = report
         .events()
         .iter()
@@ -105,8 +110,8 @@ fn i022_zero_zero_is_a_no_observation_opening_event() {
 
 #[test]
 fn skips_keep_exchange_specific_reasons() {
-    let report = normalizer("CDFH6")
-        .normalize_json_lines(lines("CDFH6"))
+    let report = normalizer("SYNTH-FUT")
+        .normalize_json_lines(lines("SYNTH-FUT"))
         .unwrap();
     let mut counts = BTreeMap::new();
     for skipped in report.known_skipped() {
@@ -118,8 +123,8 @@ fn skips_keep_exchange_specific_reasons() {
 
 #[test]
 fn timeline_quantities_use_contract_units() {
-    let report = normalizer("CAFH6")
-        .normalize_json_lines(lines("CAFH6"))
+    let report = normalizer("SYNTH-FUT")
+        .normalize_json_lines(lines("SYNTH-FUT"))
         .unwrap();
     for event in report.events() {
         match event.payload() {
@@ -149,8 +154,8 @@ fn timeline_quantities_use_contract_units() {
 
 #[test]
 fn i020_continuation_is_rejected_in_the_current_source_boundary() {
-    let line = r#"{"aggregate":{"match_buy_cnt":1,"match_sell_cnt":1,"match_total_qty":1,"status_code":0},"first_packet":false,"format":"I020","market":"taifex_fut","match_time":"2026-07-20T08:45:00.068000+08:00","received_at":"2026-07-20T08:45:00.074878+08:00","symbol":"CAFH6","trades":[{"price":200.0,"quantity":1}],"type":"trade"}"#;
-    let error = normalizer("CAFH6")
+    let line = r#"{"first_packet":false,"format":"I020","market":"taifex_fut","match_time":"2026-07-20T08:45:00+08:00","received_at":"2026-07-20T08:45:00.001000+08:00","symbol":"SYNTH-FUT","trades":[{"price":200,"quantity":1}],"type":"trade"}"#;
+    let error = normalizer("SYNTH-FUT")
         .normalize_json_lines([line])
         .unwrap_err();
     assert!(matches!(
@@ -161,8 +166,8 @@ fn i020_continuation_is_rejected_in_the_current_source_boundary() {
 
 #[test]
 fn unknown_format_reports_the_format_identity() {
-    let line = r#"{"format":"I999","market":"taifex_fut","match_time":"2026-07-20T08:45:00.068000+08:00","received_at":"2026-07-20T08:45:00.074878+08:00","symbol":"CAFH6","trades":[],"type":"trade"}"#;
-    let error = normalizer("CAFH6")
+    let line = r#"{"format":"I999","market":"taifex_fut","match_time":"2026-07-20T08:45:00+08:00","received_at":"2026-07-20T08:45:00.001000+08:00","symbol":"SYNTH-FUT","trades":[],"type":"trade"}"#;
+    let error = normalizer("SYNTH-FUT")
         .normalize_json_lines([line])
         .unwrap_err();
     assert!(matches!(

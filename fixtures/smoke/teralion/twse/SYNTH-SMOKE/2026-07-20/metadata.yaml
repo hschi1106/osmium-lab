@@ -1,0 +1,27 @@
+metadata_version: 3
+fixture_scope: synthetic_scenario
+complete_day: false
+market: "twse"
+symbol: "SYNTH-SMOKE"
+trading_date: "2026-07-20"
+profile: "equity"
+provenance: repository-owned-synthetic
+generation_policy: authored deterministic scenarios; no market records used
+sessions:
+  - "regular-quotes"
+source_formats:
+  - "STOCK_REALTIME"
+  - "STOCK_SNAPSHOT"
+artifact:
+  file_count: 1
+  record_count: 2
+  byte_count: 815
+  full_day: false
+  source_provenance: repository-owned-synthetic
+sessions_detail:
+  - session: "regular-quotes"
+    record_count: 2
+    byte_count: 815
+    formats:
+      - "STOCK_REALTIME"
+      - "STOCK_SNAPSHOT"

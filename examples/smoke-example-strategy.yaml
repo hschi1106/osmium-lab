@@ -9,7 +9,7 @@ universe:
   trading_dates: ["2026-07-20"]
   instruments:
     - market: twse
-      symbol: "2330"
+      symbol: "SYNTH-SMOKE"
       session_kinds: [regular]
 strategy:
   id: example.price-threshold-buy-once
@@ -45,7 +45,7 @@ simulation:
   marking: { model: last_observable_mark_v1, allow_midpoint_fallback: false }
 instrument_economics:
   - market: twse
-    symbol: "2330"
+    symbol: "SYNTH-SMOKE"
     quantity_unit: trading_unit
     units_per_trading_unit: 1000
     currency: TWD

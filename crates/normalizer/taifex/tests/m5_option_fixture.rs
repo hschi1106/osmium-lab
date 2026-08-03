@@ -14,7 +14,7 @@ use taifex_normalizer::{
 
 fn fixture_lines() -> Vec<String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../fixtures/teralion/taifex/TXO24000U6/2026-07-28");
+        .join("../../../fixtures/teralion/taifex/SYNTH-OPT/2026-07-20");
     let mut paths = ["after-hours", "regular"]
         .into_iter()
         .flat_map(|segment| {
@@ -43,17 +43,17 @@ fn fixture_lines() -> Vec<String> {
 fn option_normalizer() -> TaifexNormalizer {
     TaifexNormalizer::new(
         NormalizerConfig::for_profile(
-            InstrumentId::new(MarketId::Taifex, Symbol::new("TXO24000U6").unwrap()),
-            TradingDate::parse("2026-07-28").unwrap(),
+            InstrumentId::new(MarketId::Taifex, Symbol::new("SYNTH-OPT").unwrap()),
+            TradingDate::parse("2026-07-20").unwrap(),
             InstrumentProfile::IndexOptions,
             [
                 (
-                    MatchTime::parse("2026-07-28T08:40:00+08:00").unwrap(),
-                    MatchTime::parse("2026-07-28T13:50:00+08:00").unwrap(),
+                    MatchTime::parse("2026-07-20T08:40:00+08:00").unwrap(),
+                    MatchTime::parse("2026-07-20T13:50:00+08:00").unwrap(),
                 ),
                 (
-                    MatchTime::parse("2026-07-27T14:55:00+08:00").unwrap(),
-                    MatchTime::parse("2026-07-28T05:05:00+08:00").unwrap(),
+                    MatchTime::parse("2026-07-17T14:55:00+08:00").unwrap(),
+                    MatchTime::parse("2026-07-20T05:05:00+08:00").unwrap(),
                 ),
             ],
         )
@@ -62,7 +62,7 @@ fn option_normalizer() -> TaifexNormalizer {
 }
 
 #[test]
-fn representative_option_fixture_normalizes_cross_session_events() {
+fn synthetic_option_fixture_normalizes_cross_session_events() {
     let report = option_normalizer()
         .normalize_json_lines(fixture_lines())
         .unwrap();

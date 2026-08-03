@@ -1,23 +1,19 @@
 # Fixtures
 
-本 repository 的 fixture 分成兩層：
+本 repository 的 fixture 全部是自行建立的 synthetic scenarios：
 
-- `smoke/` 是小型 synthetic payload，允許在 CI、developer machine 與 internal binary
-  archive 中使用。它不代表任何真實市場交易日。
-- `teralion/` 是從 private acceptance data 保留的 compact representative slices，
-  用來涵蓋不同 market、instrument kind、session 與 source state。它不是完整交易日，
-  也不代表 full-day acceptance 已在 repository 內完成。
+- `smoke/` 是最小的 CLI、cache 與 backtest smoke payload。
+- `teralion/` 是 Teralion wire shape 的 synthetic coverage matrix，涵蓋不同 market、
+  instrument kind、session 與 source state。
 
-`acceptance/manifest.yaml` 是 private bundle metadata。完整日 payload、provider
-authorization 與 formal evidence 由 external/private bundle 管理，不進 Git 或 binary
-archive。
+兩者皆由 repository 擁有，可公開散布，不包含、抽樣或轉換任何真實市場行情。
+`acceptance/manifest.yaml` 記錄 synthetic payload 的 checksum 與 coverage。
 
-檢查目前 compact tree：
+重新產生並檢查 synthetic tree：
 
 ```sh
+python3 tools/acceptance/generate_synthetic_fixtures.py
 tools/acceptance/verify_compact_fixtures.sh
 ```
 
-compact slices 的矩陣與保留規則見
-[fixtures/teralion/README.md](teralion/README.md)。TWSE 保留 `2330/2026-07-20`，
-`2330/2026-07-27` 已從 release tree 移除。
+實際 Teralion data 只可存在於 repository 外的 user-owned data root。

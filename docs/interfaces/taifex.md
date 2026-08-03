@@ -6,16 +6,15 @@
 `osmium-lab` 的 TAIFEX market adapter。它是 normalizer 的 source contract，不是
 Rust type definition；Teralion JSON 與 domain event 必須維持在不同邊界。
 
-本文件只涵蓋 M3 已授權並提交的三個 exact instruments：
+公開測試只提交 repository-owned synthetic profiles：
 
 | profile | symbol | trading date | segments |
 | --- | --- | --- | --- |
-| 股價指數期貨 | `TXFH6` | `2026-07-20` | `after_hours`、`regular` |
-| 盤後適用股票期貨 | `CDFH6` | `2026-07-20` | `after_hours`、`regular` |
-| 日盤限定股票期貨 | `CAFH6` | `2026-07-20` | `regular` |
+| 期貨 scenario | `SYNTH-FUT` | `2026-07-20` | `regular` |
+| 選擇權 scenario | `SYNTH-OPT` | `2026-07-20` | `after_hours`、`regular` |
 
-來源證據為 [M3 source selection evidence](../verification/evidence/m3/source-selection-2026-07-31.yaml)，
-提交 fixture 位於 [`fixtures/teralion/taifex`](../../fixtures/teralion/taifex)。
+提交 fixture 位於 [`fixtures/teralion/taifex`](../../fixtures/teralion/taifex)，內容不包含、
+抽樣或轉換任何真實市場行情。
 格式名稱與官方 message semantics 依
 [TAIFEX Market Data Transmission Manual v2.31.0S](https://www.taifex.com.tw/file/taifex/eng/eng11/TechDocs/19/Market_Data_Transmission_Manual_v2.31.0S.pdf)。
 
@@ -81,22 +80,19 @@ I020/I022 message 內的 packet/display 語意，不是全域或商品序號。�
 - 相同 `match_time` 的 deterministic tie-break 依 ADR-0001，以 source format、event
   kind 與 canonical fingerprint 完成；不宣稱是交易所真實封包順序。
 
-## 4. Observed format registry
+## 4. Supported format registry
 
-下表的 counts 是三份 committed fixture 合計 `74,214` 筆；它們是 mapping evidence，
-不是未來所有日期的預期筆數。
-
-| `type` / `format` | 合計筆數 | 官方語意 | M3 disposition |
-| --- | ---: | --- | --- |
-| `trade` / `I020` | 10,229 | matched prices and quantities | **timeline：`TradeBatch`** |
-| `trade` / `I021` | 260 | intra-day high/low | `KnownSkipped(IntradayHighLow)` |
-| `trade` / `I022` | 299 | calculated opening price and volume | **timeline：`IndicativeOpeningAuction`** |
-| `trade` / `I023` | 15 | opening price and quantity | `KnownSkipped(OpeningReference)` |
-| `stats` / `I030` | 4,914 | sum of order data | `KnownSkipped(OrderStatistics)` |
-| `close` / `I070` | 8 | closing market data | `KnownSkipped(ClosingStatistics)` |
-| `close` / `I072` | 15 | closing data with settlement/open interest | `KnownSkipped(ClosingStatistics)` |
-| `book` / `I080` | 58,175 | order book information | **timeline：`BookSnapshot`** |
-| `book` / `I082` | 299 | reference best five after calculated opening | **timeline：`BookSnapshot` (WarmUp reference)** |
+| `type` / `format` | 官方語意 | M3 disposition |
+| --- | --- | --- |
+| `trade` / `I020` | matched prices and quantities | **timeline：`TradeBatch`** |
+| `trade` / `I021` | intra-day high/low | `KnownSkipped(IntradayHighLow)` |
+| `trade` / `I022` | calculated opening price and volume | **timeline：`IndicativeOpeningAuction`** |
+| `trade` / `I023` | opening price and quantity | `KnownSkipped(OpeningReference)` |
+| `stats` / `I030` | sum of order data | `KnownSkipped(OrderStatistics)` |
+| `close` / `I070` | closing market data | `KnownSkipped(ClosingStatistics)` |
+| `close` / `I072` | closing data with settlement/open interest | `KnownSkipped(ClosingStatistics)` |
+| `book` / `I080` | order book information | **timeline：`BookSnapshot`** |
+| `book` / `I082` | reference best five after calculated opening | **timeline：`BookSnapshot` (WarmUp reference)** |
 
 Known skipped records remain in the immutable raw source and in normalization counts;
 they are not an error and must never be silently treated as an empty page. An observed
@@ -104,8 +100,8 @@ known `type` with the wrong `format` is a schema error, not a known skip. A form
 this registry is an unknown timeline format: Strict mode stops, and ExplicitDegraded may
 skip the isolated record with a warning.
 
-Observed composition by segment is recorded in the fixture metadata and source evidence;
-the normalizer must not hard-code the aggregate counts above as a completeness rule.
+Synthetic coverage by segment is recorded in fixture metadata；normalizer 不得把 scenario
+record counts 當成 completeness rule。
 
 ## 5. I020：實際成交 `TradeBatch`
 
@@ -122,10 +118,10 @@ the normalizer must not hard-code the aggregate counts above as a completeness r
   "first_packet": true,
   "format": "I020",
   "market": "taifex_fut",
-  "match_time": "2026-07-20T08:45:00.068000+08:00",
-  "received_at": "2026-07-20T08:45:00.074878+08:00",
-  "symbol": "TXFH6",
-  "trades": [{"price": 43500.0, "quantity": 196}],
+  "match_time": "2026-07-20T09:00:00+08:00",
+  "received_at": "2026-07-20T09:00:00.001000+08:00",
+  "symbol": "SYNTH-FUT",
+  "trades": [{"price": 200, "quantity": 2}],
   "type": "trade"
 }
 ```
@@ -388,10 +384,10 @@ cache builder、multi-stream replay、session/calendar 與 TAIFEX-specific annot
 
 ## 14. M5 index option profile
 
-M5 增加一個由實際來源固定的 TAIFEX index option profile：`TXO24000U6`、trading
-date `2026-07-28`，source market 明確為 `taifex_opt`，domain market 仍為
+M5 增加 TAIFEX index option profile。公開 fixture 使用虛構 `SYNTH-OPT`、trading
+date `2026-07-20`，source market 明確為 `taifex_opt`，domain market 仍為
 `MarketId::Taifex`。fixture 位於
-[`fixtures/teralion/taifex/TXO24000U6/2026-07-28`](../../fixtures/teralion/taifex/TXO24000U6/2026-07-28)，
+[`fixtures/teralion/taifex/SYNTH-OPT/2026-07-20`](../../fixtures/teralion/taifex/SYNTH-OPT/2026-07-20)，
 適用 mapping 為 `TeralionTaifexOptions`，`mapping_version = 1`。query identity 會
 把 `ArchiveMarket::TaifexOptions` 編入 canonical bytes，不能把 option response
 當成 `taifex_fut`。
@@ -400,33 +396,33 @@ date `2026-07-28`，source market 明確為 `taifex_opt`，domain market 仍為
 
 | 欄位 | M5 固定值 | Provenance |
 | --- | --- | --- |
-| underlying | `TAIEX` | TAIFEX TXO product |
-| option side | `Put` | symbol `U` convention 與 daily identity |
-| strike | `24000` | symbol／daily contract reference |
-| expiry | `2026-09-16` | daily expiry month；third Wednesday calendar |
-| currency | `TWD` | TXO contract specification |
-| multiplier | `50` | TWD per index point |
+| underlying | synthetic placeholder | fixture metadata only |
+| option side | synthetic call | fixture metadata only |
+| strike | synthetic value | fixture metadata only |
+| expiry | synthetic value | fixture metadata only |
+| currency | `TWD` | fixture metadata only |
+| multiplier | 必須由正式 config 提供 | verified reference data |
 | quantity unit | `Contract` | TAIFEX wire quantity semantics |
 
 官方 session 是 regular `08:45–13:45`、after-hours `15:00–次日 05:00`。下載 query
 保留五分鐘 margin，實際 query window 為
-`[2026-07-27T14:55, 2026-07-28T13:50)`；normalizer 以兩個不連續的
+`[2026-07-17T14:55, 2026-07-20T13:50)`；normalizer 以兩個不連續的
 `match_time` replay windows 判定跨日 ownership：after-hours
 `[14:55, 05:05)` 與 regular `[08:40, 13:50)`。因此 05:00–08:40 的 raw records
 會保留在 source，但不會被誤放進 timeline。
 
-### 14.2 Observed format disposition
+### 14.2 Synthetic format disposition
 
 | Format | Fixture 筆數 | M5 行為 |
 | --- | ---: | --- |
 | `I020` | 2 | atomic `TradeBatch`，quantity 為 `Contract` |
-| `I022` | 177 | 在 replay window 內的 60 筆為 `IndicativeOpeningAuction`；`0/0` 保持 `NoObservation` |
-| `I080` | 85 | atomic `BookSnapshot` |
-| `I082` | 177 | replay window 內的 60 筆為 `BookSnapshot`，保留 source format |
-| `I021`／`I023`／`I030`／`I070`／`I072` | 99 | `KnownSkipped`，保留 raw 與 reason，不產生 domain event |
+| `I022` | 1 | `IndicativeOpeningAuction`；`0/0` 保持 `NoObservation` |
+| `I080` | 1 | atomic `BookSnapshot` |
+| `I082` | 1 | `BookSnapshot`，保留 source format |
+| `I021`／`I072` | 2 | `KnownSkipped`，保留 raw 與 reason，不產生 domain event |
 
-整個 fixture 為 540 筆，normalizer 在 source replay windows 產生 207 個 events、95
-個 known-skipped、238 個 outside-window records。book 是 snapshot replacement；一側
+整個 synthetic fixture 為 7 筆，normalizer 產生 5 個 events、2 個 known-skipped、
+0 個 outside-window records。book 是 snapshot replacement；一側
 為 empty 是合法空槽，不以前一筆補值，也不從 I020 與 I080/I082 猜 aggressor 或
 queue。`close`／`stats` 不會被改寫成 closing event 或成交量。
 
@@ -434,7 +430,7 @@ queue。`close`／`stats` 不會被改寫成 closing event 或成交量。
 
 Option 使用 `AccountingModel::OptionsV1`：買進／賣出先按
 `price × economic_quantity × multiplier` 移動 premium cash，再以 average cost
-計算 realized P&L；同一 M5 config 中的 `TXFH6` 保持 `FuturesV1`，兩者在 positions
+計算 realized P&L；future profile 保持 `FuturesV1`，兩者在 positions
 與 reconciliation 中分開。fee、tax、slippage 仍由 config 明示，fixture acceptance
 使用 zero charge 以隔離 multiplier／unit 行為。
 

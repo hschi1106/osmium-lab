@@ -1,0 +1,4 @@
+{"format":"I022","market":"taifex_fut","match_time":"2026-07-20T08:40:00+08:00","received_at":"2026-07-20T08:40:00.001000+08:00","symbol":"SYNTH-FUT","type":"trade","first_packet":true,"trades":[{"price":0,"quantity":0}]}
+{"format":"I020","market":"taifex_fut","match_time":"2026-07-20T09:00:00+08:00","received_at":"2026-07-20T09:00:00.001000+08:00","symbol":"SYNTH-FUT","type":"trade","first_packet":true,"trades":[{"price":200,"quantity":2}]}
+{"format":"I080","market":"taifex_fut","match_time":"2026-07-20T09:00:01+08:00","received_at":"2026-07-20T09:00:01.001000+08:00","symbol":"SYNTH-FUT","type":"book","bids":[{"price":199,"quantity":3}],"asks":[{"price":201,"quantity":4}]}
+{"format":"I030","market":"taifex_fut","match_time":"2026-07-20T09:00:02+08:00","received_at":"2026-07-20T09:00:02.001000+08:00","symbol":"SYNTH-FUT","type":"stats"}

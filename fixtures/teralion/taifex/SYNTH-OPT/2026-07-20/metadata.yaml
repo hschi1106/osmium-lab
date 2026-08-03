@@ -1,0 +1,41 @@
+metadata_version: 3
+fixture_scope: synthetic_scenario
+complete_day: false
+market: "taifex"
+symbol: "SYNTH-OPT"
+trading_date: "2026-07-20"
+profile: "option"
+provenance: repository-owned-synthetic
+generation_policy: authored deterministic scenarios; no market records used
+sessions:
+  - "after-hours"
+  - "regular"
+source_formats:
+  - "I020"
+  - "I021"
+  - "I022"
+  - "I072"
+  - "I080"
+  - "I082"
+artifact:
+  file_count: 2
+  record_count: 7
+  byte_count: 1470
+  full_day: false
+  source_provenance: repository-owned-synthetic
+sessions_detail:
+  - session: "after-hours"
+    record_count: 3
+    byte_count: 624
+    formats:
+      - "I020"
+      - "I072"
+      - "I080"
+  - session: "regular"
+    record_count: 4
+    byte_count: 846
+    formats:
+      - "I020"
+      - "I021"
+      - "I022"
+      - "I082"

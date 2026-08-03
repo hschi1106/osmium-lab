@@ -2,20 +2,15 @@
 
 ## 1. 目的與固定範圍
 
-本文件固定 M4 的 TPEx 普通股票 vertical slice：`6488`（環球晶）、交易日
-`2026-07-20`、`regular` session，並記錄 M5 的 TPEx warrant extension：`72328U`、
-同一交易日、`regular` session。它定義 Teralion quote wire 到 domain event 的 source
-boundary；raw wire 不會流入 replay engine 或 strategy API。
+本文件固定 TPEx ordinary-equity 與 warrant 的 Teralion quote wire 到 domain event
+boundary；raw wire 不會流入 replay engine 或 strategy API。公開測試使用
+[`SYNTH-TPEX-EQ`](../../fixtures/teralion/tpex/SYNTH-TPEX-EQ/2026-07-20) 與
+[`SYNTH-TPEX-W`](../../fixtures/teralion/tpex/SYNTH-TPEX-W/2026-07-20) scenarios；兩者皆是
+repository-owned synthetic data。適用 mapping 為 `TeralionTpexQuote`，
+`mapping_version = 1`。
 
-本文件的實測證據是
-[`fixtures/teralion/tpex/6488/2026-07-20`](../../fixtures/teralion/tpex/6488/2026-07-20)，
-來源為 Teralion Feed Archive `market=tpex`、`kinds=quote`、以 `received_at` 篩選
-`[08:55, 13:35)` 的 17 頁完整 cursor download。適用 mapping 為
-`TeralionTpexQuote`，`mapping_version = 1`。
-
-M4 的 ordinary-equity scope 不包含 TPEx 零股、權證、選擇權；M5 warrant extension 另以
-獨立 fixture 固定。其他未被對應 fixture 固定的 format 仍不在支援範圍。raw source
-仍保留 3,160 筆 `INTRADAY_ODDLOT_REALTIME`，但 extraction 與 replay 明確排除它們。
+ordinary-equity scope 不包含 TPEx 零股或選擇權；warrant 使用獨立 profile。其他未被
+mapping 固定的 format 仍不在支援範圍；`INTRADAY_ODDLOT_REALTIME` 明確列為 known skip。
 
 ## 2. Session 與兩個 clock
 
@@ -26,19 +21,17 @@ M4 的 ordinary-equity scope 不包含 TPEx 零股、權證、選擇權；M5 war
 | replay window (`match_time`) | `[08:55, 13:35)` |
 
 source download 只使用 `received_at` 選取資料；timeline、ordering、state 與 strategy
-只使用 `match_time`。本 fixture 的第一筆 `match_time` 為 08:55:01.570669，最後一筆
-為 13:30:00；不以本地檔案日期或 capture time 猜測 trading date。
+只使用 `match_time`，且不以本地檔案日期或 capture time 猜測 trading date。
 
 ## 3. Wire registry
 
-regular extraction 的 79,876 筆中有 76,445 筆 `STOCK_REALTIME` 與 3,431 筆
-`STOCK_SNAPSHOT`。兩者共用下列 envelope 與 quote body：
+`STOCK_REALTIME` 與 `STOCK_SNAPSHOT` 共用下列 envelope 與 quote body：
 
 | field | rule |
 | --- | --- |
 | `type` | 必須為 `quote` |
 | `market` | 必須為 `tpex` |
-| `symbol` | 必須等於 partition symbol `6488` |
+| `symbol` | 必須等於 frozen partition symbol |
 | `format` | 僅 `STOCK_REALTIME`、`STOCK_SNAPSHOT` 進入 replay；其他 format 為明確 known skip 或 strict error |
 | `match_time` | 含 offset 的有效 ISO-8601；唯一 replay clock |
 | `received_at` | 含 offset 的有效 ISO-8601；source diagnostics only |
@@ -47,8 +40,8 @@ regular extraction 的 79,876 筆中有 76,445 筆 `STOCK_REALTIME` 與 3,431 �
 snapshot replacement，少於五檔的 trailing slots 代表 empty，不與前一筆合併。price
 以 exact decimal lexeme 解析，quantity、`cum_volume` 使用 `TradingUnit`。
 
-`deal=null` 表示該 tick 沒有成交 observation。fixture 另有 6 筆 object-form
-`deal` 的 `quantity=0` sentinel；TPEx normalizer 保留 raw source，將它明確映射為
+`deal=null` 表示該 tick 沒有成交 observation。object-form `deal` 的 `quantity=0`
+sentinel 由 TPEx normalizer 保留 raw source，並明確映射為
 `NoObservation`，不偽造零數量 `TradePrint`。
 
 `open_price`、`high_price`、`low_price` 僅是 snapshot raw lineage，尚未進入
@@ -69,12 +62,13 @@ QuoteSnapshot(
 
 `STOCK_REALTIME` 的 `intermediate_print=true` 且有成交時，normalizer 產生
 `TradeBatch`（所有同一 `match_time` 的 intermediate 保持 source order），接著產生
-final `QuoteSnapshot`。fixture 證明一般 1+1 group 以及一個 2+1 group；final
+final `QuoteSnapshot`。synthetic scenario 涵蓋 1+1 group；final
 `cum_volume` 僅以最後 intermediate 的累計量與 final deal 驗證，不由前一個 book
 差分重建。
 
 `status_flags` 與 `limit_flags` 以 TPEx-specific `TpexQuoteAnnotations` 無損保存。
-fixture 驗證 Bit 7 trial、Bit 3 opening marker、Bit 2 closing marker，以及 limit
+synthetic scenario 驗證 Bit 7 trial 與 ordinary flags；Bit 3 opening marker、Bit 2
+closing marker 及 limit
 byte 的 raw value；只有 marker 或 session margin 能唯一分類時才產生
 `IndicativeOpeningAuction`／`IndicativeClosingAuction`。沒有 marker 的 in-session
 trial record 保留為普通 `QuoteSnapshot`，不猜測 auction phase。
@@ -94,13 +88,10 @@ format、event kind 與 canonical fingerprint 的 deterministic fallback。
 
 ## 6. TPEx warrant profile（M5 extension）
 
-M5 已加入一份經授權、由 Teralion 實際取得的 TPEx warrant fixture：
-[`72328U/2026-07-20`](../../fixtures/teralion/tpex/72328U/2026-07-20)。來源是
-`market=tpex`、`symbol=72328U`、`kinds=quote`、以 `received_at` 篩選
-`[08:55, 13:35)` 的完整 cursor download；source revision 只含 1 頁、11 筆 tick，
-包含 4 筆 `WARRANT_REALTIME` 與 7 筆 `WARRANT_SNAPSHOT`。fixture metadata 保存
-query／revision identity、source page checksum、daily instrument checksum、extraction
-predicate 與 private-internal-review-only redistribution scope。
+warrant profile 的公開 scenario 是
+[`SYNTH-TPEX-W/2026-07-20`](../../fixtures/teralion/tpex/SYNTH-TPEX-W/2026-07-20)，
+使用 `market=tpex` 與 `WARRANT_REALTIME`／`WARRANT_SNAPSHOT`，且 metadata 明確標示
+`repository-owned-synthetic`。
 
 TPEx 官方 Main Board IP specification 將 warrant continuous-trading 與 snapshot 定義為
 獨立的 format family；本 profile 以實際 adapter 回傳的 `WARRANT_*` source-format naming
@@ -119,15 +110,9 @@ TPEx warrant 目前沿用已驗證的 TPEx quote envelope、五檔 snapshot、`T
 及 cache descriptor 會保留 warrant-specific mapping identity，不再把它靜默落入普通 TPEx
 branch。未被這份 contract 固定的 format 仍 strict reject。
 
-這份 fixture 沒有成交資料（`deal=null`、`cum_volume=0`），因此目前只以
-`QuoteSnapshot` 與開／收盤 indicative auction event 驗證 quote/state mapping，不宣稱
-TPEx warrant `TradeBatch` 已由 fixture 證實。`72328U` 的 contract reference 為 underlying
-`6488`、put、strike `441.14`、expiry `2026-09-23`、TWD、multiplier `1`，每 trading unit
-為 1,000 units；未被這份 fixture 與 reference 固定的其他 warrant 仍不在支援宣稱內。
-
-離線 acceptance 已通過：11 筆 source records 正規化為 3 個普通 quote、2 個 opening
-auction 與 6 個 closing auction events；`plan`／`verify`／`replay`／`backtest`／`inspect`
-均成功，network disabled 下 10 次 rerun 與 cache rebuild 均 byte-identical。
+這份 synthetic fixture 以普通 `QuoteSnapshot`、opening 與 closing indicative auction
+event 驗證 quote/state mapping，不代表特定上市商品、完整日分布或交易結果。正式
+real-data acceptance 由 repository 外的 authorized data root 執行。
 
 protocol reference：[TPEx Main Board Stock IP Feed Specification V.12.17](https://dsp.tpex.org.tw/storage/regular_system/Main%20Board%20Stock%20IP%20Feed%20Specification%20%28V.12.17_TCPIP%29.pdf)；
 warrant identity reference：[TPEx OpenAPI `tpex_warrant_issue`](https://www.tpex.org.tw/openapi/v1/tpex_warrant_issue)。
