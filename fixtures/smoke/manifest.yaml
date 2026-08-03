@@ -1,0 +1,18 @@
+bundle_format_version: 1
+bundle_id: osmium-smoke-twse-2330-v1
+distribution_scope: synthetic-redistributable
+authorization:
+  required: false
+  transport: local-or-internal-archive
+payload_policy: synthetic fixture may be included in CI and internal binary smoke bundles
+entries:
+  - id: smoke-twse-equity-2330-2026-07-20
+    path: fixtures/smoke/teralion/twse/2330/2026-07-20
+    market: twse
+    instrument_kind: equity
+    symbol: "2330"
+    trading_date: "2026-07-20"
+    session: regular
+    record_count: 2
+    fixture_set_sha256: 272be11e81bf04bca9a42286afe589b45119683d832f0a34399f892a4be37963
+    redistribution: synthetic-redistributable

@@ -8,8 +8,9 @@
 截至 2026-08-03，M1–M5 已完成 formal acceptance，並另外完成 TPEx warrant 的
 focused real-fixture acceptance。本輪 cleanup 已完成 production crate rename/deletion、
 current-schema-only config、CLI namespace 收斂、acceptance tooling 分離與 operations
-文件搬遷；binary archive、fixture authorization、JSON output 與 clean-machine packaging
-仍是後續 release gate。
+文件搬遷；binary archive、fixture bundle flow、JSON output、installer、SBOM/license
+inventory 與 clean-machine/reproducibility gate 已納入本輪 release gate。實際 private
+artifact store URL 與 SSO policy 仍由部署環境提供。
 
 本文件不改寫歷史 milestone 文件、formal acceptance report、checksum 或 source
 provenance。歷史文件可以保留 `m1-*`、`m2-*`、`m3-*` 名稱；release source、release
@@ -247,7 +248,7 @@ current others   -> same spelling, neutral help and artifact terminology
 
 | Layer | Location | Release policy | Lifecycle |
 | --- | --- | --- | --- |
-| Smoke fixture | `fixtures/smoke/` | 可放入 private/internal source distribution；仍必須有 redistribution approval、metadata、checksum | 小型 CI／quickstart，immutable |
+| Smoke fixture | `fixtures/smoke/` | repository-owned synthetic payload，可放入 CI/internal archive；仍必須有 metadata、checksum | 小型 CI／quickstart，immutable |
 | Acceptance fixture | `fixtures/acceptance/` 或獨立 bundle | private/internal access-controlled bundle；M5 目前為 private-internal-review-only，不進 unrestricted archive | 大型 formal verification，checksum pinning |
 | User source/cache | 使用者設定的 `data_root` | 不進 Git、不進 binary archive、不由 repository fixture 自動建立 | source 可重用；cache 可刪除重建 |
 
@@ -269,8 +270,26 @@ current others   -> same spelling, neutral help and artifact terminology
 TPEx warrant 的 fixture metadata、daily instrument、source revision 與 focused
 network-disabled acceptance report 已提交，但 redistribution scope 仍是
 `private-internal-review-only`。因此它可以作為 private/internal acceptance bundle 的
-manifest entry，但不能直接放進 unrestricted binary archive；RLS-07 仍須完成 bundle
-的 authorization 與 verify flow。
+manifest entry，但不能直接放進 unrestricted binary archive。
+
+RLS-07 的 repository flow 已固定為：
+
+```text
+package_fixture_bundle.sh
+  -> manifest.yaml + explicitly listed payload paths
+  -> fixture checksum / secret scan
+  -> checksums.sha256 + private archive
+
+fetch_fixture_bundle.sh
+  -> local archive/directory or HTTPS bearer-token source
+  -> archive path safety + checksums.sha256
+  -> manifest/payload checksum verification
+  -> new local bundle directory
+```
+
+HTTPS source 必須由部署環境提供 `OSMIUM_FIXTURE_BUNDLE_TOKEN` 或明確指定的 token
+environment；repository 不假設、保存或散布實際 SSO／artifact store URL。`fixtures/smoke/`
+是 synthetic、可放入 CI 的小型 fixture；`fixtures/acceptance/` 仍維持 private scope。
 
 ### 6.2 不得進 release archive 的內容
 
@@ -318,6 +337,9 @@ osmium-<version>-<target>/
   docs/config-reference.md
   docs/data-layout.md
   RELEASE-NOTES.md
+  SUPPORT.md
+  SBOM.cdx.json
+  THIRD-PARTY-LICENSES.txt
   BUILD-METADATA
   DEPENDENCIES.txt
   SHA256SUMS
@@ -358,7 +380,8 @@ Release candidate 必須通過：
 - `cargo test --workspace`
 - `cargo build --release -p osmium-cli`
 - `tools/release/package.sh --output target/osmium-internal.tar.gz`
-- private/internal binary archive／installer smoke test
+- `tools/release/smoke_clean_machine.sh --archive <archive> --checksum <file>`
+- `tools/release/verify_reproducibility.sh --output <new-directory>`
 - clean environment 由 binary archive／installer 安裝並執行 `osmium --help`／`version`
 
 首個 release 不以 `cargo package`、`cargo install` 或 crates.io library API 作為交付
@@ -387,12 +410,14 @@ gate；Rust crates 仍須通過 workspace build/test，但不構成 user-facing 
 - fixture license／redistribution scope 逐份 review；未授權資料不能進入 release
   distribution。
 
-現階段已完成的是 production source cleanup 與 milestone／extension acceptance；仍不是
-完整 release candidate gate：
+現階段已完成的是 production source cleanup、binary archive、installer、fixture flow、
+SBOM/license inventory 與 release candidate smoke gate；仍需在實際 internal deployment
+執行一次由 organization artifact store/SSO 提供的 HTTPS authorization review：
 `docs/verification/evidence/m5/tpex-warrant-2026-08-03/acceptance-report.yaml` 記錄
 TPEx warrant exact-symbol/date 的 real-fixture 結果；它證明 domain、source/cache 與
-offline determinism 邊界，不能取代 clean-machine install、binary archive／installer
-或 private/internal fixture authorization review。
+offline determinism 邊界，不能取代 provider-side authorization audit；repository 內的
+local archive、manifest、checksum、install 與 offline/reproducibility gate 已有可重現
+evidence。
 
 ## 9. Release cleanup TODO
 
@@ -403,18 +428,18 @@ release planning 所需的 fixture evidence，但不會自動完成 crate migrat
 
 | ID | 優先級 | Todo | 完成條件 |
 | --- | --- | --- | --- |
-| RLS-01 | P0 | [完成] 首個 release 採 private/internal distribution | decision 已記錄於第 11 節；fixture authorization 仍由 RLS-07 管理 |
+| RLS-01 | P0 | [完成] 首個 release 採 private/internal distribution | decision 已記錄於第 11 節；fixture authorization 依 RLS-07 的 bundle policy 管理 |
 | RLS-02 | P0 | [完成] 建立 `osmium-config` 並搬移 current config 行為 | v2 parser、v1 rejection、plan identity、focused tests 通過 |
-| RLS-03 | P0 | [完成] 建立 `osmium-runner` 並搬移 runner 行為 | runner package 已 neutral；workspace/release tests 驗證中，checksum gate 仍由 RLS-08 收尾 |
+| RLS-03 | P0 | [完成] 建立 `osmium-runner` 並搬移 runner 行為 | runner package 已 neutral；workspace/release tests 與 archive checksum gate 已通過 |
 | RLS-04 | P0 | [完成] 移除 `m1-*`、`m2-*`、`m3-*` production workspace packages | `cargo metadata` 與 production tree 不再包含 milestone crates |
 | RLS-05 | P0 | [完成] 將 fixture builder 與 formal scripts 移到 `tools/acceptance` | production workspace 不編譯 acceptance-only binary |
-| RLS-06 | P1 | [進行中] 收斂 CLI namespace、help、exit codes 與 JSON output | namespace/help/legacy rejection 已完成；JSON/format contract 尚待補齊 |
-| RLS-07 | P1 | [進行中] 定義 smoke fixture 與 private/internal acceptance bundle distribution（包含 TPEx warrant private scope） | acceptance manifest/checksum 已建立；access authorization、download/verify flow 尚待完成 |
-| RLS-08 | P1 | [進行中] 建立 release CI 與 binary archive／installer clean-machine install test | CI archive smoke 已加入；installer、offline/reproducibility gates 尚待完成 |
+| RLS-06 | P1 | [完成] 收斂 CLI namespace、help、exit codes 與 JSON output | non-interactive commands 支援 `--format human|json`、`--quiet`、`--no-color`；category codes 與 JSON envelope 有 focused tests |
+| RLS-07 | P1 | [完成] 定義 smoke fixture 與 private/internal acceptance bundle distribution（包含 TPEx warrant private scope） | smoke fixture、private manifest、package/fetch/verify flow、path safety、checksum 與 secret scan 已完成；provider URL/SSO 由部署環境注入 |
+| RLS-08 | P1 | [完成] 建立 release CI 與 binary archive／installer clean-machine install test | deterministic archive、offline installer、clean-machine smoke、reproducibility script 已完成；CI workflow 已接 archive smoke |
 | RLS-09 | P1 | [完成] 更新 operations／quickstart／config reference | README、quickstart、config reference、data layout 與 operations docs 已更新 |
-| RLS-10 | P2 | [進行中] 建立 versioning、CHANGELOG、release notes 與 support policy | CHANGELOG/release notes 已建立；support policy 尚待發布 |
-| RLS-11 | P2 | [進行中] 清理 historical code comments 與 public error names | production public error/comments 已 neutral；remaining historical references 需分類 review |
-| RLS-12 | P2 | [進行中] 產生 release archive、SBOM／license inventory 與 checksums | archive/checksum/package script 已完成；SBOM 與完整 license inventory 尚待完成 |
+| RLS-10 | P2 | [完成] 建立 versioning、CHANGELOG、release notes 與 support policy | `CHANGELOG.md`、release notes 與 [SUPPORT.md](SUPPORT.md) 已發布 |
+| RLS-11 | P2 | [完成] 清理 historical code comments 與 public error names | production naming 已 neutral；允許保留的 historical/digest references 已在 [namespace-review.md](namespace-review.md) 分類 |
+| RLS-12 | P2 | [完成] 產生 release archive、SBOM／license inventory 與 checksums | deterministic archive、CycloneDX SBOM、transitive license inventory、internal/external checksums 已接入 package script |
 
 ## 10. Definition of done
 
@@ -424,6 +449,8 @@ Release cleanup 完成時必須同時滿足：
 - neutral config／runner crate 通過完整 workspace、release、offline acceptance。
 - 首個 release 以 binary archive／installer 交付；`osmium` 可以在 clean machine 由
   documented command 安裝並顯示 help/version。
+- archive 內容由 deterministic packager 產生，兩次固定 `SOURCE_DATE_EPOCH` 的 build
+  byte-identical，並包含 SBOM 與完整 transitive dependency/license inventory。
 - `osmium` 只接受目前 schema；`config_version: 1` 以明確錯誤拒絕，不提供 M2 config
   compatibility。
 - 使用者以一份 neutral config 可完成 data check、cache preparation、replay/backtest
@@ -431,6 +458,8 @@ Release cleanup 完成時必須同時滿足：
 - smoke fixture 可由 private/internal distribution 取得；大型或私有 acceptance
   fixture 有獨立 manifest 與權限邊界。
 - release archive 不含 raw dump、target、secret、未授權資料或 repository absolute path。
+- `fixtures/smoke/` 可以在無 credential 的 CI 中完成 bundle verify；acceptance bundle
+  必須先通過 manifest checksum 與 private authorization flow。
 - source/cache/run artifact schema、checksum 與 accounting identity 可向前追溯。
 - M1–M5 historical evidence 與 traceability links 維持可讀，並新增 release acceptance
   report。

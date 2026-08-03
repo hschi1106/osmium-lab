@@ -1,0 +1,53 @@
+# Maintainer/CI config for the synthetic fixture in fixtures/smoke/.
+config_version: 2
+data:
+  source: teralion
+  data_root: target/smoke-data
+  source_policy: strict
+  cache_policy: reuse_or_rebuild
+universe:
+  trading_dates: ["2026-07-20"]
+  instruments:
+    - market: twse
+      symbol: "2330"
+      session_kinds: [regular]
+strategy:
+  id: acceptance.multi-market
+  version: "1"
+  parameters: {}
+replay:
+  data_policy: strict
+simulation:
+  fill: { evidence: top_of_book, quantity: observed }
+  market_data_latency_ms: 0
+  order_latency_ms: 0
+  allocation: acceptance_sequence
+  slippage: { model: adverse_fixed_delta, delta: "0" }
+  fee:
+    model: configured_rate
+    rate: "0"
+    applicable_sides: [buy, sell]
+    minimum: "0"
+    precision: 0
+    rounding: half_up
+    provenance: "synthetic smoke fixture"
+  tax:
+    model: configured_rate
+    rate: "0"
+    applicable_sides: [sell]
+    minimum: "0"
+    precision: 0
+    rounding: down
+    provenance: "synthetic smoke fixture"
+  initial_cash: { currency: TWD, amount: "1000000" }
+  position_accounting: average_cost_v1
+  marking: { model: last_observable_mark_v1, allow_midpoint_fallback: false }
+instrument_economics:
+  - market: twse
+    symbol: "2330"
+    quantity_unit: trading_unit
+    units_per_trading_unit: 1000
+    currency: TWD
+    multiplier: "1"
+    provenance: "synthetic smoke fixture"
+output: { publication: create_new }
