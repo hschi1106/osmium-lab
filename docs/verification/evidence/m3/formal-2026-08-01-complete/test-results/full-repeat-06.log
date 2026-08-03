@@ -1,8 +1,0 @@
-backtest=complete
-events=170870
-orders=8
-fills=7
-final_cash_atoms=9995300000000000000000000
-realized_pnl_atoms=-4700000000000000000000
-unrealized_pnl_atoms=11800000000000000000000
-output=/Users/hschi1106/Documents/osmium-lab/docs/verification/evidence/m3/.formal-2026-08-01-complete.staging.99969/runs/full-repeat-06

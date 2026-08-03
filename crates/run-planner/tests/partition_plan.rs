@@ -160,7 +160,7 @@ fn execution_plan_is_independent_of_partition_discovery_order() {
     let config = EffectiveRunConfig::resolve(run_config(
         vec![date("2026-07-28"), date("2026-07-27")],
         vec![selected],
-        "target/m2-data",
+        "target/test-data",
     ))
     .unwrap();
     let left_key = partition("2330", "2026-07-27", vec![SessionKind::Regular], 1);
@@ -200,7 +200,7 @@ fn execution_plan_requires_every_universe_date_partition() {
     let config = EffectiveRunConfig::resolve(run_config(
         vec![date("2026-07-27"), date("2026-07-28")],
         vec![selected.clone()],
-        "target/m2-data",
+        "target/test-data",
     ))
     .unwrap();
     let planned = PlannedPartition::classify(
@@ -224,7 +224,7 @@ fn missing_partition_makes_network_requirement_explicit() {
     let config = EffectiveRunConfig::resolve(run_config(
         vec![date("2026-07-27")],
         vec![selected],
-        "target/m2-data",
+        "target/test-data",
     ))
     .unwrap();
     let planned = PlannedPartition::classify(
@@ -243,7 +243,7 @@ fn strict_plan_rejects_degraded_scope() {
     let config = EffectiveRunConfig::resolve(run_config(
         vec![date("2026-07-27")],
         vec![selected],
-        "target/m2-data",
+        "target/test-data",
     ))
     .unwrap();
     let planned = PlannedPartition::classify(
@@ -267,7 +267,7 @@ fn explicit_degraded_plan_only_accepts_incomplete_partition_scope() {
     let config = EffectiveRunConfig::resolve(degraded(run_config(
         vec![date("2026-07-27")],
         vec![selected],
-        "target/m2-data",
+        "target/test-data",
     )))
     .unwrap();
     let planned = PlannedPartition::classify(

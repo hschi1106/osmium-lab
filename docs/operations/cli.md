@@ -22,11 +22,10 @@ current_scope           = private/internal v2 multi-instrument offline replay an
 
 - [產品需求](../product-requirements.md)
 - [操作與非功能需求](../requirements/operations.md)
-- [M1 TWSE replay](../increments/M1-twse-replay.md)
-- [M2 offline backtest](../increments/M2-offline-backtest.md)
 - [Data Sync](../design/data-sync.md)
 - [Execution Simulation](../design/execution-sim.md)
 - [Local Data](local-data.md)
+- [Release validation](../release/VALIDATION.md)
 
 ## 2. Command overview
 
@@ -45,8 +44,9 @@ current_scope           = private/internal v2 multi-instrument offline replay an
   osmium run           --config <file> --output <new-directory>
 ```
 
-Acceptance fixture runner 不再掛在 release CLI；請使用
-`tools/acceptance/run_m1_acceptance.sh` 或對應的 formal harness。
+Acceptance fixture runner 不掛在 release CLI。maintainer 使用
+`tools/acceptance/` 下的 standalone tools；完整日資料與 formal evidence 由 private
+bundle 管理，不提交至本 repository。
 
 所有 command 支援 `--help`。unknown option、缺少必要 argument 或互斥 argument 同時
 出現，回傳 usage error。
@@ -85,7 +85,7 @@ data:
   cache_policy: reuse_or_rebuild
 
 universe:
-  trading_dates: [2026-07-27]
+  trading_dates: [2026-07-20]
   instruments:
     - market: twse
       symbol: "2330"
@@ -322,12 +322,12 @@ invalid cache 不在原目錄修補；建立全新 cache identity或先隔離 in
 
 ### 7.1 Acceptance fixture preparation
 
-Committed fixtures 只提供 maintainer-only offline source preparation tool，不把
-repository fixture 自動視為 live source：
+Committed fixture 只提供 maintainer-only offline source preparation tool；目前
+`fixtures/teralion/` 是 compact representative slices，不代表完整交易日：
 
 ```sh
-target/release/osmium_fixture_data -- \
-  --config config/m3-taifex-three.yaml \
+target/release/osmium_fixture_data \
+  --config examples/smoke.yaml \
   --fixtures fixtures/teralion \
   --data-root target/acceptance-data
 ```
@@ -340,15 +340,13 @@ cargo build --release \
 ```
 
 tool 會以與 online sync 相同的 `TeralionSync` cursor state machine，將每個 selected
-JSONL shard 包成 fixture response、驗證 TAIFEX `book/close/stats/trade` kinds、發布
-partition source revision，接著建立 source-bound replay cache。它拒絕覆寫既有 data
-root；需要重建時使用新的空 data root。
+JSONL shard 包成 fixture response、驗證 source format、發布 partition source revision，
+接著建立 source-bound replay cache。它拒絕覆寫既有 data root；需要重建時使用新的空
+data root。可先執行 `tools/acceptance/verify_compact_fixtures.sh` 檢查 slices 的
+manifest、metadata、checksum、JSON 與大小上限。
 
-`config/m3-taifex-multi.yaml` 的四商品 acceptance run 另外使用
-`fixtures/teralion/twse/2330/2026-07-20` 的 committed regular quote fixture。該
-fixture 由 Teralion `quote` cursor download 抽取整股 formats，並與 daily instrument
-及 source/cache lineage 一起驗證；不能用其他日期的 partial slice 或 synthetic records
-替代。
+需要完整日資料的 formal acceptance 必須先取得 private fixture bundle，不能把 compact
+slice 當成完整日資料使用。
 
 ## 8. `replay`
 
@@ -381,7 +379,7 @@ partition；`LocalCacheFactory` 可在 `OSMIUM_STREAM_OPEN_AUDIT` 指定
 
 ```sh
 cargo run --release -p osmium-cli -- display \
-  --config config/m4-day-multi.yaml
+  --config examples/config.yaml
 ```
 
 此命令是簡化看盤介面，不產生回測 artifacts。release 只接受
@@ -630,7 +628,7 @@ network-disabled, no-key:
 - 移除 Teralion auth environment variables。
 - 由 CI/container 阻止 network。
 - HTTP request count = 0。
-- 只開啟 `TWSE/2330/2026-07-27` stream。
+- 只開啟 `TWSE/2330/2026-07-20` stream。
 - 結果與相同 prepared inputs的 network-enabled local run byte-identical。
 
 再次完整執行相同 config：
@@ -657,5 +655,6 @@ network-disabled, no-key:
 - run stage short-circuit及 atomic failed publication。
 - acceptance-only fixture runner 與 release CLI boundary。
 
-穩定 test IDs、profiles及 evidence fields見
-[Verification Plan](../verification/plan.md)。
+compact fixture 的 repository gate 見
+[Release validation](../release/VALIDATION.md)；完整日 acceptance evidence 由 private
+bundle 的外部報告保存。

@@ -1,7 +1,0 @@
-M1 TWSE replay completed
-input_records=73796
-normalized_events=73795
-strategy_callbacks=73795
-strategy_output_records=147590
-warnings=0
-output=$REPOSITORY/target/.m1-acceptance-2026-07-31.staging.67127/artifacts

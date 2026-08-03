@@ -785,17 +785,15 @@ mod tests {
     }
 
     #[test]
-    fn run_config_plan_lists_each_partition_without_source_access() {
+    fn run_config_plan_lists_the_representative_partition_without_source_access() {
         let summary = execute(&Command {
             kind: CommandKind::Plan,
-            config: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../config/m3-taifex-multi.yaml"),
+            config: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/config.yaml"),
             output: None,
         })
         .unwrap();
-        assert!(summary.contains("partitions=4"));
-        assert!(summary.contains("TXFH6"));
-        assert!(summary.contains("AfterHours"));
-        assert!(summary.contains("CAFH6"));
+        assert!(summary.contains("partitions=1"));
+        assert!(summary.contains("2330"));
+        assert!(summary.contains("Regular"));
     }
 }

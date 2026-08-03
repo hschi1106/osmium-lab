@@ -1,7 +1,0 @@
-plan_identity=4423605f7fea8f06c408548265c9ef1178f40fd0f95e0e420b469c881898c5c0
-network_requirement=Required
-partitions=4
-partition[0]=Twse/Symbol("2330")@2026-07-20 sessions=[Regular] source_action=DownloadMissingSource cache_action=AwaitCompleteSource
-partition[1]=Taifex/Symbol("CAFH6")@2026-07-20 sessions=[Regular] source_action=DownloadMissingSource cache_action=AwaitCompleteSource
-partition[2]=Taifex/Symbol("CDFH6")@2026-07-20 sessions=[Regular, AfterHours] source_action=DownloadMissingSource cache_action=AwaitCompleteSource
-partition[3]=Taifex/Symbol("TXFH6")@2026-07-20 sessions=[Regular, AfterHours] source_action=DownloadMissingSource cache_action=AwaitCompleteSource
