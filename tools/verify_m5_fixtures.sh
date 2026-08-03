@@ -25,6 +25,12 @@ root, write_goldens = ARGV
 
 fixtures = [
   {
+    path: File.join(root, "fixtures/teralion/tpex/72328U/2026-07-20"),
+    market: "tpex", source_market: "tpex", symbol: "72328U", date: "2026-07-20",
+    kind: "warrant", records: 11,
+    formats: {"WARRANT_REALTIME" => 4, "WARRANT_SNAPSHOT" => 7}
+  },
+  {
     path: File.join(root, "fixtures/teralion/twse/03003T/2026-07-20"),
     market: "twse", source_market: "twse", symbol: "03003T", date: "2026-07-20",
     kind: "warrant", records: 111,
@@ -106,6 +112,7 @@ end
 if rg -n -i \
     '"(authorization|api[_-]?key|cookie|password|secret|token|next_cursor)"[[:space:]]*:' \
     "$root/fixtures/teralion/twse/03003T/2026-07-20" \
+    "$root/fixtures/teralion/tpex/72328U/2026-07-20" \
     "$root/fixtures/teralion/taifex/TXFH6/2026-07-28" \
     "$root/fixtures/teralion/taifex/TXO24000U6/2026-07-28"; then
     echo "M5 fixture contains a forbidden field" >&2

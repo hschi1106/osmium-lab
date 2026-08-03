@@ -7,7 +7,7 @@ M5 不是把所有 market format 做成未驗證的 generic plugin；每一個�
 instrument kind 與 source format 都必須先由實際 Teralion fixture 固定，再加入
 對應 interface、normalizer、session rule 與 acceptance evidence。
 
-截至 2026-08-01，目前狀態如下：
+截至 2026-08-03，目前狀態如下：
 
 | 項目 | 狀態 | 說明 |
 | --- | --- | --- |
@@ -18,6 +18,7 @@ instrument kind 與 source format 都必須先由實際 Teralion fixture 固定�
 | M5-O fixture／provenance | `complete` | TAIFEX `TXO24000U6`／`2026-07-28` cross-day fixture，540 筆；TAIEX／put／strike／expiry／multiplier provenance 已固定。 |
 | M5 implementation | `complete` | 完成 explicit `taifex_opt` query、warrant／option normalizer、session、state、source/cache、config reference 與 `OptionsV1` accounting。 |
 | M5 formal acceptance | `complete` | [M5 formal acceptance report](../verification/evidence/m5/formal-2026-08-01/acceptance-report.yaml) 的 M5-AC-01～10 全部 `Passed`。 |
+| TPEx warrant extension | `complete` | `72328U`／`2026-07-20` 的 real fixture、dedicated profile、offline replay 與 focused acceptance 已通過；不改寫 2026-08-01 的 M5-W formal scope。 |
 
 M5-W 與 M5-O 都已在實際 fixture 上完成 source、mapping、session、state、cache、
 offline replay、simulation、accounting 與 determinism 驗證；未宣稱 fixture 未覆蓋的
@@ -166,15 +167,26 @@ M5 overall 必須保持 `partial` 或 `blocked`，不得用另一子範圍的證
 - [replay requirements](../requirements/replay.md)
 - [traceability matrix](../traceability.yaml)
 
-## 11. TPEx warrant extension（post-M5 follow-up）
+## 11. TPEx warrant extension（completed focused scope）
 
-本次實作補上 TPEx warrant 的 explicit `InstrumentProfile::Warrant`、
-`TeralionTpexWarrant` cache mapping、M2／M3 routing 與 dedicated market-state reducer。
-它只接受目前程式 contract 宣告的 TPEx `WARRANT_REALTIME`／`WARRANT_SNAPSHOT` quote formats；未確認的
-TPEx warrant wire format 仍由 strict parser 拒絕。
+本次 extension 補上 TPEx warrant 的 explicit `InstrumentProfile::Warrant`、
+`TeralionTpexWarrant` cache mapping、M2／M3 routing、dedicated market-state reducer、
+real fixture 與可重現的 acceptance harness。它只接受實際 fixture 證實的 TPEx
+`WARRANT_REALTIME`／`WARRANT_SNAPSHOT` quote formats；未確認的 TPEx warrant wire format
+仍由 strict parser 拒絕。
 
-此 extension 不改寫 M5 formal acceptance：現有 M5-W evidence 是 TWSE `03003T`，不是
-TPEx warrant。由於目前沒有已授權的 TPEx warrant fixture，正式驗收狀態維持
-`fixture_pending`；下一步是取得 exact symbol／date 的 source、daily metadata、欄位
-provenance、checksum 與 network-disabled acceptance evidence，再更新本文件與
-traceability。
+fixture 是 [`72328U/2026-07-20`](../../fixtures/teralion/tpex/72328U/2026-07-20)，包含
+4 筆 `WARRANT_REALTIME`、7 筆 `WARRANT_SNAPSHOT`，沒有成交資料。underlying、put、strike、
+expiry、currency、multiplier 與 trading-unit provenance 由 fixture metadata、Teralion
+daily response、TPEx warrant issue reference 與官方交易規則共同記錄。
+
+focused acceptance 使用
+[`tools/run_tpex_warrant_acceptance.sh`](../../tools/run_tpex_warrant_acceptance.sh)，在
+network disabled 且 credentials absent 的環境完成 `plan`、`verify`、`replay`、`backtest`、
+`inspect`、10 次 byte-identical rerun、cache rebuild、debug/release comparison 與
+corruption rejection。11 筆 source records 正規化為 3 個普通 quote、2 個 opening auction
+與 6 個 closing auction events；單一 strategy universe 只開啟 `72328U` 一條 stream。
+
+這是 TPEx warrant 的 exact-symbol/date extension acceptance，不把其他 TPEx warrants、
+成交 `TradeBatch`、零股或未被 fixture 固定的 formats 一併宣稱為支援。證據見
+[`TPEx warrant acceptance report`](../verification/evidence/m5/tpex-warrant-2026-08-03/acceptance-report.yaml)。
