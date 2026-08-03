@@ -99,14 +99,14 @@ run_offline_logged() {
     audit=$2
     shift 2
     echo "running $name"
-    env -u TERALION_API_KEY -u TERALION_BASE_URL +        OSMIUM_STREAM_OPEN_AUDIT="$audit" +        sandbox-exec -p '(version 1)(allow default)(deny network*)' +        "$@" >"$staging/test-results/$name.log" 2>&1
+    env -u TERALION_API_KEY -u TERALION_BASE_URL OSMIUM_STREAM_OPEN_AUDIT="$audit" sandbox-exec -p '(version 1)(allow default)(deny network*)' "$@" >"$staging/test-results/$name.log" 2>&1
 }
 
 compare_dirs() {
     left=$1
     right=$2
-    find "$left" -type f -print | sed "s#^$left/##" | LC_ALL=C sort +        >"$staging/test-results/.left-files"
-    find "$right" -type f -print | sed "s#^$right/##" | LC_ALL=C sort +        >"$staging/test-results/.right-files"
+    find "$left" -type f -print | sed "s#^$left/##" | LC_ALL=C sort >"$staging/test-results/.left-files"
+    find "$right" -type f -print | sed "s#^$right/##" | LC_ALL=C sort >"$staging/test-results/.right-files"
     cmp "$staging/test-results/.left-files" "$staging/test-results/.right-files"
     while IFS= read -r file; do
         cmp "$left/$file" "$right/$file"
@@ -115,7 +115,7 @@ compare_dirs() {
 
 fixture_root=$root/fixtures/teralion
 config=$staging/m5-tpex-warrant.yaml
-sed "s#target/m5-tpex-warrant-data#$staging/data#g" +    config/m5-tpex-warrant.yaml >"$config"
+sed "s#target/m5-tpex-warrant-data#$staging/data#g" config/m5-tpex-warrant.yaml >"$config"
 binary=$root/target/release/osmium
 fixture_builder=$root/target/release/m3_fixture_data
 
@@ -124,12 +124,12 @@ run_logged normalizer-tests cargo test -p tpex-normalizer --test m5_warrant_fixt
 run_logged debug-build cargo build -p osmium-cli -p m3-config
 run_logged release-build cargo build --release -p osmium-cli -p m3-config
 run_logged fixture-integrity "$root/tools/verify_m5_fixtures.sh"
-run_logged fixture-data "$fixture_builder" +    --config "$config" --fixtures "$fixture_root" --data-root "$staging/data"
+run_logged fixture-data "$fixture_builder" --config "$config" --fixtures "$fixture_root" --data-root "$staging/data"
 
 run_offline_logged plan /dev/null "$binary" plan --config "$config"
 run_offline_logged verify /dev/null "$binary" verify --config "$config"
 run_offline_logged replay "$staging/replay-open.log" "$binary" replay --config "$config"
-run_offline_logged backtest "$staging/stream-open.log" "$binary" backtest +    --config "$config" --output "$staging/runs/run-a"
+run_offline_logged backtest "$staging/stream-open.log" "$binary" backtest --config "$config" --output "$staging/runs/run-a"
 run_offline_logged inspect /dev/null "$binary" inspect --run "$staging/runs/run-a"
 
 stream_count=$(wc -l <"$staging/stream-open.log" | tr -d ' ')
@@ -144,7 +144,7 @@ rg -q "market=Tpex symbol=72328U " "$staging/stream-open.log" || {
 sort "$staging/stream-open.log" >"$staging/test-results/stream-open.log"
 
 for run_number in 01 02 03 04 05 06 07 08 09 10; do
-    run_offline_logged "repeat-$run_number" /dev/null "$binary" backtest +        --config "$config" --output "$staging/runs/repeat-$run_number"
+    run_offline_logged "repeat-$run_number" /dev/null "$binary" backtest --config "$config" --output "$staging/runs/repeat-$run_number"
     compare_dirs "$staging/runs/run-a" "$staging/runs/repeat-$run_number"
 done
 echo "repeated_runs=10 byte_identical=true" >"$staging/test-results/repeated-runs.log"
@@ -153,18 +153,18 @@ cp -R "$staging/data" "$staging/rebuild-data"
 rm -rf "$staging/rebuild-data/cache"
 rebuild_config=$staging/m5-tpex-warrant-rebuild.yaml
 sed "s#$staging/data#$staging/rebuild-data#g" "$config" >"$rebuild_config"
-run_offline_logged cache-rebuild /dev/null "$binary" cache prepare +    --config "$rebuild_config"
-run_offline_logged rebuild-backtest /dev/null "$binary" backtest +    --config "$rebuild_config" --output "$staging/runs/rebuild"
+run_offline_logged cache-rebuild /dev/null "$binary" cache prepare --config "$rebuild_config"
+run_offline_logged rebuild-backtest /dev/null "$binary" backtest --config "$rebuild_config" --output "$staging/runs/rebuild"
 compare_dirs "$staging/runs/run-a" "$staging/runs/rebuild"
 echo "cache_rebuild=byte_identical=true" >"$staging/test-results/cache-rebuild.log"
 
-run_offline_logged debug-backtest /dev/null "$root/target/debug/osmium" backtest +    --config "$config" --output "$staging/runs/debug"
+run_offline_logged debug-backtest /dev/null "$root/target/debug/osmium" backtest --config "$config" --output "$staging/runs/debug"
 compare_dirs "$staging/runs/run-a" "$staging/runs/debug"
 echo "debug_release=byte_identical=true" >"$staging/test-results/debug-release.log"
 
 cp -R "$staging/runs/run-a" "$staging/runs/corrupt"
 printf '\001' >>"$staging/runs/corrupt/ledger.bin"
-if run_offline_logged corruption-rejected /dev/null "$binary" inspect +    --run "$staging/runs/corrupt"; then
+if run_offline_logged corruption-rejected /dev/null "$binary" inspect --run "$staging/runs/corrupt"; then
     echo "inspect accepted a corrupted ledger" >&2
     exit 1
 fi
@@ -174,8 +174,8 @@ summary=$staging/runs/run-a/run-summary.yaml
 event_count=$(awk '/^events:/ {print $2; exit}' "$summary")
 orders=$(awk '/^orders:/ {print $2; exit}' "$summary")
 fills=$(awk '/^fills:/ {print $2; exit}' "$summary")
-source_revision=$(awk -F': ' '/^source_revision:/ {print $2; exit}' +    "$staging/runs/run-a/data-lineage.yaml")
-fixture_sha256=$(ruby -ryaml -e +    'puts YAML.load_file(ARGV.fetch(0)).fetch("artifact").fetch("sha256")' +    "$root/fixtures/teralion/tpex/72328U/2026-07-20/metadata.yaml")
+source_revision=$(awk -F': ' '/^source_revision:/ {print $2; exit}' "$staging/runs/run-a/data-lineage.yaml")
+fixture_sha256=$(ruby -ryaml -e 'puts YAML.load_file(ARGV.fetch(0)).fetch("artifact").fetch("sha256")' "$root/fixtures/teralion/tpex/72328U/2026-07-20/metadata.yaml")
 event_checksum=$(tr -d '[:space:]' <"$staging/runs/run-a/event-stream.blake3")
 state_checksum=$(tr -d '[:space:]' <"$staging/runs/run-a/final-state.blake3")
 strategy_checksum=$(tr -d '[:space:]' <"$staging/runs/run-a/strategy-output.blake3")
