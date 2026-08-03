@@ -24,6 +24,8 @@ use taifex_normalizer::{
 use tpex_normalizer::{
     MAPPING_NAME as TPEX_MAPPING_NAME, MAPPING_VERSION as TPEX_MAPPING_VERSION,
     NormalizerConfig as TpexNormalizerConfig, TpexNormalizer,
+    WARRANT_MAPPING_NAME as TPEX_WARRANT_MAPPING_NAME,
+    WARRANT_MAPPING_VERSION as TPEX_WARRANT_MAPPING_VERSION,
 };
 use twse_normalizer::{
     MAPPING_NAME as TWSE_MAPPING_NAME, MAPPING_VERSION as TWSE_MAPPING_VERSION,
@@ -46,6 +48,7 @@ pub enum PartitionNormalizerConfig {
     Twse(TwseNormalizerConfig),
     Warrant(TwseNormalizerConfig),
     Tpex(TpexNormalizerConfig),
+    TpexWarrant(TpexNormalizerConfig),
     Taifex(TaifexNormalizerConfig),
     TaifexOption(TaifexNormalizerConfig),
 }
@@ -247,6 +250,21 @@ impl CacheBuilder {
                     trading_date,
                     TPEX_MAPPING_NAME.to_owned(),
                     TPEX_MAPPING_VERSION,
+                    events,
+                )
+            }
+            PartitionNormalizerConfig::TpexWarrant(config) => {
+                let instrument = config.instrument().clone();
+                let trading_date = config.trading_date();
+                let events = TpexNormalizer::new(config)
+                    .normalize_json_lines(&lines)
+                    .map_err(|error| CacheBuildError::Normalization(error.to_string()))?
+                    .into_events();
+                (
+                    instrument,
+                    trading_date,
+                    TPEX_WARRANT_MAPPING_NAME.to_owned(),
+                    TPEX_WARRANT_MAPPING_VERSION,
                     events,
                 )
             }
@@ -674,6 +692,8 @@ fn validate_descriptor(descriptor: &CacheDescriptor) -> Result<(), CacheReadErro
             && descriptor.normalizer_mapping_version == TWSE_WARRANT_MAPPING_VERSION)
         || (descriptor.normalizer_mapping_name == TPEX_MAPPING_NAME
             && descriptor.normalizer_mapping_version == TPEX_MAPPING_VERSION)
+        || (descriptor.normalizer_mapping_name == TPEX_WARRANT_MAPPING_NAME
+            && descriptor.normalizer_mapping_version == TPEX_WARRANT_MAPPING_VERSION)
         || (descriptor.normalizer_mapping_name == TAIFEX_MAPPING_NAME
             && descriptor.normalizer_mapping_version == TAIFEX_MAPPING_VERSION)
         || (descriptor.normalizer_mapping_name == TAIFEX_OPTION_MAPPING_NAME
@@ -684,7 +704,10 @@ fn validate_descriptor(descriptor: &CacheDescriptor) -> Result<(), CacheReadErro
             descriptor.normalizer_mapping_name == TWSE_MAPPING_NAME
                 || descriptor.normalizer_mapping_name == TWSE_WARRANT_MAPPING_NAME
         }
-        Ok(MarketId::Tpex) => descriptor.normalizer_mapping_name == TPEX_MAPPING_NAME,
+        Ok(MarketId::Tpex) => {
+            descriptor.normalizer_mapping_name == TPEX_MAPPING_NAME
+                || descriptor.normalizer_mapping_name == TPEX_WARRANT_MAPPING_NAME
+        }
         Ok(MarketId::Taifex) => {
             descriptor.normalizer_mapping_name == TAIFEX_MAPPING_NAME
                 || descriptor.normalizer_mapping_name == TAIFEX_OPTION_MAPPING_NAME
@@ -933,6 +956,37 @@ mod tests {
         assert!(matches!(
             CacheReader::open_bound(published.path(), &"0".repeat(64)).unwrap_err(),
             CacheReadError::StaleSourceLineage
+        ));
+    }
+
+    #[test]
+    fn tpex_warrant_mapping_is_accepted_only_for_tpex_descriptors() {
+        let descriptor = CacheDescriptor {
+            cache_format_version: CACHE_FORMAT_VERSION,
+            cache_identity: "cache".to_owned(),
+            source_revision_identity: "source".to_owned(),
+            instrument_market: MarketId::Tpex.discriminant(),
+            instrument_symbol: "warrant".to_owned(),
+            trading_date_epoch_days: 0,
+            event_count: 0,
+            first_match_time_micros: None,
+            last_match_time_micros: None,
+            payload_sha256: "0".to_owned(),
+            market_types_version: MARKET_TYPES_VERSION,
+            event_schema_version: EVENT_SCHEMA_VERSION,
+            canonical_event_version: CANONICAL_EVENT_VERSION,
+            ordering_rule_version: ORDERING_RULE_VERSION,
+            partition_identity: None,
+            normalizer_mapping_name: TPEX_WARRANT_MAPPING_NAME.to_owned(),
+            normalizer_mapping_version: TPEX_WARRANT_MAPPING_VERSION,
+        };
+        assert!(validate_descriptor(&descriptor).is_ok());
+
+        let mut wrong_market = descriptor;
+        wrong_market.instrument_market = MarketId::Twse.discriminant();
+        assert!(matches!(
+            validate_descriptor(&wrong_market),
+            Err(CacheReadError::IncompatibleDescriptor)
         ));
     }
 

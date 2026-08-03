@@ -91,6 +91,11 @@ impl MarketStateReducer {
     }
 
     #[must_use]
+    pub fn tpex_warrant() -> Self {
+        Self::new(MarketStateProfile::tpex_warrant())
+    }
+
+    #[must_use]
     pub const fn profile(&self) -> &MarketStateProfile {
         &self.profile
     }

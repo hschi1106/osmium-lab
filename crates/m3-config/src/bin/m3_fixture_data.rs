@@ -275,6 +275,15 @@ fn prepare_partition(
                 end.utc(),
             )?)
         }
+        (MarketId::Tpex, InstrumentKind::Warrant) => {
+            let (start, end) = replay_window(config, key)?;
+            PartitionNormalizerConfig::TpexWarrant(tpex_normalizer::NormalizerConfig::new_warrant(
+                key.instrument().clone(),
+                key.trading_date(),
+                start.utc(),
+                end.utc(),
+            )?)
+        }
         (MarketId::Tpex, _) => {
             let (start, end) = replay_window(config, key)?;
             PartitionNormalizerConfig::Tpex(tpex_normalizer::NormalizerConfig::new(

@@ -89,3 +89,31 @@ format、event kind 與 canonical fingerprint 的 deterministic fallback。
   不進 M4 replay cache。
 - source page、cursor、query identity、daily instrument、每頁 checksum 與 fixture
   checksum 由 immutable source revision 保護；重抽取必須 byte-for-byte 一致。
+
+## 6. TPEx warrant profile（M5 follow-up）
+
+程式已加入 TPEx warrant 的明確 profile 與 source/cache routing，但目前 repository 沒有
+已授權、已提交的 TPEx warrant fixture，因此這一段是 implementation contract，尚不是
+正式 market evidence。
+
+TPEx 官方 Main Board IP specification 將 warrant continuous-trading 與 snapshot 定義為
+獨立的 format family；本 profile 以 Teralion adapter 的 `WARRANT_*` source-format naming
+對應它們，待第一份真實 fixture 取得後再核對 adapter 的實際字串與欄位。
+
+| 項目 | TPEx warrant contract |
+| --- | --- |
+| normalizer profile | `InstrumentProfile::Warrant` |
+| mapping | `TeralionTpexWarrant`，`mapping_version = 1` |
+| accepted quote formats | `WARRANT_REALTIME`、`WARRANT_SNAPSHOT` |
+| known skip | `INTRADAY_ODDLOT_REALTIME` |
+| state profile | `MarketStateReducer::tpex_warrant()` |
+
+TPEx warrant 目前沿用已驗證的 TPEx quote envelope、五檔 snapshot、`TpexQuoteAnnotations`
+與 `match_time` 語義，但保留獨立的 warrant source-format profile；M2、M3 fixture builder
+及 cache descriptor 會保留 warrant-specific mapping identity，不再把它靜默落入普通 TPEx
+branch。未被這份 contract 固定的 format 仍 strict reject。
+
+正式完成前仍需補齊 exact symbol／trading date 的完整 source cursor、daily metadata、
+protocol review、provenance、fixture checksum、offline replay 與 acceptance evidence。
+
+protocol reference：[TPEx Main Board Stock IP Feed Specification V.12.17](https://dsp.tpex.org.tw/storage/regular_system/Main%20Board%20Stock%20IP%20Feed%20Specification%20%28V.12.17_TCPIP%29.pdf)。

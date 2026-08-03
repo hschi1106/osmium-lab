@@ -124,6 +124,42 @@ fn tpex_profile_accepts_tpex_annotations_and_replaces_the_book() {
 }
 
 #[test]
+fn tpex_warrant_profile_accepts_tpex_warrant_quote_events() {
+    let instrument = InstrumentId::new(MarketId::Tpex, Symbol::new("6488").unwrap());
+    let date = TradingDate::parse("2026-07-27").unwrap();
+    let reducer = MarketStateReducer::tpex_warrant();
+    let context = ReducerContext::new(
+        date,
+        SessionSegmentId::new("regular").unwrap(),
+        SegmentBoundaryPolicy::Carry,
+        1,
+    );
+    let event = DomainEvent::new(
+        instrument.clone(),
+        date,
+        SourceFormatId::new("WARRANT_SNAPSHOT").unwrap(),
+        MatchTime::parse("2026-07-27T09:00:00+08:00").unwrap(),
+        None,
+        EventPayload::QuoteSnapshot(
+            QuoteSnapshot::new(
+                book(&["100"], &["101"]),
+                Observation::NoObservation,
+                Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
+                MarketAnnotations::TpexQuote(TpexQuoteAnnotations::new(16, 0)),
+            )
+            .unwrap(),
+        ),
+    );
+    let mut state = MarketState::new(instrument, date);
+    reducer.apply(&mut state, &event, &context).unwrap();
+    assert_eq!(state.state_version(), 1);
+    assert_eq!(
+        state.view().best_ask().unwrap().price(),
+        Price::parse("101").unwrap()
+    );
+}
+
+#[test]
 fn initial_state_preserves_unavailable_semantics() {
     let state = MarketState::new(instrument("2330"), date());
     assert_eq!(state.state_version(), 0);
