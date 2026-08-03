@@ -13,6 +13,7 @@ crossterm = "0.28"
 data-sync = { path = "../data-sync" }
 dotenvy = "0.15"
 execution-sim = { path = "../execution-sim" }
+example-strategy = { path = "../example-strategy" }
 osmium-config = { path = "../osmium-config" }
 osmium-runner = { path = "../osmium-runner" }
 market-state = { path = "../market-state" }

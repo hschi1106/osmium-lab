@@ -16,7 +16,8 @@ use strategy_api::{
 
 mod artifacts;
 pub use artifacts::{
-    ArtifactError, InspectSummary, inspect_run, publish_backtest, publish_multi_backtest,
+    ArtifactError, InspectSummary, RUN_MANIFEST_VERSION, inspect_run, publish_backtest,
+    publish_multi_backtest,
 };
 
 pub const BACKTEST_COORDINATOR_VERSION: u16 = 1;
@@ -670,9 +671,32 @@ mod tests {
     use replay_engine::{
         EventStream, ReplayPlan, ReplayStreamBinding, ReplayStreamFactory, StableStreamDescriptorId,
     };
-    use strategy_api::{AcceptanceStrategy, ExampleStrategy, SessionKind};
+    use strategy_api::{
+        AcceptanceStrategy, AcceptanceStrategyFactory, RawStrategyParameters,
+        ResolvedStrategyMetadata, SessionKind, StrategyRegistry,
+    };
 
     use super::*;
+
+    fn artifact_strategy_metadata(
+        instrument: InstrumentId,
+        sessions: &[SessionKind],
+    ) -> ResolvedStrategyMetadata {
+        let mut registry = StrategyRegistry::new();
+        registry
+            .register(AcceptanceStrategyFactory::new().unwrap())
+            .unwrap();
+        let resolved = registry
+            .resolve(
+                strategy_api::ACCEPTANCE_STRATEGY_ID,
+                strategy_api::ACCEPTANCE_STRATEGY_VERSION,
+                &RawStrategyParameters::new(),
+                &[instrument],
+                sessions,
+            )
+            .unwrap();
+        resolved.into_parts().1
+    }
 
     #[test]
     fn empty_stream_still_finalizes_and_reconciles() {
@@ -693,9 +717,10 @@ mod tests {
             ReducerContext::new(date, segment_id, SegmentBoundaryPolicy::Carry, 1),
         )
         .unwrap();
-        let strategy = ExampleStrategy::new(
-            ExampleStrategy::source_binary_identity().unwrap(),
-            instrument.clone(),
+        let strategy = AcceptanceStrategy::new(
+            AcceptanceStrategy::source_binary_identity().unwrap(),
+            [instrument.clone()],
+            [SessionKind::Regular],
         )
         .unwrap();
         let zero_charge = ChargeModel {
@@ -716,7 +741,7 @@ mod tests {
             zero_charge,
         );
         let simulator = Simulator::new(
-            [instrument],
+            [instrument.clone()],
             QuantityUnit::TradingUnit,
             FillModel {
                 evidence: EvidenceMode::TopOfBook,
@@ -733,10 +758,26 @@ mod tests {
 
         let root = tempfile::tempdir().unwrap();
         let output = root.path().join("run");
-        publish_backtest(&output, &completed, &[7; 32], "source-1", "cache-1").unwrap();
+        let metadata = artifact_strategy_metadata(instrument, &[SessionKind::Regular]);
+        publish_backtest(
+            &output, &completed, &[7; 32], "source-1", "cache-1", &metadata,
+        )
+        .unwrap();
         let inspected = inspect_run(&output).unwrap();
         assert_eq!(inspected.status, "successful");
         assert_eq!(inspected.event_count, 0);
+        let strategy: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(output.join("strategy.json")).unwrap()).unwrap();
+        assert_eq!(strategy["id"], strategy_api::ACCEPTANCE_STRATEGY_ID);
+        assert_eq!(strategy["parameters"], serde_json::json!({}));
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(output.join("run-manifest.yaml")).unwrap())
+                .unwrap();
+        assert_eq!(
+            manifest["run_manifest_version"],
+            serde_json::json!(RUN_MANIFEST_VERSION)
+        );
+        assert!(manifest["artifact_checksums"]["strategy.json"].is_string());
 
         std::fs::write(output.join("ledger.bin"), b"corrupt").unwrap();
         assert!(matches!(
@@ -918,7 +959,9 @@ mod tests {
         );
         let root = tempfile::tempdir().unwrap();
         let output = root.path().join("run");
-        publish_multi_backtest(&output, &completed, &[6; 32], "source", "cache").unwrap();
+        let metadata = artifact_strategy_metadata(instrument.clone(), &[SessionKind::Regular]);
+        publish_multi_backtest(&output, &completed, &[6; 32], "source", "cache", &metadata)
+            .unwrap();
         let inspected = inspect_run(&output).unwrap();
         assert_eq!(inspected.status, "successful");
         assert_eq!(inspected.order_count, 2);

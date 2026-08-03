@@ -5,12 +5,67 @@ use market_types::{InstrumentId, MarketId, Quantity, QuantityUnit};
 use crate::{
     BinaryIdentity, CanonicalParamsChecksum, IndicatorValue, MatchingState, NewOrderEntry,
     OrderIntent, OrderSide, OrderType, SessionKind, SessionPhase, Strategy, StrategyDeclaration,
-    StrategyEventContext, StrategyExecutionError, StrategyFinalizeContext, StrategyIdentity,
-    StrategyOutputSink,
+    StrategyDefinition, StrategyEventContext, StrategyExecutionError, StrategyFactory,
+    StrategyFactoryError, StrategyFinalizeContext, StrategyIdentity, StrategyOutputSink,
+    StrategyParameterSchema, ValidatedStrategyParameters,
 };
 
 pub const ACCEPTANCE_STRATEGY_ID: &str = "acceptance.multi-market";
 pub const ACCEPTANCE_STRATEGY_VERSION: &str = "1";
+
+#[derive(Debug, Clone)]
+pub struct AcceptanceStrategyFactory {
+    definition: StrategyDefinition,
+    schema: StrategyParameterSchema,
+}
+
+impl AcceptanceStrategyFactory {
+    pub fn new() -> Result<Self, crate::StrategyRegistryError> {
+        let schema = StrategyParameterSchema::new(1, [])?;
+        let definition = StrategyDefinition::new(
+            ACCEPTANCE_STRATEGY_ID,
+            ACCEPTANCE_STRATEGY_VERSION,
+            AcceptanceStrategy::source_binary_identity()
+                .map_err(|_| crate::StrategyRegistryError::InvalidDefinition)?,
+            schema.version(),
+        )?;
+        Ok(Self { definition, schema })
+    }
+}
+
+impl StrategyFactory for AcceptanceStrategyFactory {
+    fn definition(&self) -> &StrategyDefinition {
+        &self.definition
+    }
+
+    fn parameter_schema(&self) -> &StrategyParameterSchema {
+        &self.schema
+    }
+
+    fn build(
+        &self,
+        parameters: &ValidatedStrategyParameters,
+        universe: &[InstrumentId],
+        sessions: &[SessionKind],
+    ) -> Result<Box<dyn Strategy>, StrategyFactoryError> {
+        AcceptanceStrategy::new(
+            self.definition.binary_identity().clone(),
+            universe.iter().cloned(),
+            sessions.iter().copied(),
+        )
+        .map(|strategy| Box::new(strategy) as Box<dyn Strategy>)
+        .map_err(|error| StrategyFactoryError::new(error.to_string()))
+        .and_then(|strategy| {
+            if strategy.canonical_params_checksum() == parameters.checksum() {
+                Ok(strategy)
+            } else {
+                Err(StrategyFactoryError::new(
+                    "acceptance parameter checksum mismatch",
+                ))
+            }
+        })
+    }
+}
 
 /// Deterministic acceptance strategy for the multi-market universe.
 ///

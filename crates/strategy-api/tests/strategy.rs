@@ -177,6 +177,19 @@ fn callback_observes_committed_post_event_state_and_context() {
 }
 
 #[test]
+fn boxed_strategy_runs_through_the_generic_lifecycle() {
+    let strategy: Box<dyn Strategy> = Box::new(ContextObserver::new());
+    let completed = run_strategy(
+        core(),
+        strategy,
+        &segment(),
+        vec![quote("2026-07-27T09:00:00+08:00", 1, 0x10, 0)],
+    )
+    .unwrap();
+    assert_eq!(completed.callback_count(), 1);
+}
+
+#[test]
 fn example_strategy_declares_only_2330_and_emits_in_fixed_order() {
     let strategy = ExampleStrategy::new(binary_identity(), instrument()).unwrap();
     assert_eq!(strategy.declaration().universe(), &[instrument()]);

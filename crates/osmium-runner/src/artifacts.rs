@@ -8,11 +8,12 @@ use std::{
 };
 
 use execution_sim::ACCOUNTING_VERSION;
+use strategy_api::{ResolvedStrategyMetadata, StrategyParameterValue};
 
 use crate::CompletedBacktest;
 use crate::CompletedMultiBacktest;
 
-const RUN_MANIFEST_VERSION: u16 = 1;
+pub const RUN_MANIFEST_VERSION: u16 = 2;
 
 pub fn publish_backtest(
     output: &Path,
@@ -20,7 +21,9 @@ pub fn publish_backtest(
     plan_identity: &[u8; 32],
     source_revision: &str,
     cache_identity: &str,
+    strategy_metadata: &ResolvedStrategyMetadata,
 ) -> Result<(), ArtifactError> {
+    validate_strategy_metadata(&completed.strategy_output, strategy_metadata)?;
     if output.exists() {
         return Err(ArtifactError::OutputExists(output.to_path_buf()));
     }
@@ -62,6 +65,10 @@ pub fn publish_backtest(
     files.insert(
         "cache-lineage.yaml",
         format!("cache_identity: {cache_identity}\n").into_bytes(),
+    );
+    files.insert(
+        "strategy.json",
+        encode_strategy_metadata(strategy_metadata)?,
     );
     files.insert(
         "event-stream.blake3",
@@ -156,7 +163,9 @@ pub fn publish_multi_backtest(
     plan_identity: &[u8; 32],
     source_revision: &str,
     cache_identity: &str,
+    strategy_metadata: &ResolvedStrategyMetadata,
 ) -> Result<(), ArtifactError> {
+    validate_strategy_metadata(&completed.strategy_output, strategy_metadata)?;
     if output.exists() {
         return Err(ArtifactError::OutputExists(output.to_path_buf()));
     }
@@ -200,6 +209,10 @@ pub fn publish_multi_backtest(
     files.insert(
         "cache-lineage.yaml",
         format!("cache_identity: {cache_identity}\n").into_bytes(),
+    );
+    files.insert(
+        "strategy.json",
+        encode_strategy_metadata(strategy_metadata)?,
     );
     files.insert(
         "event-stream.blake3",
@@ -277,6 +290,55 @@ pub fn publish_multi_backtest(
     File::open(&staging)?.sync_all()?;
     fs::rename(&staging, output)?;
     File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+fn encode_strategy_metadata(metadata: &ResolvedStrategyMetadata) -> Result<Vec<u8>, ArtifactError> {
+    let definition = metadata.definition();
+    let parameters = metadata
+        .parameters()
+        .values()
+        .iter()
+        .map(|(name, value)| {
+            let value = match value {
+                StrategyParameterValue::Bool(value) => serde_json::Value::Bool(*value),
+                StrategyParameterValue::SignedInteger(value) => (*value).into(),
+                StrategyParameterValue::UnsignedInteger(value) => (*value).into(),
+                StrategyParameterValue::ExactDecimal(_) | StrategyParameterValue::Text(_) => {
+                    value.materialized_text().into()
+                }
+            };
+            (name.clone(), value)
+        })
+        .collect::<serde_json::Map<_, _>>();
+    serde_json::to_vec_pretty(&serde_json::json!({
+        "format": "osmium-strategy-v1",
+        "id": definition.id(),
+        "version": definition.version(),
+        "binary_identity": {
+            "algorithm": definition.binary_identity().algorithm(),
+            "digest": hex(definition.binary_identity().digest()),
+        },
+        "parameter_schema_version": definition.parameter_schema_version(),
+        "parameters": parameters,
+        "parameters_checksum": hex(metadata.parameters().checksum().as_bytes()),
+    }))
+    .map_err(|error| ArtifactError::Encoding(error.to_string()))
+}
+
+fn validate_strategy_metadata(
+    output: &strategy_api::StrategyOutput,
+    metadata: &ResolvedStrategyMetadata,
+) -> Result<(), ArtifactError> {
+    let identity = metadata
+        .definition()
+        .identity()
+        .map_err(|error| ArtifactError::Encoding(error.to_string()))?;
+    if output.identity() != &identity
+        || output.canonical_params_checksum() != metadata.parameters().checksum()
+    {
+        return Err(ArtifactError::StrategyMetadataMismatch);
+    }
     Ok(())
 }
 
@@ -572,6 +634,7 @@ pub enum ArtifactError {
     Encoding(String),
     Manifest,
     Checksum(String),
+    StrategyMetadataMismatch,
 }
 impl fmt::Display for ArtifactError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
