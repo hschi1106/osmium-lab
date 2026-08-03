@@ -300,6 +300,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-strategy"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "market-state",
+ "market-types",
+ "replay-engine",
+ "strategy-api",
+]
+
+[[package]]
 name = "execution-sim"
 version = "0.1.0"
 dependencies = [
@@ -826,6 +837,7 @@ dependencies = [
  "crossterm",
  "data-sync",
  "dotenvy",
+ "example-strategy",
  "execution-sim",
  "market-state",
  "market-types",
@@ -847,6 +859,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "data-sync",
+ "example-strategy",
  "market-types",
  "replay-engine",
  "run-planner",

@@ -28,7 +28,9 @@ cargo test --workspace
 
 CI 使用 `examples/smoke.yaml` 與 `fixtures/smoke/` 建立 source/cache，然後在無
 credential 的環境執行 `data verify`、`cache prepare`、`replay`、`backtest` 與
-`inspect`。這是 synthetic smoke，不是 real market formal acceptance。
+`inspect`。同一份 cache 另以 `examples/smoke-example-strategy.yaml` 驗證 compiled custom
+strategy，預期一筆 order、一筆 fill，並發布含 materialized parameters 的
+`strategy.json`。這是 synthetic smoke，不是 real market formal acceptance。
 
 ## Release archive
 

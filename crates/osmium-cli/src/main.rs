@@ -20,10 +20,11 @@ fn main() -> ExitCode {
             output,
         }) => {
             let summary = format!(
-                "osmium {}\ncli_contract={}\nconfig_schema={}\nevent_schema={}\ncache_format={}\naccounting={}",
+                "osmium {}\ncli_contract={}\nconfig_schema={}\nrun_manifest={}\nevent_schema={}\ncache_format={}\naccounting={}",
                 env!("CARGO_PKG_VERSION"),
                 CLI_CONTRACT_VERSION,
                 osmium_config::RUN_CONFIG_VERSION,
+                osmium_runner::RUN_MANIFEST_VERSION,
                 market_types::EVENT_SCHEMA_VERSION,
                 data_sync::CACHE_FORMAT_VERSION,
                 execution_sim::ACCOUNTING_VERSION

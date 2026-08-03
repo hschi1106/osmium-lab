@@ -319,6 +319,7 @@ execution-plan.yaml
 run-manifest.yaml
 data-lineage.yaml
 cache-lineage.yaml
+strategy.json
 event-stream.blake3
 final-state.blake3
 strategy-output.bin

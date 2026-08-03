@@ -20,7 +20,8 @@ use run_planner::{
 };
 use serde::Deserialize;
 use strategy_api::{
-    BinaryIdentity, CanonicalParamsChecksum, SessionKind, StrategyDeclaration, StrategyIdentity,
+    RawStrategyParameter, RawStrategyParameters, ResolvedStrategyMetadata, SessionKind, Strategy,
+    StrategyRegistry, StrategyRegistryError,
 };
 
 pub const RUN_CONFIG_VERSION: u16 = 2;
@@ -115,10 +116,11 @@ impl InstrumentSelection {
     }
 }
 
-#[derive(Debug, Clone)]
 pub struct RunConfig {
     effective: EffectiveRunConfig,
     selections: Box<[InstrumentSelection]>,
+    strategy: Option<Box<dyn Strategy>>,
+    strategy_metadata: ResolvedStrategyMetadata,
 }
 
 impl RunConfig {
@@ -130,6 +132,17 @@ impl RunConfig {
     #[must_use]
     pub const fn selections(&self) -> &[InstrumentSelection] {
         &self.selections
+    }
+
+    #[must_use]
+    pub const fn strategy_metadata(&self) -> &ResolvedStrategyMetadata {
+        &self.strategy_metadata
+    }
+
+    pub fn take_strategy(&mut self) -> Result<Box<dyn Strategy>, ConfigError> {
+        self.strategy
+            .take()
+            .ok_or(ConfigError::StrategyAlreadyTaken)
     }
 
     #[must_use]
@@ -193,6 +206,17 @@ impl RunConfig {
     }
 }
 
+impl fmt::Debug for RunConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RunConfig")
+            .field("effective", &self.effective)
+            .field("selections", &self.selections)
+            .field("strategy_metadata", &self.strategy_metadata)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug)]
 pub struct PlanBundle {
     pub execution: ExecutionPlan,
@@ -210,7 +234,7 @@ pub fn config_version(path: impl AsRef<Path>) -> Result<u16, ConfigError> {
         .ok_or(ConfigError::Invalid("config_version"))
 }
 
-pub fn load(path: impl AsRef<Path>) -> Result<RunConfig, ConfigError> {
+pub fn load(path: impl AsRef<Path>, registry: &StrategyRegistry) -> Result<RunConfig, ConfigError> {
     let bytes = fs::read(path)?;
     reject_secrets(&bytes)?;
     let value: serde_yaml::Value =
@@ -228,10 +252,10 @@ pub fn load(path: impl AsRef<Path>) -> Result<RunConfig, ConfigError> {
     }
     let raw: FileConfig =
         serde_yaml::from_value(value).map_err(|error| ConfigError::Yaml(error.to_string()))?;
-    resolve(raw)
+    resolve(raw, registry)
 }
 
-pub fn plan(config: RunConfig) -> Result<PlanBundle, ConfigError> {
+pub fn plan(config: &RunConfig) -> Result<PlanBundle, ConfigError> {
     let mut partitions = Vec::new();
     let mut session_plans = Vec::new();
     let mut replay_bindings = Vec::new();
@@ -282,7 +306,7 @@ pub fn plan(config: RunConfig) -> Result<PlanBundle, ConfigError> {
             session_plans.push(session_plan);
         }
     }
-    let execution = ExecutionPlan::new(config.effective, partitions, Vec::new())
+    let execution = ExecutionPlan::new(config.effective.clone(), partitions, Vec::new())
         .map_err(|error| ConfigError::Value(error.to_string()))?;
     let replay = if replay_ready {
         Some(
@@ -320,7 +344,7 @@ fn cache_state(
     })
 }
 
-fn resolve(raw: FileConfig) -> Result<RunConfig, ConfigError> {
+fn resolve(raw: FileConfig, registry: &StrategyRegistry) -> Result<RunConfig, ConfigError> {
     if raw.config_version != RUN_CONFIG_VERSION {
         return Err(ConfigError::UnsupportedVersion {
             expected: RUN_CONFIG_VERSION,
@@ -369,8 +393,6 @@ fn resolve(raw: FileConfig) -> Result<RunConfig, ConfigError> {
         .flat_map(|selection| selection.session_kinds.iter().copied())
         .collect::<BTreeSet<_>>();
     let sessions = sessions.into_iter().collect::<Vec<_>>();
-    let declaration = StrategyDeclaration::new(instruments.clone(), sessions.clone())
-        .map_err(|error| ConfigError::Value(error.to_string()))?;
     let date_values = trading_dates.clone();
     let economics = raw
         .instrument_economics
@@ -378,16 +400,20 @@ fn resolve(raw: FileConfig) -> Result<RunConfig, ConfigError> {
         .map(parse_economics)
         .collect::<Result<Vec<_>, _>>()?;
     validate_reference_economics(&selections, &economics)?;
-    let params_checksum = params_checksum_with_references(&raw.strategy.parameters, &selections)?;
-    let binary_digest = strategy_digest(&raw.strategy.id, &raw.strategy.version, params_checksum);
-    let strategy_identity = StrategyIdentity::new(
-        raw.strategy.id,
-        raw.strategy.version,
-        BinaryIdentity::new("config", binary_digest.to_vec())
-            .map_err(|error| ConfigError::Value(error.to_string()))?,
-    )
-    .map_err(|error| ConfigError::Value(error.to_string()))?;
-    let strategy = StrategyBinding::new(strategy_identity, params_checksum, declaration);
+    let raw_parameters = parse_strategy_parameters(&raw.strategy.parameters)?;
+    let resolved_strategy = registry.resolve(
+        &raw.strategy.id,
+        &raw.strategy.version,
+        &raw_parameters,
+        &instruments,
+        &sessions,
+    )?;
+    let (strategy_instance, strategy_metadata) = resolved_strategy.into_parts();
+    let strategy = StrategyBinding::new(
+        strategy_metadata.definition().identity()?,
+        strategy_metadata.parameters().checksum(),
+        strategy_metadata.declaration().clone(),
+    );
     let effective = EffectiveRunConfig::resolve(PlannerRunConfig {
         // The planner's effective schema is independent from the user-facing file version.
         config_version: 1,
@@ -407,6 +433,8 @@ fn resolve(raw: FileConfig) -> Result<RunConfig, ConfigError> {
     Ok(RunConfig {
         effective,
         selections: selections.into_boxed_slice(),
+        strategy: Some(strategy_instance),
+        strategy_metadata,
     })
 }
 
@@ -693,73 +721,37 @@ fn decimal(value: &str) -> Result<Decimal, ConfigError> {
     Decimal::parse(value).map_err(|error| ConfigError::Value(error.to_string()))
 }
 
-fn params_checksum(value: &serde_yaml::Value) -> Result<CanonicalParamsChecksum, ConfigError> {
-    let bytes = serde_json::to_vec(value).map_err(|error| ConfigError::Value(error.to_string()))?;
-    let mut canonical = Vec::with_capacity(6 + bytes.len());
-    canonical.extend_from_slice(b"OSSP");
-    canonical.extend_from_slice(&1_u16.to_be_bytes());
-    canonical.extend_from_slice(
-        &u32::try_from(bytes.len())
-            .map_err(|_| ConfigError::Value("strategy parameters too large".to_owned()))?
-            .to_be_bytes(),
-    );
-    canonical.extend_from_slice(&bytes);
-    Ok(CanonicalParamsChecksum::from_bytes(
-        *blake3::hash(&canonical).as_bytes(),
-    ))
-}
-
-fn params_checksum_with_references(
+fn parse_strategy_parameters(
     value: &serde_yaml::Value,
-    selections: &[InstrumentSelection],
-) -> Result<CanonicalParamsChecksum, ConfigError> {
-    let base = params_checksum(value)?;
-    if selections
-        .iter()
-        .all(|selection| selection.reference.is_none())
-    {
-        return Ok(base);
-    }
-    let mut ordered = selections.iter().collect::<Vec<_>>();
-    ordered.sort_by(|left, right| left.instrument.cmp(&right.instrument));
-    let mut canonical = Vec::new();
-    canonical.extend_from_slice(b"OSM5PARAM");
-    canonical.extend_from_slice(base.as_bytes());
-    canonical.extend_from_slice(&(ordered.len() as u32).to_be_bytes());
-    for selection in ordered {
-        canonical.push(selection.instrument.market().discriminant());
-        append_text_for_checksum(selection.instrument.symbol().as_str(), &mut canonical);
-        canonical.push(selection.kind as u8);
-        if let Some(reference) = &selection.reference {
-            append_text_for_checksum(reference.underlying(), &mut canonical);
-            canonical.extend_from_slice(&reference.expiry.to_canonical_bytes());
-            canonical.extend_from_slice(&reference.strike.to_canonical_bytes());
-            canonical.push(reference.option_side as u8);
-            canonical.push(reference.currency as u8);
-            canonical.extend_from_slice(&reference.multiplier.to_canonical_bytes());
-            canonical.push(reference.quantity_unit.discriminant());
-            canonical.extend_from_slice(&reference.units_per_trading_unit.to_be_bytes());
-            append_text_for_checksum(reference.provenance(), &mut canonical);
+) -> Result<RawStrategyParameters, ConfigError> {
+    let mapping = value
+        .as_mapping()
+        .ok_or(ConfigError::Invalid("strategy.parameters"))?;
+    let mut parameters = RawStrategyParameters::new();
+    for (key, value) in mapping {
+        let key = key
+            .as_str()
+            .ok_or(ConfigError::Invalid("strategy.parameters field name"))?
+            .to_owned();
+        let value = match value {
+            serde_yaml::Value::Bool(value) => RawStrategyParameter::Bool(*value),
+            serde_yaml::Value::Number(value) => {
+                if let Some(value) = value.as_i64() {
+                    RawStrategyParameter::SignedInteger(value)
+                } else if let Some(value) = value.as_u64() {
+                    RawStrategyParameter::UnsignedInteger(value)
+                } else {
+                    return Err(ConfigError::Invalid("strategy.parameters numeric value"));
+                }
+            }
+            serde_yaml::Value::String(value) => RawStrategyParameter::String(value.clone()),
+            _ => return Err(ConfigError::Invalid("strategy.parameters scalar value")),
+        };
+        if parameters.insert(key, value).is_some() {
+            return Err(ConfigError::Invalid("strategy.parameters duplicate field"));
         }
     }
-    Ok(CanonicalParamsChecksum::from_bytes(
-        *blake3::hash(&canonical).as_bytes(),
-    ))
-}
-
-fn append_text_for_checksum(value: &str, output: &mut Vec<u8>) {
-    output.extend_from_slice(&(value.len() as u32).to_be_bytes());
-    output.extend_from_slice(value.as_bytes());
-}
-
-fn strategy_digest(id: &str, version: &str, params: CanonicalParamsChecksum) -> [u8; 32] {
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"OSM3STRATEGY");
-    bytes.extend_from_slice(id.as_bytes());
-    bytes.push(0);
-    bytes.extend_from_slice(version.as_bytes());
-    bytes.extend_from_slice(params.as_bytes());
-    *blake3::hash(&bytes).as_bytes()
+    Ok(parameters)
 }
 
 fn decode_hex(value: &str) -> Result<[u8; 32], ConfigError> {
@@ -957,6 +949,8 @@ pub enum ConfigError {
     Invalid(&'static str),
     Value(String),
     SessionPlan(SessionPlanError),
+    Strategy(StrategyRegistryError),
+    StrategyAlreadyTaken,
 }
 
 impl fmt::Display for ConfigError {
@@ -966,6 +960,7 @@ impl fmt::Display for ConfigError {
                 formatter,
                 "unsupported config_version {actual}; expected {expected}; legacy config_version 1 is not supported, upgrade the config"
             ),
+            Self::Strategy(error) => write!(formatter, "{error}"),
             _ => write!(formatter, "{self:?}"),
         }
     }
@@ -979,9 +974,36 @@ impl From<std::io::Error> for ConfigError {
     }
 }
 
+impl From<StrategyRegistryError> for ConfigError {
+    fn from(error: StrategyRegistryError) -> Self {
+        Self::Strategy(error)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn registry() -> StrategyRegistry {
+        let mut registry = StrategyRegistry::new();
+        registry
+            .register(strategy_api::AcceptanceStrategyFactory::new().unwrap())
+            .unwrap();
+        registry
+            .register(example_strategy::PriceThresholdBuyOnceFactory::new().unwrap())
+            .unwrap();
+        registry
+    }
+
+    fn example_source(parameters: &str) -> String {
+        fs::read_to_string(fixture())
+            .unwrap()
+            .replace(
+                "id: acceptance.multi-market",
+                "id: example.price-threshold-buy-once",
+            )
+            .replace("parameters: {}", parameters)
+    }
 
     fn fixture() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/config.yaml")
@@ -989,7 +1011,7 @@ mod tests {
 
     #[test]
     fn run_config_materializes_the_representative_twse_profile() {
-        let config = load(fixture()).unwrap();
+        let config = load(fixture(), &registry()).unwrap();
         assert_eq!(config.selections().len(), 1);
         assert_eq!(config.effective().universe().len(), 1);
         assert_eq!(config.effective().session_kinds(), &[SessionKind::Regular]);
@@ -997,7 +1019,7 @@ mod tests {
             config.effective().simulation().latency(),
             run_planner::LatencyConfig::new(0, 0)
         );
-        let bundle = plan(config).unwrap();
+        let bundle = plan(&config).unwrap();
         assert_eq!(bundle.execution.partitions().len(), 1);
         assert_eq!(bundle.session_plans.len(), 1);
         assert!(
@@ -1019,7 +1041,7 @@ mod tests {
         let path = directory.path().join("latency.yaml");
         fs::write(&path, source).unwrap();
 
-        let config = load(path).unwrap();
+        let config = load(path, &registry()).unwrap();
         assert_eq!(
             config.effective().simulation().latency(),
             run_planner::LatencyConfig::new(12, 34)
@@ -1031,7 +1053,10 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("secret.yaml");
         fs::write(&path, "config_version: 2\napi_key: forbidden\n").unwrap();
-        assert!(matches!(load(path), Err(ConfigError::SecretField)));
+        assert!(matches!(
+            load(path, &registry()),
+            Err(ConfigError::SecretField)
+        ));
     }
 
     #[test]
@@ -1040,7 +1065,7 @@ mod tests {
         let path = directory.path().join("legacy.yaml");
         fs::write(&path, "config_version: 1\n").unwrap();
 
-        let error = load(path).unwrap_err();
+        let error = load(path, &registry()).unwrap_err();
         assert!(matches!(
             &error,
             ConfigError::UnsupportedVersion {
@@ -1049,5 +1074,73 @@ mod tests {
             }
         ));
         assert!(error.to_string().contains("upgrade the config"));
+    }
+
+    #[test]
+    fn strategy_resolution_uses_factory_identity_before_planning() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("example.yaml");
+        fs::write(
+            &path,
+            example_source("parameters: { entry_price: \"101\" }"),
+        )
+        .unwrap();
+        let config = load(&path, &registry()).unwrap();
+        let identity = config.effective().strategy().identity();
+        assert_eq!(identity.strategy_id(), "example.price-threshold-buy-once");
+        assert_eq!(
+            identity.binary_identity().algorithm(),
+            "strategy-source-blake3"
+        );
+    }
+
+    #[test]
+    fn default_materialization_stabilizes_plan_identity_and_values_change_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let omitted_path = directory.path().join("omitted.yaml");
+        let explicit_path = directory.path().join("explicit.yaml");
+        let changed_path = directory.path().join("changed.yaml");
+        fs::write(
+            &omitted_path,
+            example_source("parameters: { entry_price: \"101\" }"),
+        )
+        .unwrap();
+        fs::write(
+            &explicit_path,
+            example_source("parameters: { quantity: 1, entry_price: \"101.0\" }"),
+        )
+        .unwrap();
+        fs::write(
+            &changed_path,
+            example_source("parameters: { entry_price: \"101\", quantity: 2 }"),
+        )
+        .unwrap();
+        let omitted = load(&omitted_path, &registry()).unwrap();
+        let explicit = load(&explicit_path, &registry()).unwrap();
+        let changed = load(&changed_path, &registry()).unwrap();
+        assert_eq!(
+            plan(&omitted).unwrap().execution.identity(),
+            plan(&explicit).unwrap().execution.identity()
+        );
+        assert_ne!(
+            plan(&omitted).unwrap().execution.identity(),
+            plan(&changed).unwrap().execution.identity()
+        );
+    }
+
+    #[test]
+    fn acceptance_rejects_unknown_parameters_during_load() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("invalid.yaml");
+        let source = fs::read_to_string(fixture())
+            .unwrap()
+            .replace("parameters: {}", "parameters: { unexpected: true }");
+        fs::write(&path, source).unwrap();
+        assert!(matches!(
+            load(&path, &registry()),
+            Err(ConfigError::Strategy(
+                StrategyRegistryError::UnknownParameter(field)
+            )) if field == "unexpected"
+        ));
     }
 }

@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 data-sync = { path = "../../../crates/data-sync" }
+example-strategy = { path = "../../../crates/example-strategy" }
 market-types = { path = "../../../crates/market-types" }
 osmium-config = { path = "../../../crates/osmium-config" }
 run-planner = { path = "../../../crates/run-planner" }

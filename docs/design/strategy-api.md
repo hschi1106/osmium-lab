@@ -111,6 +111,18 @@ canonical_params_checksum =
 
 canonical encoding 改變時必須更新 strategy version 或 parameter schema version。
 
+### 3.3 Compiled strategy registry
+
+release binary 使用明確的 `StrategyRegistry`，以 `strategy_id + strategy_version` 精確查找
+`StrategyFactory`。factory definition 固定 binary identity 與 parameter schema version；
+build 只接收已驗證參數、config 的 explicit universe 與 sessions，不得做 I/O、讀取
+environment-dependent default 或動態擴張 universe。
+
+registry 在 build 後必須核對 strategy 回報的 identity、canonical parameter checksum、
+universe 與 sessions。重複註冊、unknown id、version mismatch 或任一 contract mismatch
+都在 source/cache/stream I/O 前失敗。這個介面是編譯期連結，不包含 dynamic library、
+WASM、Python 或 linker auto-registration。
+
 ## 4. Universe 宣告
 
 ### 4.1 `StrategyDeclaration`

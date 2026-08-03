@@ -7,10 +7,10 @@
 `tools/acceptance/`。
 
 ```text
-cli_contract_version    = 3
+cli_contract_version    = 4
 run_config_version      = 2
 execution_plan_version  = 1
-run_manifest_version    = 1
+run_manifest_version    = 2
 binary                  = osmium
 current_scope           = private/internal v2 multi-instrument offline replay and backtest
 ```
@@ -164,6 +164,12 @@ effective config checksum，並只延後 order 的 eligible `match_time`，不�
 - 驗證 fill/economics/rounding/accounting combinations。
 - 驗證 `data_root` 及 output policy，但 absolute path 不進 domain identity。
 - 拒絕 config 中的 API key、authorization、cookie、bearer 或 credential-bearing URL。
+
+`strategy.id + version` 必須精確命中目前 binary 的 compiled registry。選中的 factory
+會先驗證 flat scalar `parameters`、套用 schema 明定的 default，再建立 strategy；
+registry 隨即核對 binary identity、parameter checksum、explicit universe 與 sessions。
+unknown id、version mismatch、unknown parameter、未加引號的 decimal 或 factory contract
+mismatch 都屬 config error，且不得延後至資料 I/O 後才失敗。
 
 default 必須由 versioned schema明示，並在 effective config materialize。displayed
 effective config、canonical effective config bytes 與 checksum 使用相同 values；
@@ -533,6 +539,7 @@ execution-plan.yaml
 run-manifest.yaml
 data-lineage.yaml
 cache-lineage.yaml
+strategy.json
 event-stream.blake3
 final-state.blake3
 strategy-output.bin
@@ -548,6 +555,10 @@ performance.yaml
 warnings.yaml
 run-summary.yaml
 ```
+
+`strategy.json` 使用 `osmium-strategy-v1`，保存 strategy id/version、實際
+`strategy-source-blake3` identity、parameter schema version、已套用 default 的參數與
+canonical parameter checksum；此檔案本身也列入 `run-manifest.yaml` 的 artifact checksum。
 
 `run-manifest.yaml` 至少記錄：
 

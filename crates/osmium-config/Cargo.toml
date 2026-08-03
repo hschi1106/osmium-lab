@@ -19,6 +19,7 @@ strategy-api = { path = "../strategy-api" }
 twse-normalizer = { path = "../normalizer/twse" }
 
 [dev-dependencies]
+example-strategy = { path = "../example-strategy" }
 tempfile = "3"
 
 [lints]

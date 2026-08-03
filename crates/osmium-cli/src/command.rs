@@ -17,17 +17,14 @@ use market_state::{
     MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
 };
 use market_types::{InstrumentKind, MarketId};
-use osmium_config::{RUN_CONFIG_VERSION, RunConfig, load, plan};
+use osmium_config::{RUN_CONFIG_VERSION, RunConfig, plan};
 use replay_engine::{ReplayContextWindow, ReplayCore};
 use run_planner::{
     CacheAction, ChargeSides as PlanChargeSides, FillEvidence, NetworkRequirement,
     QuantityEvidence, RoundingPolicy as PlanRounding, SlippageModelConfig, SourceAction,
     SourceState,
 };
-use strategy_api::{
-    ACCEPTANCE_STRATEGY_ID, ACCEPTANCE_STRATEGY_VERSION, AcceptanceStrategy, SessionKind,
-    SessionSegment,
-};
+use strategy_api::{AcceptanceStrategyFactory, SessionKind, SessionSegment, StrategyRegistry};
 use taifex_normalizer::NormalizerConfig as TaifexNormalizerConfig;
 use tpex_normalizer::NormalizerConfig as TpexNormalizerConfig;
 use twse_normalizer::NormalizerConfig as TwseNormalizerConfig;
@@ -89,7 +86,7 @@ pub fn execute(command: &Command) -> Result<String, CommandError> {
 }
 
 pub fn execute_config_check(path: &Path) -> Result<String, CommandError> {
-    let config = load(path)?;
+    let config = load_config(path)?;
     Ok(format!(
         "config=valid\nconfig_version={}\ntrading_dates={}\ninstruments={}",
         RUN_CONFIG_VERSION,
@@ -107,7 +104,8 @@ pub fn execute_inspect(path: &Path) -> Result<String, CommandError> {
 }
 
 fn execute_plan(path: &Path) -> Result<String, CommandError> {
-    let bundle = plan(load(path)?)?;
+    let config = load_config(path)?;
+    let bundle = plan(&config)?;
     let mut output = format!(
         "plan_identity={}\nnetwork_requirement={:?}\npartitions={}",
         hex(bundle.execution.identity().as_bytes()),
@@ -126,6 +124,26 @@ fn execute_plan(path: &Path) -> Result<String, CommandError> {
         ));
     }
     Ok(output)
+}
+
+pub(crate) fn compiled_strategy_registry() -> Result<StrategyRegistry, CommandError> {
+    let mut registry = StrategyRegistry::new();
+    let acceptance =
+        AcceptanceStrategyFactory::new().map_err(osmium_config::ConfigError::Strategy)?;
+    registry
+        .register(acceptance)
+        .map_err(osmium_config::ConfigError::Strategy)?;
+    let example = example_strategy::PriceThresholdBuyOnceFactory::new()
+        .map_err(osmium_config::ConfigError::Strategy)?;
+    registry
+        .register(example)
+        .map_err(osmium_config::ConfigError::Strategy)?;
+    Ok(registry)
+}
+
+pub(crate) fn load_config(path: &Path) -> Result<RunConfig, CommandError> {
+    let registry = compiled_strategy_registry()?;
+    Ok(osmium_config::load(path, &registry)?)
 }
 
 fn queries(
@@ -241,8 +259,8 @@ fn load_dotenv() {
 }
 
 fn execute_sync(path: &Path) -> Result<String, CommandError> {
-    let config = load(path)?;
-    let bundle = plan(config.clone())?;
+    let config = load_config(path)?;
+    let bundle = plan(&config)?;
     let needs_network = bundle.execution.partitions().iter().any(|partition| {
         !matches!(
             partition.source_action(),
@@ -317,7 +335,7 @@ fn execute_sync(path: &Path) -> Result<String, CommandError> {
 }
 
 fn execute_verify(path: &Path) -> Result<String, CommandError> {
-    let config = load(path)?;
+    let config = load_config(path)?;
     let mut output = String::from("source=verified\n");
     for key in config.partition_keys()? {
         let repository =
@@ -336,8 +354,8 @@ fn execute_verify(path: &Path) -> Result<String, CommandError> {
 }
 
 fn prepare_cache(path: &Path) -> Result<String, CommandError> {
-    let config = load(path)?;
-    let bundle = plan(config.clone())?;
+    let config = load_config(path)?;
+    let bundle = plan(&config)?;
     let builder = CacheBuilder::new(config.effective().data_root());
     let mut output = String::from("cache=partitions\n");
     for partition in bundle.execution.partitions() {
@@ -382,8 +400,8 @@ fn execute_replay(path: &Path) -> Result<String, CommandError> {
 }
 
 fn replay(path: &Path) -> Result<replay_engine::CompletedReplay, CommandError> {
-    let config = load(path)?;
-    let bundle = plan(config.clone())?;
+    let config = load_config(path)?;
+    let bundle = plan(&config)?;
     let replay = bundle.replay.as_ref().ok_or(CommandError::CacheMissing)?;
     let mut core = replay_core(&config, &bundle)?;
     let mut factory = data_sync::LocalCacheFactory::new_partitioned(config.effective().data_root());
@@ -470,33 +488,13 @@ fn schedule(config: &RunConfig) -> Result<osmium_runner::MultiSessionSchedule, C
 }
 
 fn execute_backtest(path: &Path, output: &Path) -> Result<String, CommandError> {
-    let config = load(path)?;
-    let bundle = plan(config.clone())?;
-    if bundle
-        .execution
-        .config()
-        .strategy()
-        .identity()
-        .strategy_id()
-        != ACCEPTANCE_STRATEGY_ID
-        || bundle
-            .execution
-            .config()
-            .strategy()
-            .identity()
-            .strategy_version()
-            != ACCEPTANCE_STRATEGY_VERSION
-    {
-        return Err(CommandError::UnsupportedStrategy);
-    }
+    let mut config = load_config(path)?;
+    let strategy_metadata = config.strategy_metadata().clone();
+    let bundle = plan(&config)?;
     let replay = bundle.replay.as_ref().ok_or(CommandError::CacheMissing)?;
     let core = replay_core(&config, &bundle)?;
     let schedule = schedule(&config)?;
-    let strategy = AcceptanceStrategy::new(
-        AcceptanceStrategy::source_binary_identity()?,
-        bundle.execution.config().universe().iter().cloned(),
-        bundle.execution.config().session_kinds().iter().copied(),
-    )?;
+    let strategy = config.take_strategy()?;
     let simulation = bundle.execution.config().simulation();
     let fill = simulation.fill_model();
     let latency = simulation.latency();
@@ -598,6 +596,7 @@ fn execute_backtest(path: &Path, output: &Path) -> Result<String, CommandError> 
         bundle.execution.identity().as_bytes(),
         &source_revision,
         &cache_identity,
+        &strategy_metadata,
     )?;
     Ok(format!(
         "backtest=complete\nevents={}\norders={}\nfills={}\nfinal_cash_atoms={}\nrealized_pnl_atoms={}\nunrealized_pnl_atoms={}\noutput={}",
@@ -612,8 +611,8 @@ fn execute_backtest(path: &Path, output: &Path) -> Result<String, CommandError> 
 }
 
 fn execute_run(path: &Path, output: Option<&Path>) -> Result<String, CommandError> {
-    let config = load(path)?;
-    let bundle = plan(config)?;
+    let config = load_config(path)?;
+    let bundle = plan(&config)?;
     if bundle.execution.network_requirement() == NetworkRequirement::Required {
         execute_sync(path)?;
     }
@@ -680,7 +679,6 @@ pub enum CommandError {
     MissingCredential,
     CacheMissing,
     OutputRequired,
-    UnsupportedStrategy,
     Other(String),
 }
 
@@ -696,7 +694,6 @@ impl CommandError {
             | Self::State(_)
             | Self::Context(_)
             | Self::Strategy(_)
-            | Self::UnsupportedStrategy
             | Self::ReplayContextWindow(_) => ExitCategory::Config,
             Self::OutputRequired => ExitCategory::Usage,
             Self::Transport(_) | Self::Sync(_) | Self::MissingCredential | Self::Partition(_) => {

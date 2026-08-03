@@ -12,7 +12,7 @@ use market_types::{
     DomainEvent, EventPayload, InstrumentId, MatchTime, Observation, Price, Quantity, TradeOrder,
     TradePrint,
 };
-use osmium_config::{RunConfig, load, plan};
+use osmium_config::{RunConfig, plan};
 use replay_engine::{EventStream, OrderingKey, ReplayCore, ReplayError, ReplayStreamFactory};
 
 const MICROSECONDS_PER_SECOND: i64 = 1_000_000;
@@ -482,17 +482,18 @@ fn price_as_f64(price: Price) -> f64 {
 }
 
 fn prepare_replay(path: &Path) -> Result<PreparedReplay, MarketReplayError> {
-    let config = load(path).map_err(|error| MarketReplayError::Preparation {
-        message: format!("market replay config failed: {error}").into_boxed_str(),
-        exit_code: 2,
-    })?;
+    let config =
+        crate::command::load_config(path).map_err(|error| MarketReplayError::Preparation {
+            message: format!("market replay config failed: {error}").into_boxed_str(),
+            exit_code: 2,
+        })?;
     if config.effective().trading_dates().len() != 1 {
         return Err(MarketReplayError::Preparation {
             message: "market replay currently requires exactly one trading date".into(),
             exit_code: 2,
         });
     }
-    let bundle = plan(config.clone()).map_err(|error| MarketReplayError::Preparation {
+    let bundle = plan(&config).map_err(|error| MarketReplayError::Preparation {
         message: format!("market replay plan failed: {error}").into_boxed_str(),
         exit_code: 20,
     })?;

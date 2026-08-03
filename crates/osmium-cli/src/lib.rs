@@ -19,7 +19,7 @@ pub enum ExitCategory {
     Internal,
 }
 
-pub const CLI_CONTRACT_VERSION: u16 = 3;
+pub const CLI_CONTRACT_VERSION: u16 = 4;
 
 impl ExitCategory {
     #[must_use]

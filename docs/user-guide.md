@@ -4,11 +4,9 @@
 `config_version: 2` config、完成資料生命週期，以及如何依目前 Rust `Strategy` API
 撰寫策略。
 
-先知道一個重要邊界：目前 release CLI 的 `backtest`／`run` 只會建立內建的
-`acceptance.multi-market` strategy。自訂 strategy 的 Rust trait 與 generic runner 已經
-存在，但尚未有 CLI plugin、strategy registry 或可直接安裝的 custom-strategy template。
-因此本文件的自訂 strategy 章節是目前的 internal Rust integration path，不代表只改
-YAML 的 `strategy.id` 就能讓 release CLI 載入新策略。
+先知道一個重要邊界：release CLI 只會執行已編譯進該 binary 且明確加入 registry 的
+Rust strategy。這不是 runtime plugin 系統；只有修改 crate dependency 與 registry entry、
+重新編譯 `osmium` 後，YAML 才能選擇新的 `strategy.id + version`。
 
 ## 1. 準備 `osmium`
 
@@ -263,22 +261,36 @@ capability error。
 
 ### 4.4 讓 strategy 被執行
 
-目前 generic Rust runner 已接受任意 `S: Strategy`：
+generic Rust runner 接受任意 `S: Strategy`，也可透過 `Box<dyn Strategy>` 執行：
 
 - replay-only strategy flow：`strategy_api::run_strategy`
 - simulation／multi-market flow：`osmium_runner::run_multi_backtest`
 
-但 `osmium backtest` 與 `osmium run` 目前在 CLI adapter 內固定建立
-`AcceptanceStrategy`，並拒絕其他 `strategy.id`／version。因此自訂 strategy 目前需要：
+若要讓 `osmium backtest`／`osmium run` 執行自訂 strategy：
 
-1. 建立自己的 internal binary／integration harness。
-2. 在 harness 中載入或建立 `RunConfig`，建立對應的 `ReplayCore`、schedule、cache
-   factory、simulator 與 ledger。
-3. 建立自己的 `MyStrategy`，確認 declaration 與 config universe/session 完全一致。
-4. 呼叫 generic runner，將 strategy identity、params checksum 與 output 寫入 run result。
+1. 建立獨立 strategy crate；可參考 `crates/example-strategy`，不要把第三方策略放入
+   `strategy-api` 或 CLI module。
+2. 實作 `StrategyFactory`，提供固定 `StrategyDefinition` 與 versioned
+   `StrategyParameterSchema`。第一版 schema 只接受 flat object 的 bool、signed/unsigned
+   integer、exact decimal string 與 text；unknown field 一律拒絕。
+3. 將 crate 加入 `crates/osmium-cli/Cargo.toml`，並在唯一的
+   `compiled_strategy_registry()` 明確加入 factory。
+4. 重新編譯 `osmium`，再於 config 指定精確 id/version 與參數。
 
-這段 integration 目前是 source-level internal API，不是 release CLI 的穩定 plugin
-contract。不要把 `strategy.id` 改成自訂值後直接期待 CLI 自動載入 Rust type。
+例如 repository 內建示範可直接使用 `examples/smoke-example-strategy.yaml`：
+
+```yaml
+strategy:
+  id: example.price-threshold-buy-once
+  version: "1"
+  parameters:
+    entry_price: "101" # exact decimal 必須是 YAML string
+    # quantity: 1      # schema default 為 1
+```
+
+config load 會先套用 default 並建立 strategy，再核對 factory identity、parameter checksum、
+explicit universe 與 sessions；任何錯誤都早於下載、cache write、stream open 或 output
+staging。成功 run 的 `strategy.json` 會保存 materialized parameters 與實際 binary identity。
 
 ### 4.5 Strategy 測試清單
 
@@ -307,15 +319,16 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 不行。release 只接受 v2，請以 `examples/config.yaml` 重新建立 config。
 
-### 為什麼自訂 `strategy.id` 後 backtest 顯示 unsupported strategy？
+### 為什麼自訂 `strategy.id` 後顯示「not compiled into this binary」？
 
-因為目前 CLI 只註冊 `acceptance.multi-market`。需要先使用 internal custom binary／
-harness，或等 strategy registry／plugin contract 實作完成。
+YAML 不會載入任意外部程式碼。請確認 strategy crate 已成為 CLI dependency、factory 已加入
+`compiled_strategy_registry()`，而且目前執行的是重新編譯後的 binary；version 也必須精確
+匹配，不會自動選 latest。
 
 ### 為什麼 replay 沒有 order 或 fill？
 
 `replay` 是 market replay，不執行 simulation；請使用 simulation-enabled backtest
-runner。自訂 strategy 目前不能直接由 release CLI backtest 載入。
+runner。已註冊的自訂 strategy 請使用 `backtest` 或 `run`。
 
 ### 為什麼資料同步後仍不能 replay？
 

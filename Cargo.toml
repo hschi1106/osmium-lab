@@ -13,6 +13,7 @@ members = [
     "crates/replay-engine",
     "crates/run-planner",
     "crates/strategy-api",
+    "crates/example-strategy",
 ]
 resolver = "2"
 

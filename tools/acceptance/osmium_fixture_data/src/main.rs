@@ -12,10 +12,10 @@ use data_sync::{
     TeralionCredential, TeralionQuery, TeralionRequest, TeralionSync, TeralionTransport,
     TransportError,
 };
-use osmium_config::{RunConfig, load};
 use market_types::{InstrumentId, InstrumentKind, MarketId};
+use osmium_config::{RunConfig, load};
 use run_planner::SourcePartitionKey;
-use strategy_api::SessionKind;
+use strategy_api::{AcceptanceStrategyFactory, SessionKind, StrategyRegistry};
 
 #[derive(Debug)]
 struct FixtureTransport {
@@ -353,7 +353,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some("--config") => argument("--config value", &mut args)?,
         _ => {
             return Err(
-                "usage: osmium_fixture_data --config <file> --fixtures <dir> --data-root <dir>".into(),
+                "usage: osmium_fixture_data --config <file> --fixtures <dir> --data-root <dir>"
+                    .into(),
             );
         }
     };
@@ -361,7 +362,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some("--fixtures") => argument("--fixtures value", &mut args)?,
         _ => {
             return Err(
-                "usage: osmium_fixture_data --config <file> --fixtures <dir> --data-root <dir>".into(),
+                "usage: osmium_fixture_data --config <file> --fixtures <dir> --data-root <dir>"
+                    .into(),
             );
         }
     };
@@ -369,7 +371,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some("--data-root") => argument("--data-root value", &mut args)?,
         _ => {
             return Err(
-                "usage: osmium_fixture_data --config <file> --fixtures <dir> --data-root <dir>".into(),
+                "usage: osmium_fixture_data --config <file> --fixtures <dir> --data-root <dir>"
+                    .into(),
             );
         }
     };
@@ -380,7 +383,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err(format!("refusing to overwrite data root: {}", data_root.display()).into());
     }
 
-    let config = load(config_path)?;
+    let mut registry = StrategyRegistry::new();
+    registry.register(AcceptanceStrategyFactory::new()?)?;
+    registry.register(example_strategy::PriceThresholdBuyOnceFactory::new()?)?;
+    let config = load(config_path, &registry)?;
     for key in config.partition_keys()? {
         prepare_partition(&config, &fixture_root, &data_root, &key)?;
     }

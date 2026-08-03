@@ -45,6 +45,15 @@ jobs:
             backtest --config examples/smoke.yaml --output target/smoke-run
           env -u TERALION_API_KEY target/release/osmium \
             inspect --run target/smoke-run
+          env -u TERALION_API_KEY target/release/osmium \
+            backtest --config examples/smoke-example-strategy.yaml \
+            --output target/custom-strategy-smoke-run
+          env -u TERALION_API_KEY target/release/osmium \
+            inspect --run target/custom-strategy-smoke-run
+          test "$(sed -n 's/^orders: //p' target/custom-strategy-smoke-run/run-summary.yaml)" = 1
+          test "$(sed -n 's/^fills: //p' target/custom-strategy-smoke-run/run-summary.yaml)" = 1
+          grep -q '"id": "example.price-threshold-buy-once"' \
+            target/custom-strategy-smoke-run/strategy.json
 
       - name: Build and smoke-test internal archive
         run: |

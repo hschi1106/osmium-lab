@@ -4,10 +4,14 @@ mod example;
 mod identity;
 mod orders;
 mod output;
+mod registry;
 mod runner;
 mod strategy;
 
-pub use acceptance::{ACCEPTANCE_STRATEGY_ID, ACCEPTANCE_STRATEGY_VERSION, AcceptanceStrategy};
+pub use acceptance::{
+    ACCEPTANCE_STRATEGY_ID, ACCEPTANCE_STRATEGY_VERSION, AcceptanceStrategy,
+    AcceptanceStrategyFactory,
+};
 pub use context::{
     ContextError, IndicativeReason, MarketTradingContextEvaluator, MatchingState, NewOrderEntry,
     OrderBlockReason, OrderRestrictionReason, SessionCallbackContext, SessionKind, SessionPhase,
@@ -26,6 +30,13 @@ pub use orders::{
 pub use output::{
     CANONICAL_STRATEGY_OUTPUT_VERSION, IndicatorValue, StrategyOutput, StrategyOutputChecksum,
     StrategyOutputEncodingError, StrategyOutputRecord, StrategyOutputSink,
+};
+pub use registry::{
+    FactoryContractField, ParameterRange, RangeBound, RawStrategyParameter, RawStrategyParameters,
+    ResolvedStrategy, ResolvedStrategyMetadata, STRATEGY_PARAMETER_CANONICAL_VERSION,
+    StrategyDefinition, StrategyFactory, StrategyFactoryError, StrategyParameterField,
+    StrategyParameterSchema, StrategyParameterType, StrategyParameterValue, StrategyRegistry,
+    StrategyRegistryError, ValidatedStrategyParameters,
 };
 pub use runner::{
     CompletedStrategyRun, FailedStrategyRun, StrategyRunError, StrategyRunErrorCategory,

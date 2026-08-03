@@ -174,6 +174,51 @@ pub trait Strategy {
     }
 }
 
+impl<S: Strategy + ?Sized> Strategy for Box<S> {
+    fn identity(&self) -> &StrategyIdentity {
+        (**self).identity()
+    }
+
+    fn canonical_params_checksum(&self) -> CanonicalParamsChecksum {
+        (**self).canonical_params_checksum()
+    }
+
+    fn declaration(&self) -> StrategyDeclaration {
+        (**self).declaration()
+    }
+
+    fn initialize(
+        &mut self,
+        context: &StrategyInitializationContext<'_>,
+    ) -> Result<(), StrategyExecutionError> {
+        (**self).initialize(context)
+    }
+
+    fn on_event(
+        &mut self,
+        context: StrategyEventContext<'_>,
+        output: &mut StrategyOutputSink,
+    ) -> Result<(), StrategyExecutionError> {
+        (**self).on_event(context, output)
+    }
+
+    fn on_feedback(
+        &mut self,
+        context: StrategyFeedbackContext<'_>,
+        output: &mut StrategyOutputSink,
+    ) -> Result<(), StrategyExecutionError> {
+        (**self).on_feedback(context, output)
+    }
+
+    fn finalize(
+        &mut self,
+        context: &StrategyFinalizeContext<'_>,
+        output: &mut StrategyOutputSink,
+    ) -> Result<(), StrategyExecutionError> {
+        (**self).finalize(context, output)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StrategyExecutionError {
     message: Box<str>,
