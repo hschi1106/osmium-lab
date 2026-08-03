@@ -88,7 +88,7 @@ cursor 與 request payload 不進入 run artifacts 或 log。
 cargo test --workspace
 cargo test --workspace --release
 
-target/debug/osmium verify --config config/m2-twse-2330.yaml
+target/debug/osmium data verify --config config/m2-twse-2330.yaml
 target/debug/osmium backtest \
   --config config/m2-twse-2330.yaml \
   --output target/m2-run

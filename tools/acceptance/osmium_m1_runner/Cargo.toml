@@ -1,0 +1,19 @@
+[package]
+name = "osmium-m1-runner"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+blake3 = "1.8"
+market-state = { path = "../../../crates/market-state" }
+market-types = { path = "../../../crates/market-types" }
+replay-engine = { path = "../../../crates/replay-engine" }
+strategy-api = { path = "../../../crates/strategy-api" }
+twse-normalizer = { path = "../../../crates/normalizer/twse" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[workspace]

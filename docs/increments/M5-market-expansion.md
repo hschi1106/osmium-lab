@@ -181,7 +181,7 @@ expiry、currency、multiplier 與 trading-unit provenance 由 fixture metadata�
 daily response、TPEx warrant issue reference 與官方交易規則共同記錄。
 
 focused acceptance 使用
-[`tools/run_tpex_warrant_acceptance.sh`](../../tools/run_tpex_warrant_acceptance.sh)，在
+[`tools/acceptance/run_tpex_warrant_acceptance.sh`](../../tools/acceptance/run_tpex_warrant_acceptance.sh)，在
 network disabled 且 credentials absent 的環境完成 `plan`、`verify`、`replay`、`backtest`、
 `inspect`、10 次 byte-identical rerun、cache rebuild、debug/release comparison 與
 corruption rejection。11 筆 source records 正規化為 3 個普通 quote、2 個 opening auction

@@ -13,10 +13,8 @@ crossterm = "0.28"
 data-sync = { path = "../data-sync" }
 dotenvy = "0.15"
 execution-sim = { path = "../execution-sim" }
-m1-runner = { path = "../m1-runner" }
-m2-config = { path = "../m2-config" }
-m3-config = { path = "../m3-config" }
-m2-runner = { path = "../m2-runner" }
+osmium-config = { path = "../osmium-config" }
+osmium-runner = { path = "../osmium-runner" }
 market-state = { path = "../market-state" }
 market-types = { path = "../market-types" }
 replay-engine = { path = "../replay-engine" }

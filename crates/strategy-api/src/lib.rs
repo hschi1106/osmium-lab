@@ -1,13 +1,13 @@
+mod acceptance;
 mod context;
 mod example;
 mod identity;
-mod m2_acceptance;
-mod m3_acceptance;
 mod orders;
 mod output;
 mod runner;
 mod strategy;
 
+pub use acceptance::{ACCEPTANCE_STRATEGY_ID, ACCEPTANCE_STRATEGY_VERSION, AcceptanceStrategy};
 pub use context::{
     ContextError, IndicativeReason, MarketTradingContextEvaluator, MatchingState, NewOrderEntry,
     OrderBlockReason, OrderRestrictionReason, SessionCallbackContext, SessionKind, SessionPhase,
@@ -17,12 +17,6 @@ pub use example::{EXAMPLE_STRATEGY_ID, EXAMPLE_STRATEGY_VERSION, ExampleStrategy
 pub use identity::{
     BinaryIdentity, CanonicalParamsChecksum, DeclarationError, StrategyDeclaration,
     StrategyIdentity,
-};
-pub use m2_acceptance::{
-    M2_ACCEPTANCE_STRATEGY_ID, M2_ACCEPTANCE_STRATEGY_VERSION, M2AcceptanceStrategy,
-};
-pub use m3_acceptance::{
-    M3_ACCEPTANCE_STRATEGY_ID, M3_ACCEPTANCE_STRATEGY_VERSION, M3AcceptanceStrategy,
 };
 pub use market_state::SessionSegmentId;
 pub use orders::{

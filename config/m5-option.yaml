@@ -25,7 +25,7 @@ universe:
         units_per_trading_unit: 1
         provenance: "TAIFEX TXO product specification, symbol code and Teralion daily expiry month"
 strategy:
-  id: acceptance.m3-multi-market
+  id: acceptance.multi-market
   version: "1"
   parameters: {}
 replay:

@@ -98,7 +98,7 @@ impl ReplayPlan {
             .try_into()
             .map_err(|bindings: Vec<_>| match bindings.len() {
                 0 => ReplayPlanError::EmptyBindings,
-                count => ReplayPlanError::M2RequiresSingleBinding(count),
+                count => ReplayPlanError::SingleBindingRequired(count),
             })?;
         Self::build_single(upstream_plan_identity, binding)
     }
@@ -215,7 +215,7 @@ fn append_bytes(value: &[u8], output: &mut Vec<u8>) -> Result<(), ReplayPlanErro
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplayPlanError {
     EmptyBindings,
-    M2RequiresSingleBinding(usize),
+    SingleBindingRequired(usize),
     DuplicateLogicalStream,
     CanonicalLength,
 }
@@ -224,11 +224,8 @@ impl fmt::Display for ReplayPlanError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyBindings => formatter.write_str("replay plan requires a stream binding"),
-            Self::M2RequiresSingleBinding(count) => {
-                write!(
-                    formatter,
-                    "M2 replay plan requires one binding, got {count}"
-                )
+            Self::SingleBindingRequired(count) => {
+                write!(formatter, "replay plan requires one binding, got {count}")
             }
             Self::DuplicateLogicalStream => {
                 formatter.write_str("replay plan contains duplicate instrument/date streams")
@@ -271,14 +268,14 @@ mod tests {
     }
 
     #[test]
-    fn m2_freezes_exactly_one_selected_stream() {
+    fn single_stream_plan_requires_exactly_one_selected_stream() {
         assert_eq!(
             ReplayPlan::new([0; 32], Vec::new()).unwrap_err(),
             ReplayPlanError::EmptyBindings
         );
         assert_eq!(
             ReplayPlan::new([0; 32], vec![binding(), binding()]).unwrap_err(),
-            ReplayPlanError::M2RequiresSingleBinding(2)
+            ReplayPlanError::SingleBindingRequired(2)
         );
     }
 }

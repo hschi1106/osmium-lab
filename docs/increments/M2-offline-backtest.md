@@ -618,11 +618,15 @@ M2 不要求未定義 period／denominator 的高階比率。
 M2 擴充目前的 `osmium` binary。最終 command spelling 由 CLI contract 固定，但
 至少提供下列獨立能力：
 
+> 本節是 M2 historical specification；release command namespace 以
+> [CLI 操作契約](../operations/cli.md)為準，M2 v1 config 與 fixture mode 不屬於 release
+> compatibility。
+
 ```text
 osmium plan      --config <file>
-osmium sync      --config <file>
-osmium verify    --config <file>
-osmium replay    --config <file> --output <new-directory>
+osmium data sync   --config <file>
+osmium data verify --config <file>
+osmium replay      --config <file>
 osmium backtest  --config <file> --output <new-directory>
 osmium inspect   --run <run-directory>
 osmium run       --config <file> --output <new-directory>
@@ -631,8 +635,8 @@ osmium run       --config <file> --output <new-directory>
 語意：
 
 - `plan`：無 market-data download、無 strategy execution。
-- `sync`：只處理 plan 判定需要下載／恢復的 source partitions。
-- `verify`：離線驗證 source、cache 與 instrument economics。
+- `data sync`：只處理 plan 判定需要下載／恢復的 source partitions。
+- `data verify`：離線驗證 source、cache 與 instrument economics。
 - `replay`：離線，只有 event/state/strategy observation；simulation binding
   `NotUsed`。
 - `backtest`：離線 replay + strategy + simulation + accounting。
@@ -640,8 +644,8 @@ osmium run       --config <file> --output <new-directory>
 - `run`：plan → sync → verify → cache prepare → backtest 的 convenience
   orchestration；每個 stage 仍保留獨立結果。
 
-M1 的 fixture-based `osmium replay --fixture ...` 可以保留為 acceptance／developer
-入口，但不能與 M2 config-based source partition 混淆。
+歷史 M1 fixture-based `osmium replay --fixture ...` 已移出 release CLI；acceptance／
+developer 入口改由 `tools/acceptance/run_m1_acceptance.sh` 提供。
 
 exit status 必須至少可 machine-detect：
 

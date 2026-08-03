@@ -2,17 +2,17 @@
 
 ## 1. 文件目的
 
-本文件定義 `osmium` binary 的 M1 fixture replay、M2
-`plan -> sync -> verify -> cache prepare -> replay/backtest -> inspect` 與 M3
-partitioned multi-instrument offline 操作契約。
+本文件定義 release `osmium` binary 的 config、data、cache、replay、backtest、display
+與 inspect 操作契約。歷史 M1–M5 fixture runner 不屬於 release CLI，位於
+`tools/acceptance/`。
 
 ```text
 cli_contract_version    = 3
-run_config_version      = 1
+run_config_version      = 2
 execution_plan_version  = 1
 run_manifest_version    = 1
 binary                  = osmium
-current_scope           = M1 fixture replay + M2 TWSE 2330 + M3 TAIFEX multi-instrument offline backtest
+current_scope           = private/internal v2 multi-instrument offline replay and backtest
 ```
 
 本文固定 command spelling、config shape、stage side effects、exit status 與 artifacts。
@@ -31,51 +31,47 @@ current_scope           = M1 fixture replay + M2 TWSE 2330 + M3 TAIFEX multi-ins
 ## 2. Command overview
 
 ```text
-osmium plan          --config <file>
-osmium sync          --config <file>
-osmium verify        --config <file>
-osmium cache prepare --config <file>
-osmium replay        --config <file> --output <new-directory>
-osmium display        --config <file>
-osmium backtest      --config <file> --output <new-directory>
-osmium inspect       --run <run-directory>
-osmium run           --config <file> --output <new-directory>
+  osmium version
+  osmium init          [--path <config.yaml>]
+  osmium config check  --config <file>
+  osmium plan          --config <file>
+  osmium data sync     --config <file>
+  osmium data verify   --config <file>
+  osmium cache prepare --config <file>
+osmium replay        --config <file>
+  osmium display       --config <file>
+  osmium backtest      --config <file> --output <new-directory>
+  osmium inspect       --run <run-directory>
+  osmium run           --config <file> --output <new-directory>
 ```
 
-M1 developer/acceptance entry 保留：
-
-```text
-osmium replay --fixture <fixture-directory> --output <new-directory>
-```
-
-`--fixture` 與 `--config` 互斥。fixture mode 不掃描 M2 data root，不建 cache、不執行
-simulation。config mode 不把 repository fixture 冒充 published source partition。
+Acceptance fixture runner 不再掛在 release CLI；請使用
+`tools/acceptance/run_m1_acceptance.sh` 或對應的 formal harness。
 
 所有 command 支援 `--help`。unknown option、缺少必要 argument 或互斥 argument 同時
 出現，回傳 usage error。
 
-## 3. M2 run configuration
+## 3. Release run configuration
 
-M2 config 使用 YAML，schema version 必填。repository 應提供一份無 secret acceptance
-config。logical shape：
+Release config 使用 YAML，`config_version: 2` 必填。repository 中的 M5 files 是
+maintainer acceptance inputs；實際 release 使用者應由 `osmium init` 建立並填入自己的
+data root、universe 與 economics。logical shape：
 
 ```yaml
-config_version: 1
+config_version: 2
 
 data:
   source: teralion
-  data_root: target/m2-data
+  data_root: data
   source_policy: strict
   cache_policy: reuse_or_rebuild
 
 universe:
-  market: twse
-  trading_dates:
-    - 2026-07-27
-  symbols:
-    - "2330"
-  session_kinds:
-    - regular
+  trading_dates: [2026-07-27]
+  instruments:
+    - market: twse
+      symbol: "2330"
+      session_kinds: [regular]
 
 strategy:
   id: <compile-time-linked-strategy-id>
@@ -212,19 +208,19 @@ completion policy
 
 `plan` 不下載 ticks、不建立 cache、不執行 strategy、不建立 successful run、不修改
 complete source。online coverage lookup 若被 policy 允許，必須在執行前顯示
-`network_requirement=required`；M2 acceptance 的 prepared-data offline plan 只使用
+`network_requirement=required`；prepared-data offline plan 只使用
 local evidence。
 
-預設 stdout 是人類可讀 stable summary；`--format yaml` 可以輸出
-machine-readable plan projection。兩者必須對應同一 plan identity。
+目前 CLI 的 stdout 是人類可讀 stable summary；machine-readable projection 與
+`--format` 是後續 RLS-06 work，不應在 release example 中假設已存在。
 
-## 5. `sync`
+## 5. `data sync`
 
 ```sh
-cargo run -p osmium-cli -- sync --config <file>
+cargo run -p osmium-cli -- data sync --config <file>
 ```
 
-`sync`：
+`data sync`：
 
 - 只執行 frozen plan 中的 `DownloadMissingSource` 或
   `ResumeOrRestartBuilding`。
@@ -254,13 +250,13 @@ warnings
 sync 中斷或失敗不發布 complete revision。stdout/stderr 不顯示 API key、full cursor、
 header 或 signed URL。
 
-## 6. `verify`
+## 6. `data verify`
 
 ```sh
-cargo run -p osmium-cli -- verify --config <file>
+cargo run -p osmium-cli -- data verify --config <file>
 ```
 
-`verify`：
+`data verify`：
 
 - 完全離線，不讀 API key、不建立 HTTP client。
 - 重算 source partition state、manifest/checksum/counts/version。
@@ -306,16 +302,23 @@ HTTP request count = 0
 
 invalid cache 不在原目錄修補；建立全新 cache identity或先隔離 invalid artifact。
 
-### 7.1 M3 partitioned fixture preparation
+### 7.1 Acceptance fixture preparation
 
-M3 的 committed fixture 只提供 offline source preparation tool，不把 repository
-fixture 自動視為 live source：
+Committed fixtures 只提供 maintainer-only offline source preparation tool，不把
+repository fixture 自動視為 live source：
 
 ```sh
-cargo run -p m3-config --bin m3_fixture_data -- \
+target/release/osmium_fixture_data -- \
   --config config/m3-taifex-three.yaml \
   --fixtures fixtures/teralion \
-  --data-root target/m3-taifex-data
+  --data-root target/acceptance-data
+```
+
+先建立 acceptance-only binary：
+
+```sh
+cargo build --release \
+  --manifest-path tools/acceptance/osmium_fixture_data/Cargo.toml
 ```
 
 tool 會以與 online sync 相同的 `TeralionSync` cursor state machine，將每個 selected
@@ -323,15 +326,15 @@ JSONL shard 包成 fixture response、驗證 TAIFEX `book/close/stats/trade` kin
 partition source revision，接著建立 source-bound replay cache。它拒絕覆寫既有 data
 root；需要重建時使用新的空 data root。
 
-`config/m3-taifex-multi.yaml` 的四商品 run 另外使用
+`config/m3-taifex-multi.yaml` 的四商品 acceptance run 另外使用
 `fixtures/teralion/twse/2330/2026-07-20` 的 committed regular quote fixture。該
 fixture 由 Teralion `quote` cursor download 抽取整股 formats，並與 daily instrument
-及 source/cache lineage 一起驗證；不能用 `2026-07-27` M1 slice 或 synthetic records
+及 source/cache lineage 一起驗證；不能用其他日期的 partial slice 或 synthetic records
 替代。
 
 ## 8. `replay`
 
-### 8.1 M2 config mode
+### 8.1 Config mode
 
 ```sh
 cargo run --release -p osmium-cli -- replay \
@@ -351,44 +354,20 @@ config replay：
 若 cache missing 且 plan action 是 offline rebuild，使用者先執行 `cache prepare`；
 `replay` 不在 runtime 邊讀 source 邊 fallback。
 
-M3 config replay/backtest 會依 frozen `ReplayPlan` 只開啟每個 selected
-instrument/date partition；`LocalCacheFactory` 可在 `OSMIUM_STREAM_OPEN_AUDIT` 指定
+Config replay/backtest 會依 frozen `ReplayPlan` 只開啟每個 selected instrument/date
+partition；`LocalCacheFactory` 可在 `OSMIUM_STREAM_OPEN_AUDIT` 指定
 檔案記錄實際 opened bindings。多商品 merge 只保留各 stream 的 current head，不將
 所有 source records 載入記憶體。
 
-### 8.2 M1 fixture mode
-
-```sh
-cargo run --release -p osmium-cli -- replay \
-  --fixture fixtures/teralion/twse/2330/2026-07-27 \
-  --output target/m1-replay
-```
-
-fixture root 必須包含：
-
-```text
-metadata.yaml
-regular-quotes/
-golden/fixture-set.sha256
-```
-
-M1 mode：
-
-- 只讀 committed fixture。
-- 不讀 `.env`／`TERALION_API_KEY`。
-- 不建立 HTTP client、source revision 或 cache。
-- 不執行 order/fill/accounting。
-- 維持既有 M1 artifact schema及 error compatibility。
-
-### 8.3 Market replay TUI
+### 8.2 Market replay TUI
 
 ```sh
 cargo run --release -p osmium-cli -- display \
   --config config/m4-day-multi.yaml
 ```
 
-此命令是簡化看盤介面，不產生回測 artifacts。第一版接受既有 M2
-`config_version: 1` 或 M3 `config_version: 2`，且只處理一個 `trading_date`；執行前必須完成 source verify 與
+此命令是簡化看盤介面，不產生回測 artifacts。release 只接受
+`config_version: 2`，且只處理一個 `trading_date`；執行前必須完成 source verify 與
 `cache prepare`。命令完全離線、不讀取 `.env` 或 `TERALION_API_KEY`，並依 frozen `ReplayPlan`
 只開啟 explicit universe 的 cache streams。
 
@@ -420,10 +399,10 @@ cargo run --release -p osmium-cli -- backtest \
 - 正常 EOF 時取消未完成 Day orders。
 - atomic publish successful/degraded/failed artifacts。
 
-reference M2 acceptance 必須是 `Strict` successful。`ExplicitDegraded` 使用不同
+Reference acceptance 必須是 `Strict` successful。`ExplicitDegraded` 使用不同
 completion quality/result identity，且不允許 corrupt source。
 
-M3 backtest 對每個 instrument 建立隔離 simulator/ledger，TAIFEX 使用
+Backtest 對每個 instrument 建立隔離 simulator/ledger，TAIFEX 使用
 `FuturesV1` multiplier accounting，TWSE 使用 `EquityV1`；跨商品事件只共享
 deterministic replay clock，不共享 fill eligibility、position 或 queue state。
 
@@ -446,7 +425,7 @@ cargo run -p osmium-cli -- inspect --run <run-directory>
 - failed/degraded run 顯示 failure stage、processed prefix或 degraded scopes。
 - `NotApplicable`／`Unavailable(reason)` 不顯示成零。
 
-options：
+RLS-06 planned options（目前 parser 尚未開放）：
 
 ```text
 --format text|yaml
@@ -525,7 +504,7 @@ scheduling。effective plan 保存至 run artifacts 時，其 canonical semantic
 ## 13. Output publication
 
 publisher 在 output parent 建 sibling staging directory，完成後 atomic rename。
-successful M2 backtest 至少發布：
+successful backtest 至少發布：
 
 ```text
 effective-config.yaml
@@ -604,8 +583,8 @@ stderr：
 | `50` | `ExecutionFailed` | strategy、simulation、arithmetic、accounting、reconciliation failure |
 | `1` | `Internal` | 未分類 internal/storage/panic failure；不得用於可分類 domain error |
 
-M1 fixture replay 為向後相容可以繼續以 `1` 表示既有 fixture/normalization/replay/
-artifact failure；M2 config mode 必須使用上表更精確 category。
+Acceptance-only runner 的 historical fixture failure 由其 standalone test process
+處理；release config mode 必須使用上表的分類。
 
 legitimate rejected order 不使 process 回傳 `50`；它是 successful backtest 的
 domain record。reconciliation failure一定回傳 `50`。
@@ -652,7 +631,7 @@ network-disabled, no-key:
 - inspect successful/failed/degraded/NotApplicable/Unavailable。
 - exit code各 category及 secret redaction。
 - run stage short-circuit及 atomic failed publication。
-- M1 fixture mode regression。
+- acceptance-only fixture runner 與 release CLI boundary。
 
 穩定 test IDs、profiles及 evidence fields見
 [Verification Plan](../verification/plan.md)。

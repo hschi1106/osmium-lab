@@ -142,7 +142,7 @@ impl CoreCommit {
     }
 }
 
-/// M1 replay core: ordered events, atomic state transitions, logical clock, and checksums.
+/// Replay core: ordered events, atomic state transitions, logical clock, and checksums.
 #[derive(Debug)]
 pub struct ReplayCore {
     states: BTreeMap<InstrumentId, MarketState>,
@@ -300,7 +300,7 @@ impl ReplayCore {
         Ok(())
     }
 
-    /// Opens only the stream frozen into the M2 replay plan and consumes it offline.
+    /// Opens only the stream frozen into a single-stream replay plan and consumes it offline.
     pub fn replay_frozen<F: ReplayStreamFactory>(
         &mut self,
         plan: &ReplayPlan,

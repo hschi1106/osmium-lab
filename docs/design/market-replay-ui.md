@@ -6,7 +6,7 @@
 
     osmium display --config config/m4-day-multi.yaml
 
-第一版接受既有 M2 config_version 1 或 M3 config_version 2，且只處理一個
+Release display 只接受目前的 `config_version: 2`，且只處理一個
 trading_date。執行前完成：
 
     plan -> sync（需要時）-> verify -> cache prepare -> display
@@ -17,7 +17,7 @@ TUI 完全離線，只依 frozen ReplayPlan 開啟 explicit universe 的 cache s
 
 ## 分層
 
-    M3 config / ReplayPlan
+    RunConfig / ReplayPlan
             |
             v
     MarketReplay session -> ratatui renderer + crossterm input
@@ -57,4 +57,4 @@ BUY／SELL；domain book 沒有逐筆 order count，所以只顯示 LEVEL、PRIC
 
 TUI 不提供 degraded mode；cache、ordering 或 state 驗證失敗即停止。終端離開時恢復 raw
 mode 與 alternate screen。第一版以 PlaybackSpeed 單元測試、CLI parser 測試、cargo
-fmt --check、cargo test 及已準備 M3 cache 的手動操作檢查驗證。
+fmt --check、cargo test 及已準備 v2 cache 的手動操作檢查驗證。

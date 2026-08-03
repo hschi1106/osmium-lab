@@ -215,14 +215,14 @@ impl From<StrategyOutputEncodingError> for StrategyExecutionError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CapabilityError {
-    OrderIntentUnavailableInM1,
+    OrderIntentUnavailable,
 }
 
 impl fmt::Display for CapabilityError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::OrderIntentUnavailableInM1 => {
-                formatter.write_str("order intent capability is unavailable in M1")
+            Self::OrderIntentUnavailable => {
+                formatter.write_str("order intent capability is unavailable")
             }
         }
     }

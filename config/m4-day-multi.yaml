@@ -17,7 +17,7 @@ universe:
       symbol: "TXFH6"
       session_kinds: [regular]
 strategy:
-  id: acceptance.m3-multi-market
+  id: acceptance.multi-market
   version: "1"
   parameters: {}
 replay:

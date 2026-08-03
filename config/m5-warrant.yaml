@@ -28,7 +28,7 @@ universe:
         units_per_trading_unit: 1000
         provenance: "TWSE warrant OpenAPI t187ap37_L and Teralion daily 2026-07-20"
 strategy:
-  id: acceptance.m3-multi-market
+  id: acceptance.multi-market
   version: "1"
   parameters: {}
 replay:

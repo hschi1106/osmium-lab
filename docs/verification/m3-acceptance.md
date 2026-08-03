@@ -18,7 +18,7 @@ download 的 22 頁；抽取 `STOCK_SNAPSHOT` 3,571 筆與 `STOCK_REALTIME` 98,2
 lineage。零股 format 未進 regular fixture。
 
 machine-readable 結果由
-[`tools/run_m3_acceptance.sh`](../../tools/run_m3_acceptance.sh) 產生，預期位置為：
+[`tools/acceptance/run_m3_acceptance.sh`](../../tools/acceptance/run_m3_acceptance.sh) 產生，預期位置為：
 
 ```text
 docs/verification/evidence/m3/formal-<UTC-date>/acceptance-report.yaml
@@ -33,9 +33,9 @@ performance summary、corruption result 與 canonical artifact checksums。
 | gate | 狀態 | 證據 |
 | --- | --- | --- |
 | TAIFEX 三商品 redistribution approval | Passed | 各 fixture `metadata.yaml` 的 `redistribution` |
-| TAIFEX shard／set checksum | Passed | `tools/verify_m3_fixtures.sh` |
+| TAIFEX shard／set checksum | Passed | `tools/acceptance/verify_m3_fixtures.sh` |
 | TAIFEX daily instrument checksum | Passed | 各 fixture `daily.json` 與 metadata |
-| TWSE 2330 shard／set checksum | Passed | `tools/verify_m3_fixtures.sh` |
+| TWSE 2330 shard／set checksum | Passed | `tools/acceptance/verify_m3_fixtures.sh` |
 | TWSE 2330 redistribution approval | Passed | `fixtures/teralion/twse/2330/2026-07-20/metadata.yaml` |
 | TWSE daily instrument checksum | Passed | fixture `daily.json` 與 metadata |
 | secret scan | Passed | fixture verifier 與 harness log |
@@ -49,7 +49,7 @@ forbidden fields。source payload 保持 wire type；TAIFEX `book`、`trade`、`
 ## 3. Reproduction
 
 ```sh
-tools/run_m3_acceptance.sh \
+tools/acceptance/run_m3_acceptance.sh \
   --output docs/verification/evidence/m3/formal-$(date -u +%Y-%m-%d)
 ```
 

@@ -15,18 +15,19 @@ universe:
 ```
 
 `osmium plan --config <file>` 會自動辨識版本 2 並列出所有 partitions、session
-selection、source action 與 cache action。版本 1 仍走 M2 planner。M3 的 `sync`、
-`verify`、partition cache build 與 offline multi-stream `replay`／`run` 會沿用同一份
+selection、source action 與 cache action。版本 1 不屬於 release compatibility。
+`data sync`、`data verify`、partition cache build 與 offline multi-stream `replay`／`run` 會沿用同一份
 plan；source 與 cache 尚未完成時，offline execution 會明確回報缺少 artifact，不會
 退回讀取 raw source 或建立網路連線。
 
-`m3_fixture_data` 是只供 acceptance 使用的 fixture-to-source adapter。它不繞過
+`osmium_fixture_data` 是只供 acceptance 使用的 fixture-to-source adapter，位於
+`tools/acceptance/`，不進 production workspace。它不繞過
 `TeralionSync`：每個 selected shard 先經 paged response envelope、TAIFEX
 `book/close/stats/trade` kind 與 `taifex_fut` market validation，再以
 `StagingRevision` atomic publish。production `sync` 與 fixture adapter 因此共用
 相同 cursor／source boundary；fixture adapter 不會讀取 gitignored `raw/`。
 
-M3 CLI 的 `backtest` 現在會在 bounded multi-stream replay 上執行 linked
+Release CLI 的 `backtest` 會在 bounded multi-stream replay 上執行 linked
 multi-instrument strategy，並以 instrument-isolated simulator 產生 subsequent-event
 orders/fills。step 4 會依商品套用明確的 `EquityV1` 或 `FuturesV1` accounting model：
 futures 只在平倉時以 `price difference × quantity × multiplier` 反映現金與 realized

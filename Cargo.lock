@@ -781,68 +781,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
-name = "m1-runner"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "market-state",
- "market-types",
- "replay-engine",
- "strategy-api",
- "twse-normalizer",
-]
-
-[[package]]
-name = "m2-config"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "data-sync",
- "market-state",
- "market-types",
- "replay-engine",
- "run-planner",
- "serde",
- "serde_json",
- "serde_yaml",
- "strategy-api",
- "tempfile",
-]
-
-[[package]]
-name = "m2-runner"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "execution-sim",
- "market-state",
- "market-types",
- "replay-engine",
- "serde_json",
- "strategy-api",
- "tempfile",
-]
-
-[[package]]
-name = "m3-config"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "data-sync",
- "market-types",
- "replay-engine",
- "run-planner",
- "serde",
- "serde_json",
- "serde_yaml",
- "strategy-api",
- "taifex-normalizer",
- "tempfile",
- "tpex-normalizer",
- "twse-normalizer",
-]
-
-[[package]]
 name = "market-state"
 version = "0.1.0"
 dependencies = [
@@ -889,12 +827,10 @@ dependencies = [
  "data-sync",
  "dotenvy",
  "execution-sim",
- "m1-runner",
- "m2-config",
- "m2-runner",
- "m3-config",
  "market-state",
  "market-types",
+ "osmium-config",
+ "osmium-runner",
  "ratatui",
  "replay-engine",
  "run-planner",
@@ -903,6 +839,39 @@ dependencies = [
  "taifex-normalizer",
  "tpex-normalizer",
  "twse-normalizer",
+]
+
+[[package]]
+name = "osmium-config"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "data-sync",
+ "market-types",
+ "replay-engine",
+ "run-planner",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "strategy-api",
+ "taifex-normalizer",
+ "tempfile",
+ "tpex-normalizer",
+ "twse-normalizer",
+]
+
+[[package]]
+name = "osmium-runner"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "execution-sim",
+ "market-state",
+ "market-types",
+ "replay-engine",
+ "serde_json",
+ "strategy-api",
+ "tempfile",
 ]
 
 [[package]]

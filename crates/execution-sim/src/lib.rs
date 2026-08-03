@@ -476,7 +476,7 @@ impl fmt::Display for SimulationError {
 
 impl Error for SimulationError {}
 
-/// Instrument-isolated simulation facade for an M3 universe.
+/// Instrument-isolated simulation facade for a multi-instrument universe.
 #[derive(Debug)]
 pub struct MultiSimulator {
     simulators: BTreeMap<InstrumentId, Simulator>,
