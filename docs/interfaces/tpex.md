@@ -3,8 +3,9 @@
 ## 1. 目的與固定範圍
 
 本文件固定 M4 的 TPEx 普通股票 vertical slice：`6488`（環球晶）、交易日
-`2026-07-20`、`regular` session。它定義 Teralion quote wire 到 domain event 的
-source boundary；raw wire 不會流入 replay engine 或 strategy API。
+`2026-07-20`、`regular` session，並記錄 M5 的 TPEx warrant extension：`72328U`、
+同一交易日、`regular` session。它定義 Teralion quote wire 到 domain event 的 source
+boundary；raw wire 不會流入 replay engine 或 strategy API。
 
 本文件的實測證據是
 [`fixtures/teralion/tpex/6488/2026-07-20`](../../fixtures/teralion/tpex/6488/2026-07-20)，
@@ -12,7 +13,8 @@ source boundary；raw wire 不會流入 replay engine 或 strategy API。
 `[08:55, 13:35)` 的 17 頁完整 cursor download。適用 mapping 為
 `TeralionTpexQuote`，`mapping_version = 1`。
 
-M4 不包含 TPEx 零股、權證、選擇權或其他未被這份 fixture 固定的 format。raw source
+M4 的 ordinary-equity scope 不包含 TPEx 零股、權證、選擇權；M5 warrant extension 另以
+獨立 fixture 固定。其他未被對應 fixture 固定的 format 仍不在支援範圍。raw source
 仍保留 3,160 筆 `INTRADAY_ODDLOT_REALTIME`，但 extraction 與 replay 明確排除它們。
 
 ## 2. Session 與兩個 clock
@@ -90,15 +92,19 @@ format、event kind 與 canonical fingerprint 的 deterministic fallback。
 - source page、cursor、query identity、daily instrument、每頁 checksum 與 fixture
   checksum 由 immutable source revision 保護；重抽取必須 byte-for-byte 一致。
 
-## 6. TPEx warrant profile（M5 follow-up）
+## 6. TPEx warrant profile（M5 extension）
 
-程式已加入 TPEx warrant 的明確 profile 與 source/cache routing，但目前 repository 沒有
-已授權、已提交的 TPEx warrant fixture，因此這一段是 implementation contract，尚不是
-正式 market evidence。
+M5 已加入一份經授權、由 Teralion 實際取得的 TPEx warrant fixture：
+[`72328U/2026-07-20`](../../fixtures/teralion/tpex/72328U/2026-07-20)。來源是
+`market=tpex`、`symbol=72328U`、`kinds=quote`、以 `received_at` 篩選
+`[08:55, 13:35)` 的完整 cursor download；source revision 只含 1 頁、11 筆 tick，
+包含 4 筆 `WARRANT_REALTIME` 與 7 筆 `WARRANT_SNAPSHOT`。fixture metadata 保存
+query／revision identity、source page checksum、daily instrument checksum、extraction
+predicate 與 private-internal-review-only redistribution scope。
 
 TPEx 官方 Main Board IP specification 將 warrant continuous-trading 與 snapshot 定義為
-獨立的 format family；本 profile 以 Teralion adapter 的 `WARRANT_*` source-format naming
-對應它們，待第一份真實 fixture 取得後再核對 adapter 的實際字串與欄位。
+獨立的 format family；本 profile 以實際 adapter 回傳的 `WARRANT_*` source-format naming
+固定對應，而不是把它們靜默套用到普通股票 profile。
 
 | 項目 | TPEx warrant contract |
 | --- | --- |
@@ -113,7 +119,15 @@ TPEx warrant 目前沿用已驗證的 TPEx quote envelope、五檔 snapshot、`T
 及 cache descriptor 會保留 warrant-specific mapping identity，不再把它靜默落入普通 TPEx
 branch。未被這份 contract 固定的 format 仍 strict reject。
 
-正式完成前仍需補齊 exact symbol／trading date 的完整 source cursor、daily metadata、
-protocol review、provenance、fixture checksum、offline replay 與 acceptance evidence。
+這份 fixture 沒有成交資料（`deal=null`、`cum_volume=0`），因此目前只以
+`QuoteSnapshot` 與開／收盤 indicative auction event 驗證 quote/state mapping，不宣稱
+TPEx warrant `TradeBatch` 已由 fixture 證實。`72328U` 的 contract reference 為 underlying
+`6488`、put、strike `441.14`、expiry `2026-09-23`、TWD、multiplier `1`，每 trading unit
+為 1,000 units；未被這份 fixture 與 reference 固定的其他 warrant 仍不在支援宣稱內。
 
-protocol reference：[TPEx Main Board Stock IP Feed Specification V.12.17](https://dsp.tpex.org.tw/storage/regular_system/Main%20Board%20Stock%20IP%20Feed%20Specification%20%28V.12.17_TCPIP%29.pdf)。
+離線 acceptance 已通過：11 筆 source records 正規化為 3 個普通 quote、2 個 opening
+auction 與 6 個 closing auction events；`plan`／`verify`／`replay`／`backtest`／`inspect`
+均成功，network disabled 下 10 次 rerun 與 cache rebuild 均 byte-identical。
+
+protocol reference：[TPEx Main Board Stock IP Feed Specification V.12.17](https://dsp.tpex.org.tw/storage/regular_system/Main%20Board%20Stock%20IP%20Feed%20Specification%20%28V.12.17_TCPIP%29.pdf)；
+warrant identity reference：[TPEx OpenAPI `tpex_warrant_issue`](https://www.tpex.org.tw/openapi/v1/tpex_warrant_issue)。

@@ -10,21 +10,58 @@ use std::{
 const EXTRACTOR_VERSION: u16 = 1;
 const STOCK_SNAPSHOT_FORMAT_FIELD: &[u8] = br#""format":"STOCK_SNAPSHOT""#;
 const STOCK_REALTIME_FORMAT_FIELD: &[u8] = br#""format":"STOCK_REALTIME""#;
+const WARRANT_SNAPSHOT_FORMAT_FIELD: &[u8] = br#""format":"WARRANT_SNAPSHOT""#;
+const WARRANT_REALTIME_FORMAT_FIELD: &[u8] = br#""format":"WARRANT_REALTIME""#;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FixtureProfile {
+    Equity,
+    Warrant,
+}
+
+impl FixtureProfile {
+    fn parse(value: &str) -> Result<Self, Box<dyn Error>> {
+        match value {
+            "equity" => Ok(Self::Equity),
+            "warrant" => Ok(Self::Warrant),
+            _ => Err(format!("unsupported TPEx fixture profile: {value}").into()),
+        }
+    }
+
+    const fn format_fields(self) -> (&'static [u8], &'static [u8]) {
+        match self {
+            Self::Equity => (STOCK_SNAPSHOT_FORMAT_FIELD, STOCK_REALTIME_FORMAT_FIELD),
+            Self::Warrant => (WARRANT_SNAPSHOT_FORMAT_FIELD, WARRANT_REALTIME_FORMAT_FIELD),
+        }
+    }
+}
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut arguments = env::args_os().skip(1);
     let source_root = PathBuf::from(
         arguments
             .next()
-            .ok_or("usage: extract_tpex_fixture <source-complete-directory> <output-directory>")?,
+            .ok_or(
+                "usage: extract_tpex_fixture <source-complete-directory> <output-directory> [equity|warrant]",
+            )?,
     );
     let output_path = PathBuf::from(
         arguments
             .next()
-            .ok_or("usage: extract_tpex_fixture <source-complete-directory> <output-directory>")?,
+            .ok_or(
+                "usage: extract_tpex_fixture <source-complete-directory> <output-directory> [equity|warrant]",
+            )?,
     );
+    let profile = match arguments.next() {
+        Some(value) => FixtureProfile::parse(
+            value
+                .to_str()
+                .ok_or("fixture profile must be valid UTF-8")?,
+        )?,
+        None => FixtureProfile::Equity,
+    };
     if arguments.next().is_some() {
-        return Err("extract_tpex_fixture accepts exactly two arguments".into());
+        return Err("extract_tpex_fixture accepts two or three arguments".into());
     }
     if output_path.exists() {
         return Err(format!(
@@ -47,6 +84,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut page_outputs = Vec::with_capacity(pages.len());
     let mut snapshot_count = 0_usize;
     let mut realtime_count = 0_usize;
+    let (snapshot_format, realtime_format) = profile.format_fields();
 
     for entry in pages {
         let page_path = entry.path();
@@ -61,10 +99,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         for (item_index, range) in item_ranges.into_iter().enumerate() {
             let record = &page[range];
-            let selected = if contains_bytes(record, STOCK_SNAPSHOT_FORMAT_FIELD) {
+            let selected = if contains_bytes(record, snapshot_format) {
                 snapshot_count += 1;
                 true
-            } else if contains_bytes(record, STOCK_REALTIME_FORMAT_FIELD) {
+            } else if contains_bytes(record, realtime_format) {
                 realtime_count += 1;
                 true
             } else {
@@ -99,7 +137,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     if snapshot_count == 0 || realtime_count == 0 {
         return Err(format!(
-            "expected both STOCK_SNAPSHOT and STOCK_REALTIME records, found {snapshot_count} and {realtime_count}"
+            "expected both snapshot and realtime records for {profile:?}, found {snapshot_count} and {realtime_count}"
         )
         .into());
     }
@@ -109,8 +147,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         fs::write(output_path.join(file_name), bytes)?;
     }
     println!(
-        "extractor_version={EXTRACTOR_VERSION} files={} snapshots={snapshot_count} realtime={realtime_count}",
-        page_outputs.len()
+        "extractor_version={EXTRACTOR_VERSION} profile={profile:?} files={} snapshots={snapshot_count} realtime={realtime_count}",
+        page_outputs.len(),
     );
     Ok(())
 }
@@ -278,7 +316,8 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        contains_bytes, item_ranges, STOCK_REALTIME_FORMAT_FIELD, STOCK_SNAPSHOT_FORMAT_FIELD,
+        contains_bytes, item_ranges, FixtureProfile, STOCK_REALTIME_FORMAT_FIELD,
+        STOCK_SNAPSHOT_FORMAT_FIELD,
     };
 
     #[test]
@@ -300,5 +339,21 @@ mod tests {
         assert!(contains_bytes(realtime, STOCK_REALTIME_FORMAT_FIELD));
         assert!(!contains_bytes(odd_lot, STOCK_SNAPSHOT_FORMAT_FIELD));
         assert!(!contains_bytes(odd_lot, STOCK_REALTIME_FORMAT_FIELD));
+    }
+
+    #[test]
+    fn selects_only_warrant_wire_formats_for_warrant_profile() {
+        let snapshot = br#"{"format":"WARRANT_SNAPSHOT","price":0.01}"#;
+        let realtime = br#"{"format":"WARRANT_REALTIME","price":0.01}"#;
+        let stock = br#"{"format":"STOCK_SNAPSHOT","price":0.01}"#;
+        let (snapshot_field, realtime_field) = FixtureProfile::Warrant.format_fields();
+
+        assert!(contains_bytes(snapshot, snapshot_field));
+        assert!(contains_bytes(realtime, realtime_field));
+        assert!(!contains_bytes(stock, snapshot_field));
+        assert!(!contains_bytes(stock, realtime_field));
+        assert!(!contains_bytes(snapshot, STOCK_SNAPSHOT_FORMAT_FIELD));
+        assert!(!contains_bytes(realtime, STOCK_REALTIME_FORMAT_FIELD));
+        assert_eq!(FixtureProfile::parse("warrant").unwrap(), FixtureProfile::Warrant);
     }
 }
