@@ -1,0 +1,59 @@
+acceptance_contract_version: 1
+milestone: M5
+scope: TPEx warrant extension
+status: Passed
+completion_quality: focused-real-fixture
+git_commit: 1cf5304db15c8edfdc80a0d1cafbcb5b3231a023
+rust_toolchain: "rustc 1.97.1 (8bab26f4f 2026-07-14)"
+harness: tools/run_tpex_warrant_acceptance.sh
+
+fixture:
+  path: fixtures/teralion/tpex/72328U/2026-07-20
+  record_count: 11
+  formats: { WARRANT_REALTIME: 4, WARRANT_SNAPSHOT: 7 }
+  sha256: 1978f10ef6a483206d78ebf049ced7932d9593f6930112cb77db967edd916dcd
+  source_revision: Tpex/72328U@2026-07-20=bb59f810b62b59329cf228b058226ff8e562315125a2c179dac8163c50e25d43
+  daily_instrument_sha256: 4dd726790237bdd2ed98b16b12b3827d18da3d2c5725d016bff3c3f30a353ac6
+
+normalization:
+  input_records: 11
+  events: 11
+  quote_snapshots: 3
+  opening_auctions: 2
+  closing_auctions: 6
+  known_skipped: 0
+  warnings: 0
+  outside_replay_window: 0
+
+network_policy:
+  status: disabled
+  runner: sandbox-exec
+  credentials: absent
+  plan_network_requirement: NotRequired
+
+run:
+  config: config/m5-tpex-warrant.yaml
+  opened_streams: 1
+  stream: "market=Tpex symbol=72328U trading_date=2026-07-20"
+  events: 11
+  orders: 0
+  fills: 0
+  event_stream_blake3: 52fdd77bb327fd0aeca56f3bf159283e68f3c096672cf3166bb064175e209120
+  final_state_blake3: 174e79b6572a77074990bc78bfe4b9dde6087502545d629393d439e8ee40f849
+  strategy_output_blake3: 1b781c3339b81310fc9f00e984fa5fd9a5dc30ac61f6858f61ce6f94d1b6e926
+  ledger_blake3: 6f662b247de60e3a1c93c14d25bcc4e7eee03e5343ecc7e3c77ca153e087e4ff
+
+determinism:
+  repeated_runs: 10
+  repeated_runs_byte_identical: true
+  cache_rebuild_byte_identical: true
+  debug_release_byte_identical: true
+
+inspection:
+  inspect_success: passed
+  corruption_rejection: passed
+
+scope_notes:
+  trades: fixture contains no deals; TradeBatch support is not claimed
+  discovery_permutations: not_applicable_single_stream
+  formal_m5_scope: existing 2026-08-01 M5-W/M5-O report remains unchanged; this is a focused TPEx warrant extension
