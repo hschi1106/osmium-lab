@@ -129,6 +129,7 @@ deployment 提供。小型 synthetic smoke fixture 位於 `fixtures/smoke/`，�
 - [產品需求](docs/product-requirements.md)
 - [CLI 操作說明](docs/operations/cli.md)
 - [Quickstart](docs/quickstart.md)
+- [User guide](docs/user-guide.md)
 - [RunConfig reference](docs/config-reference.md)
 - [Local data layout](docs/data-layout.md)
 - [Market replay TUI 設計](docs/design/market-replay-ui.md)
