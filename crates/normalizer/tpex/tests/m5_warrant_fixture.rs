@@ -8,9 +8,9 @@ use market_types::{EventPayload, InstrumentId, MarketId, MatchTime, Symbol, Trad
 use tpex_normalizer::{NormalizerConfig, TpexNormalizer};
 
 #[test]
-fn complete_committed_warrant_fixture_normalizes_offline() {
+fn synthetic_warrant_fixture_normalizes_offline() {
     let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../fixtures/teralion/tpex/72328U/2026-07-20/regular-quotes");
+        .join("../../../fixtures/teralion/tpex/SYNTH-TPEX-W/2026-07-20/regular-quotes");
     let mut shards = fs::read_dir(&fixture_dir)
         .unwrap()
         .map(|entry| entry.unwrap().path())
@@ -28,7 +28,7 @@ fn complete_committed_warrant_fixture_normalizes_offline() {
     });
     let normalizer = TpexNormalizer::new(
         NormalizerConfig::new_warrant(
-            InstrumentId::new(MarketId::Tpex, Symbol::new("72328U").unwrap()),
+            InstrumentId::new(MarketId::Tpex, Symbol::new("SYNTH-TPEX-W").unwrap()),
             TradingDate::parse("2026-07-20").unwrap(),
             MatchTime::parse("2026-07-20T08:55:00+08:00").unwrap(),
             MatchTime::parse("2026-07-20T13:35:00+08:00").unwrap(),
@@ -37,8 +37,8 @@ fn complete_committed_warrant_fixture_normalizes_offline() {
     );
     let report = normalizer.normalize_json_lines(lines).unwrap();
 
-    assert_eq!(report.input_records(), 11);
-    assert_eq!(report.events().len(), 11);
+    assert_eq!(report.input_records(), 3);
+    assert_eq!(report.events().len(), 3);
     assert!(report.outside_replay_window().is_empty());
     assert!(report.known_skipped().is_empty());
     assert!(report.warnings().is_empty());
@@ -55,7 +55,7 @@ fn complete_committed_warrant_fixture_normalizes_offline() {
             }
         },
     );
-    assert_eq!(quotes, 3);
-    assert_eq!(opening, 2);
-    assert_eq!(closing, 6);
+    assert_eq!(quotes, 1);
+    assert_eq!(opening, 1);
+    assert_eq!(closing, 1);
 }

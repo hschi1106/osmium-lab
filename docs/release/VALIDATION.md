@@ -1,11 +1,13 @@
 # Release validation
 
 這是 cleanup 後的短驗證入口。歷史 M1–M5 report 不再放在 repository；本文件只描述
-目前 release tree 的可重現 checks 與 private acceptance 邊界。
+目前 release tree 的可重現 checks 與 synthetic／real-data acceptance 邊界。
 
 ## Repository checks
 
 ```sh
+python3 tools/acceptance/generate_synthetic_fixtures.py
+git diff --exit-code -- fixtures
 tools/acceptance/verify_compact_fixtures.sh
 tools/acceptance/verify_fixture_bundle.sh \
   --bundle . \
@@ -18,8 +20,8 @@ cargo test --workspace
 `verify_compact_fixtures.sh` 會確認：
 
 - manifest entry 全部是 `complete_day: false`，且 metadata 是
-  `fixture_scope: representative_slice`。
-- TWSE 保留 `2330/2026-07-20`，不存在 `2330/2026-07-27`。
+  `fixture_scope: synthetic_scenario`、`provenance: repository-owned-synthetic`。
+- matrix 包含 TWSE／TPEx equity、warrant，以及 TAIFEX future、option scenarios。
 - 每個 JSONL record 可解析且有 `match_time`／`received_at`。
 - 每個 session 不超過 512 records／512 KiB，整棵 compact tree 不超過 10 MiB。
 - manifest path 與 metadata directory 一致，checksum 與 golden artifact allowlist 正確。
@@ -45,17 +47,9 @@ SOURCE_DATE_EPOCH=0 tools/release/verify_reproducibility.sh \
 
 archive 不應包含 raw data、`target/`、`.env`、credential 或未授權 full-day payload。
 
-## Private full-day acceptance
+## External full-day acceptance
 
-需要完整交易日資料時，先由 internal artifact store／SSO 提供 authorized bundle，再
-執行：
-
-```sh
-tools/acceptance/fetch_fixture_bundle.sh \
-  --source https://<internal-artifact-store>/osmium/acceptance.tar.gz \
-  --output target/acceptance-bundle
-```
-
-`OSMIUM_FIXTURE_BUNDLE_TOKEN` 由 deployment environment 注入。完整日 report 與 provider
-authorization audit 是 external deployment evidence，不由 compact repository check
-代替。
+需要完整交易日資料時，使用 repository 外、經授權的 user-owned data root 執行相同
+verify／cache／replay／backtest gates。credential、authorization evidence、report 與
+full-day payload 不提交至 repository 或 binary archive。synthetic matrix 只驗證公開的
+wire mapping 與 deterministic workflow，不能取代 full-day acceptance。

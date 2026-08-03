@@ -12,7 +12,7 @@ use replay_engine::{ReplayCore, order_events};
 use twse_normalizer::{NormalizerConfig, TwseNormalizer};
 
 fn instrument() -> InstrumentId {
-    InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap())
+    InstrumentId::new(MarketId::Twse, Symbol::new("SYNTH-TWSE-EQ").unwrap())
 }
 
 fn date() -> TradingDate {
@@ -21,7 +21,7 @@ fn date() -> TradingDate {
 
 fn normalize_fixture() -> Vec<market_types::DomainEvent> {
     let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/teralion/twse/2330/2026-07-20/regular-quotes");
+        .join("../../fixtures/teralion/twse/SYNTH-TWSE-EQ/2026-07-20/regular-quotes");
     let mut shards = fs::read_dir(&fixture_dir)
         .unwrap()
         .map(|entry| entry.unwrap().path())
@@ -65,7 +65,7 @@ fn core() -> ReplayCore {
 }
 
 #[test]
-fn representative_fixture_replay_is_deterministic_and_preserves_event_order() {
+fn synthetic_fixture_replay_is_deterministic_and_preserves_event_order() {
     let events = normalize_fixture();
     assert!(!events.is_empty());
 

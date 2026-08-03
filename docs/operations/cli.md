@@ -329,7 +329,7 @@ invalid cache 不在原目錄修補；建立全新 cache identity或先隔離 in
 ### 7.1 Acceptance fixture preparation
 
 Committed fixture 只提供 maintainer-only offline source preparation tool；目前
-`fixtures/teralion/` 是 compact representative slices，不代表完整交易日：
+`fixtures/teralion/` 全部是 repository-owned synthetic scenarios，不代表完整交易日：
 
 ```sh
 target/release/osmium_fixture_data \
@@ -348,11 +348,11 @@ cargo build --release \
 tool 會以與 online sync 相同的 `TeralionSync` cursor state machine，將每個 selected
 JSONL shard 包成 fixture response、驗證 source format、發布 partition source revision，
 接著建立 source-bound replay cache。它拒絕覆寫既有 data root；需要重建時使用新的空
-data root。可先執行 `tools/acceptance/verify_compact_fixtures.sh` 檢查 slices 的
+data root。可先執行 `tools/acceptance/verify_compact_fixtures.sh` 檢查 scenarios 的
 manifest、metadata、checksum、JSON 與大小上限。
 
-需要完整日資料的 formal acceptance 必須先取得 private fixture bundle，不能把 compact
-slice 當成完整日資料使用。
+需要完整日資料的 formal acceptance 必須使用 repository 外的 authorized data root，
+不能把 synthetic scenario 當成完整日資料使用。
 
 ## 8. `replay`
 

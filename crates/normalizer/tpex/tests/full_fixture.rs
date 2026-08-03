@@ -8,9 +8,9 @@ use market_types::{EventPayload, InstrumentId, MarketId, MatchTime, Symbol, Trad
 use tpex_normalizer::{NormalizerConfig, TpexNormalizer};
 
 #[test]
-fn representative_committed_regular_fixture_normalizes_offline() {
+fn synthetic_regular_fixture_normalizes_offline() {
     let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../fixtures/teralion/tpex/6488/2026-07-20/regular-quotes");
+        .join("../../../fixtures/teralion/tpex/SYNTH-TPEX-EQ/2026-07-20/regular-quotes");
     let mut shards = fs::read_dir(&fixture_dir)
         .unwrap()
         .map(|entry| entry.unwrap().path())
@@ -28,7 +28,7 @@ fn representative_committed_regular_fixture_normalizes_offline() {
     });
     let normalizer = TpexNormalizer::new(
         NormalizerConfig::new(
-            InstrumentId::new(MarketId::Tpex, Symbol::new("6488").unwrap()),
+            InstrumentId::new(MarketId::Tpex, Symbol::new("SYNTH-TPEX-EQ").unwrap()),
             TradingDate::parse("2026-07-20").unwrap(),
             MatchTime::parse("2026-07-20T08:55:00+08:00").unwrap(),
             MatchTime::parse("2026-07-20T13:35:00+08:00").unwrap(),

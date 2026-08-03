@@ -18,7 +18,7 @@ cleanup_status:
     - production crates and tests
     - examples/config.yaml
     - fixtures/smoke
-    - compact representative real-data slices
+    - repository-owned synthetic fixture matrix
   removed:
     - config/
     - docs/increments/
@@ -74,57 +74,39 @@ fixture_policy:
     scope: synthetic-redistributable
   acceptance:
     manifest: fixtures/acceptance/manifest.yaml
-    scope: private-internal-review-only
-    committed_payload: compact-representative-slices
-    full_day_payload: external-authorized-bundle
+    scope: synthetic-redistributable
+    committed_payload: repository-owned-synthetic-scenarios
+    full_day_payload: external-user-owned-data-root
   verifier: tools/acceptance/verify_compact_fixtures.sh
-  twse_fixture_rule:
-    retained: fixtures/teralion/twse/2330/2026-07-20
-    removed: fixtures/teralion/twse/2330/2026-07-27
 
 fixture_matrix:
-  - id: twse-equity-2330-2026-07-20
-    path: fixtures/teralion/twse/2330/2026-07-20
+  - id: synthetic-twse-equity
+    path: fixtures/teralion/twse/SYNTH-TWSE-EQ/2026-07-20
     kind: equity
     sessions: [regular]
     complete_day: false
-  - id: twse-warrant-03003T-2026-07-20
-    path: fixtures/teralion/twse/03003T/2026-07-20
+  - id: synthetic-twse-warrant
+    path: fixtures/teralion/twse/SYNTH-TWSE-W/2026-07-20
     kind: warrant
     sessions: [regular]
     complete_day: false
-  - id: tpex-equity-6488-2026-07-20
-    path: fixtures/teralion/tpex/6488/2026-07-20
+  - id: synthetic-tpex-equity
+    path: fixtures/teralion/tpex/SYNTH-TPEX-EQ/2026-07-20
     kind: equity
     sessions: [regular]
     complete_day: false
-  - id: tpex-warrant-72328U-2026-07-20
-    path: fixtures/teralion/tpex/72328U/2026-07-20
+  - id: synthetic-tpex-warrant
+    path: fixtures/teralion/tpex/SYNTH-TPEX-W/2026-07-20
     kind: warrant
     sessions: [regular]
     complete_day: false
-  - id: taifex-futures-CAFH6-2026-07-20
-    path: fixtures/teralion/taifex/CAFH6/2026-07-20
+  - id: synthetic-taifex-future
+    path: fixtures/teralion/taifex/SYNTH-FUT/2026-07-20
     kind: future
     sessions: [regular]
     complete_day: false
-  - id: taifex-futures-CDFH6-2026-07-20
-    path: fixtures/teralion/taifex/CDFH6/2026-07-20
-    kind: future
-    sessions: [after_hours, regular]
-    complete_day: false
-  - id: taifex-futures-TXFH6-2026-07-20
-    path: fixtures/teralion/taifex/TXFH6/2026-07-20
-    kind: future
-    sessions: [after_hours, regular]
-    complete_day: false
-  - id: taifex-futures-TXFH6-2026-07-28
-    path: fixtures/teralion/taifex/TXFH6/2026-07-28
-    kind: future
-    sessions: [after_hours, regular]
-    complete_day: false
-  - id: taifex-option-TXO24000U6-2026-07-28
-    path: fixtures/teralion/taifex/TXO24000U6/2026-07-28
+  - id: synthetic-taifex-option
+    path: fixtures/teralion/taifex/SYNTH-OPT/2026-07-20
     kind: option
     sessions: [after_hours, regular]
     complete_day: false
@@ -140,5 +122,4 @@ validation:
     - cargo test --workspace
 
 external_follow_up:
-  - private artifact store and SSO authorization review
-  - full-day formal acceptance report retrieval when required
+  - full-day formal acceptance with authorized user-owned data when required

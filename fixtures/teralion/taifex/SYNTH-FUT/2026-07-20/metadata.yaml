@@ -1,0 +1,31 @@
+metadata_version: 3
+fixture_scope: synthetic_scenario
+complete_day: false
+market: "taifex"
+symbol: "SYNTH-FUT"
+trading_date: "2026-07-20"
+profile: "future"
+provenance: repository-owned-synthetic
+generation_policy: authored deterministic scenarios; no market records used
+sessions:
+  - "regular"
+source_formats:
+  - "I020"
+  - "I022"
+  - "I030"
+  - "I080"
+artifact:
+  file_count: 1
+  record_count: 4
+  byte_count: 849
+  full_day: false
+  source_provenance: repository-owned-synthetic
+sessions_detail:
+  - session: "regular"
+    record_count: 4
+    byte_count: 849
+    formats:
+      - "I020"
+      - "I022"
+      - "I030"
+      - "I080"

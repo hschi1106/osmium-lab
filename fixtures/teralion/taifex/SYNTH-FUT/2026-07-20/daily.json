@@ -1,0 +1,1 @@
+{"symbol":"SYNTH-FUT","market":"taifex_fut","exchange":"TAIFEX","name":"repository-owned synthetic fixture","root":"SYNTH","kind":"future","underlying":null,"call_put":null,"strike":null,"expiry":"2099-12","multiplier":null,"currency":"TWD","trading_date":"2026-07-20","session":{"reference":100,"rise_limit":[],"fall_limit":[]}}

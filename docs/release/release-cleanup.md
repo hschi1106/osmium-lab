@@ -1,7 +1,7 @@
 # Release cleanup：production repository 邊界
 
 本文件是目前 release tree 的 cleanup contract。它描述刪除哪些 milestone material、保留
-哪些 production boundary，以及 compact fixtures、CLI 與外部 acceptance bundle 的責任
+哪些 production boundary，以及 synthetic fixtures、CLI 與外部 real-data acceptance 的責任
 分界。產品範圍與 domain 規則仍以 [product requirements](../product-requirements.md) 為
 準。
 
@@ -32,8 +32,8 @@ examples/
 
 fixtures/
   smoke/                      # 小型 synthetic、可在 CI 使用
-  acceptance/manifest.yaml    # private bundle metadata
-  teralion/                   # compact representative real-data slices
+  acceptance/manifest.yaml    # synthetic coverage metadata
+  teralion/                   # synthetic Teralion-wire scenarios
 
 tools/
   acceptance/                 # fixture builder、bundle、compact verifier
@@ -58,7 +58,7 @@ docs/
   release tree 不再保留 milestone-specific acquisition workflow。
 - `tools/acceptance/osmium_m1_runner/`。release binary 不提供 fixture mode；目前的
   acceptance-only builder 與 generic bundle tools 保留在 `tools/acceptance/`。
-- real fixture 的 full-day payload、舊 golden artifacts 與不必要的 shard。
+- real fixture payload、舊 golden artifacts 與不必要的 shard。
 
 ### 保留／新增
 
@@ -66,44 +66,41 @@ docs/
 - `examples/config.yaml` 原樣保留；`examples/smoke.yaml` 作為 CI/developer smoke
   config。
 - `fixtures/smoke/` 的 synthetic payload。
-- `fixtures/acceptance/manifest.yaml`、compact fixture builder、bundle package/fetch/
+- `fixtures/acceptance/manifest.yaml`、synthetic fixture generator、bundle package/fetch/
   verify tooling。
 - `docs/release/VALIDATION.md`、`fixtures/README.md`、`fixtures/teralion/README.md` 與
   `tools/acceptance/README.md`，作為新的短入口。
 
-## Compact fixture contract
+## Synthetic fixture contract
 
-`fixtures/teralion/` 只保留能代表不同 market、instrument kind、session 與 source state
-的 slices；每個 profile 都必須有 `metadata.yaml`、`daily.json`、JSONL payload 與
+`fixtures/teralion/` 只保留自行撰寫、能代表不同 market、instrument kind、session 與
+source state 的 scenarios；每個 profile 都必須有 `metadata.yaml`、`daily.json`、JSONL payload 與
 `golden/fixture-set.sha256`。`metadata.yaml` 必須標示：
 
 ```yaml
-fixture_scope: representative_slice
+fixture_scope: synthetic_scenario
+provenance: repository-owned-synthetic
 complete_day: false
 ```
 
 目前保留矩陣：
 
-| Market | Symbol | Date | Representative scope |
+| Market | Symbol | Date | Synthetic scope |
 | --- | --- | --- | --- |
-| TWSE | `2330` | `2026-07-20` | equity regular，snapshot/realtime、opening／closing states |
-| TWSE | `03003T` | `2026-07-20` | warrant regular |
-| TPEx | `6488` | `2026-07-20` | equity regular |
-| TPEx | `72328U` | `2026-07-20` | warrant regular |
-| TAIFEX | `CAFH6` | `2026-07-20` | futures regular |
-| TAIFEX | `CDFH6` | `2026-07-20` | futures after-hours + regular |
-| TAIFEX | `TXFH6` | `2026-07-20` | futures cross-session |
-| TAIFEX | `TXFH6` | `2026-07-28` | futures／underlying relationship |
-| TAIFEX | `TXO24000U6` | `2026-07-28` | option after-hours + regular |
+| TWSE | `SYNTH-TWSE-EQ` | `2026-07-20` | equity regular，snapshot/realtime、opening／closing states |
+| TWSE | `SYNTH-TWSE-W` | `2026-07-20` | warrant regular |
+| TPEx | `SYNTH-TPEX-EQ` | `2026-07-20` | equity regular |
+| TPEx | `SYNTH-TPEX-W` | `2026-07-20` | warrant regular |
+| TAIFEX | `SYNTH-FUT` | `2026-07-20` | futures regular |
+| TAIFEX | `SYNTH-OPT` | `2026-07-20` | option after-hours + regular |
 
-TWSE 的 repository fixture 明確保留 `2330/2026-07-20`；`2330/2026-07-27` 不屬於
-release tree。compact verifier 會檢查日期、manifest、metadata、JSON、checksum、每個
+generator 會從 code-defined scenarios 重建完整 tree。verifier 會檢查 provenance、
+manifest、metadata、JSON、checksum、每個
 session 的 record/byte budget，以及不得混入 full-day golden artifact。
 
-完整日 real-data acceptance payload 不放入 Git，也不放入 binary archive。它由
-`fixtures/acceptance/manifest.yaml` 的 private/internal authorization policy 管理，
-需要時透過 `fetch_fixture_bundle.sh` 取得。compact slices 不能被宣稱為完整日資料，也
-不能替代 provider authorization review。
+完整日 real-data acceptance payload 不放入 Git，也不放入 binary archive；需要時使用
+repository 外、經授權的 user-owned data root。synthetic scenarios 不能被宣稱為完整日
+資料，也不能替代 provider authorization review。
 
 ## CLI boundary
 

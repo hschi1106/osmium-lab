@@ -563,31 +563,29 @@ records；不得手工重造 payload。
 
 ## 13. M5 warrant profile
 
-M5 增加一個由實際來源固定的 TWSE warrant profile：`03003T`、交易日
-`2026-07-20`、`regular`。fixture 位於
-[`fixtures/teralion/twse/03003T/2026-07-20`](../../fixtures/teralion/twse/03003T/2026-07-20)，
-source market 仍是 `twse`；它不是把所有未知 symbol 自動判成 warrant。適用 mapping
-為 `TeralionTwseWarrant`，`mapping_version = 1`。
+M5 增加 TWSE warrant profile。公開 fixture 使用虛構 symbol `SYNTH-TWSE-W`、交易日
+`2026-07-20`、`regular`，位於
+[`fixtures/teralion/twse/SYNTH-TWSE-W/2026-07-20`](../../fixtures/teralion/twse/SYNTH-TWSE-W/2026-07-20)。
+它是 repository-owned synthetic scenario，不會把所有未知 symbol 自動判成 warrant。
+適用 mapping 為 `TeralionTwseWarrant`，`mapping_version = 1`。
 
-### 13.1 實測 format 與 mapping
+### 13.1 Synthetic format coverage 與 mapping
 
-| `format` | 筆數 | 行為 |
-| --- | ---: | --- |
-| `WARRANT_REALTIME` | 60 | 依 quote body 驗證後產生 `QuoteSnapshot` 或 trial auction event |
-| `WARRANT_SNAPSHOT` | 51 | 依同一個完整 quote body 產生 `QuoteSnapshot` 或 trial auction event |
+| `format` | 行為 |
+| --- | --- |
+| `WARRANT_REALTIME` | 依 quote body 驗證後產生 `QuoteSnapshot` 或 trial auction event |
+| `WARRANT_SNAPSHOT` | 依同一個完整 quote body 產生 `QuoteSnapshot` 或 trial auction event |
 
 兩種 warrant format 都必須驗證 `type=quote`、`market=twse`、exact symbol、兩個
 clock、最多五檔 bids／asks、`deal`、`cum_volume`、`status_flags` 與 `limit_flags`。
-Warrant fixture 的 111 筆 source 產生 99 個 `QuoteSnapshot` 與 12 個
-`IndicativeClosingAuction`；沒有用 `received_at` 取代 `match_time`，也沒有用
+Synthetic scenario 涵蓋普通 `QuoteSnapshot` 與 opening／closing auction；沒有用
+`received_at` 取代 `match_time`，也沒有用
 snapshot 差分重建 queue position。status／limit raw values 繼續以
 `TwseQuoteAnnotations` 隨 event atomic 保存；reserved bits 仍保留並 warning。
 
-Warrant source quantity unit 固定為 `TradingUnit`；本次 reference 的
-`units_per_trading_unit = 1000`、currency `TWD`、multiplier `1`。Teralion daily
-沒有完整提供 underlying、put/call、expiry 或 multiplier 時，normalizer 不猜測；
-這些 static fields 由 TWSE OpenAPI warrant reference 與 config provenance 綁定，詳見
-[M5 source selection evidence](../verification/evidence/m5/source-selection-2026-08-01.yaml)。
+Warrant source quantity unit 固定為 `TradingUnit`。Teralion daily 沒有完整提供
+underlying、put/call、expiry 或 multiplier 時，normalizer 不猜測；正式 static fields
+仍須由可信 reference 與 config provenance 綁定。
 
 ### 13.2 Strict boundary
 

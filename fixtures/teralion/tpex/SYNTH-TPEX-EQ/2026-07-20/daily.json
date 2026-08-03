@@ -1,0 +1,1 @@
+{"symbol":"SYNTH-TPEX-EQ","market":"tpex","exchange":"TPEX","name":"repository-owned synthetic fixture","root":"SYNTH","kind":"equity","underlying":null,"call_put":null,"strike":null,"expiry":null,"multiplier":null,"currency":"TWD","trading_date":"2026-07-20","session":{"reference":100,"rise_limit":[],"fall_limit":[]}}

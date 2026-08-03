@@ -1,0 +1,1 @@
+{"symbol":"SYNTH-OPT","market":"taifex_opt","exchange":"TAIFEX","name":"repository-owned synthetic fixture","root":"SYNTH","kind":"option","underlying":null,"call_put":"C","strike":100,"expiry":"2099-12","multiplier":null,"currency":"TWD","trading_date":"2026-07-20","session":{"reference":100,"rise_limit":[],"fall_limit":[]}}

@@ -69,11 +69,11 @@ VOLUME 圖以 `match_time` 的一分鐘桶加總 observed quantity，並以柱�
 
 ## Fixture tooling
 
-repository 只保留小型 synthetic smoke fixture，以及各市場／狀態的 compact
-representative slices。real acceptance payload 不是完整交易日資料，且依
-`fixtures/acceptance/manifest.yaml` 的 private authorization policy 管理。
+repository 只保留自行建立的 synthetic fixture，涵蓋 smoke workflow 與各市場／
+instrument kind 的 wire-format scenarios。它們不包含、抽樣或轉換任何真實行情。
 
 ```sh
+python3 tools/acceptance/generate_synthetic_fixtures.py
 tools/acceptance/verify_compact_fixtures.sh
 ```
 
@@ -112,17 +112,8 @@ tools/release/verify_reproducibility.sh \
   --output target/release-repro-gate
 ```
 
-Private acceptance bundle 不隨 binary archive 發布。maintainer 可使用：
-
-```sh
-tools/acceptance/fetch_fixture_bundle.sh \
-  --source https://<internal-artifact-store>/osmium/acceptance.tar.gz \
-  --output target/acceptance-bundle
-```
-
-HTTPS flow 需要 `OSMIUM_FIXTURE_BUNDLE_TOKEN`；實際 URL 與 SSO policy 由 internal
-deployment 提供。小型 synthetic smoke fixture 位於 `fixtures/smoke/`，可在無 credential
-環境驗證。
+synthetic smoke fixture 位於 `fixtures/smoke/`，可在無 credential 環境驗證。正式的
+full-day market-data acceptance 使用 repository 外、經授權的 user-owned data root。
 
 完整需求、CLI 契約與驗收資料：
 

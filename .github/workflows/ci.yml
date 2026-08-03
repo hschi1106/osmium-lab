@@ -31,6 +31,8 @@ jobs:
 
       - name: Run release and acceptance checks
         run: |
+          python3 tools/acceptance/generate_synthetic_fixtures.py
+          git diff --exit-code -- fixtures
           tools/acceptance/verify_compact_fixtures.sh
           tools/acceptance/verify_fixture_bundle.sh \
             --bundle . \

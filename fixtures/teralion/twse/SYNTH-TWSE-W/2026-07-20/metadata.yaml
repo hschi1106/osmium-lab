@@ -1,0 +1,27 @@
+metadata_version: 3
+fixture_scope: synthetic_scenario
+complete_day: false
+market: "twse"
+symbol: "SYNTH-TWSE-W"
+trading_date: "2026-07-20"
+profile: "warrant"
+provenance: repository-owned-synthetic
+generation_policy: authored deterministic scenarios; no market records used
+sessions:
+  - "regular-quotes"
+source_formats:
+  - "WARRANT_REALTIME"
+  - "WARRANT_SNAPSHOT"
+artifact:
+  file_count: 1
+  record_count: 3
+  byte_count: 1272
+  full_day: false
+  source_provenance: repository-owned-synthetic
+sessions_detail:
+  - session: "regular-quotes"
+    record_count: 3
+    byte_count: 1272
+    formats:
+      - "WARRANT_REALTIME"
+      - "WARRANT_SNAPSHOT"

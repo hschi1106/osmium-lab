@@ -14,12 +14,11 @@ crates 是 internal implementation boundary，不承諾 crates.io library API。
 - `osmium display` 是只讀 v2 historical-market TUI。
 - non-interactive command 支援 `--format human|json`、`--quiet` 與 `--no-color`；exit
   categories 為 usage/config/source/cache/replay/simulation/integrity/internal。
-- acceptance fixture builder 與 formal harness 不包含在 binary archive；需依 fixture
-  manifest、checksum 與 authorization 另行取得。`tools/acceptance/fetch_fixture_bundle.sh`
-  會驗證下載 archive 後才發布 local bundle。
-- repository 只保留 compact representative real-data slices；它們的 metadata 固定標示
-  `complete_day: false`。TWSE fixture 保留 `2330/2026-07-20`，`2026-07-27` 已移除。
-- `fixtures/acceptance/manifest.yaml` 仍定義 private full-day bundle 的 access boundary；
+- acceptance fixture builder 與 formal harness 不包含在 binary archive；repository 只提交
+  deterministic synthetic scenarios 與其 manifest/checksum。
+- committed fixture 由 `tools/acceptance/generate_synthetic_fixtures.py` 建立，metadata 固定
+  標示 `synthetic_scenario`、`repository-owned-synthetic`、`complete_day: false`。
+- `fixtures/acceptance/manifest.yaml` 定義公開 synthetic matrix；
   `tools/acceptance/verify_compact_fixtures.sh` 是目前 repository fixture gate。
 - archive 包含 deterministic `SHA256SUMS`、CycloneDX `SBOM.cdx.json` 與
   `THIRD-PARTY-LICENSES.txt`；`tools/release/install.sh` 支援無網路安裝。
@@ -33,9 +32,7 @@ binary、run config、event/cache 與 accounting versions 必須依 archive 中�
 
 ## Deployment prerequisites
 
-- private artifact store／SSO 必須提供 HTTPS bundle URL 與 bearer token injection；repository
-  只提供 provider-neutral flow，不保存實際 credential 或 URL。
-- TPEx warrant 與其他 M5 acceptance payload 仍是 `private-internal-review-only`，不能
-  放入 unrestricted archive。
+- full-day acceptance 使用 repository 外、經授權的 user-owned data root；repository
+  不保存實際 credential 或 market payload。
 - 每次部署仍需執行 clean-machine install、offline smoke 與 reproducibility gate，並保留
   archive/external checksum。
