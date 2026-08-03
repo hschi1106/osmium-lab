@@ -3,13 +3,25 @@ use market_types::{
     TradePrintKind, TradingDate,
 };
 use tpex_normalizer::{
-    KnownSkipReason, NormalizationErrorKind, NormalizerConfig, RealtimeGroupError, TpexNormalizer,
-    WarningKind,
+    InstrumentProfile, KnownSkipReason, NormalizationErrorKind, NormalizerConfig,
+    RealtimeGroupError, TpexNormalizer, WarningKind,
 };
 
 fn normalizer() -> TpexNormalizer {
     TpexNormalizer::new(
         NormalizerConfig::new(
+            InstrumentId::new(MarketId::Tpex, Symbol::new("6488").unwrap()),
+            TradingDate::parse("2026-07-20").unwrap(),
+            MatchTime::parse("2026-07-20T08:55:00+08:00").unwrap(),
+            MatchTime::parse("2026-07-20T13:35:00+08:00").unwrap(),
+        )
+        .unwrap(),
+    )
+}
+
+fn warrant_normalizer() -> TpexNormalizer {
+    TpexNormalizer::new(
+        NormalizerConfig::new_warrant(
             InstrumentId::new(MarketId::Tpex, Symbol::new("6488").unwrap()),
             TradingDate::parse("2026-07-20").unwrap(),
             MatchTime::parse("2026-07-20T08:55:00+08:00").unwrap(),
@@ -85,6 +97,50 @@ fn snapshot_maps_exact_numeric_lexemes_and_null_deal() {
     );
     assert_eq!(snapshot.trade(), &Observation::NoObservation);
     assert_eq!(snapshot.cumulative_volume().as_set().unwrap().value(), 0);
+}
+
+#[test]
+fn warrant_profile_uses_tpex_warrant_quote_contract_and_rejects_other_formats() {
+    assert_eq!(
+        warrant_normalizer().config().profile(),
+        InstrumentProfile::Warrant
+    );
+    let (bids, asks) = complete_book();
+    let supported = quote(
+        "WARRANT_SNAPSHOT",
+        "2026-07-20T09:00:00+08:00",
+        false,
+        (bids, asks),
+        "null",
+        0,
+        (0, 0),
+    );
+    assert_eq!(
+        warrant_normalizer()
+            .normalize_json_lines([supported])
+            .unwrap()
+            .events()
+            .len(),
+        1
+    );
+
+    let unsupported = quote(
+        "STOCK_SNAPSHOT",
+        "2026-07-20T09:00:00+08:00",
+        false,
+        (bids, asks),
+        "null",
+        0,
+        (0, 0),
+    );
+    let error = warrant_normalizer()
+        .normalize_json_lines([unsupported])
+        .unwrap_err();
+    assert!(matches!(
+        error.kind(),
+        NormalizationErrorKind::UnsupportedFormat(format)
+            if format.as_ref() == "STOCK_SNAPSHOT"
+    ));
 }
 
 #[test]

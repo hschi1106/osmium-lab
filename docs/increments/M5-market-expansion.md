@@ -165,3 +165,16 @@ M5 overall 必須保持 `partial` 或 `blocked`，不得用另一子範圍的證
 - [data requirements](../requirements/data.md)
 - [replay requirements](../requirements/replay.md)
 - [traceability matrix](../traceability.yaml)
+
+## 11. TPEx warrant extension（post-M5 follow-up）
+
+本次實作補上 TPEx warrant 的 explicit `InstrumentProfile::Warrant`、
+`TeralionTpexWarrant` cache mapping、M2／M3 routing 與 dedicated market-state reducer。
+它只接受目前程式 contract 宣告的 TPEx `WARRANT_REALTIME`／`WARRANT_SNAPSHOT` quote formats；未確認的
+TPEx warrant wire format 仍由 strict parser 拒絕。
+
+此 extension 不改寫 M5 formal acceptance：現有 M5-W evidence 是 TWSE `03003T`，不是
+TPEx warrant。由於目前沒有已授權的 TPEx warrant fixture，正式驗收狀態維持
+`fixture_pending`；下一步是取得 exact symbol／date 的 source、daily metadata、欄位
+provenance、checksum 與 network-disabled acceptance evidence，再更新本文件與
+traceability。

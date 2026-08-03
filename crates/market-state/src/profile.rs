@@ -224,11 +224,19 @@ impl MarketStateProfile {
     }
 
     pub fn tpex_regular() -> Self {
+        Self::tpex_quote("STOCK_REALTIME", "STOCK_SNAPSHOT")
+    }
+
+    pub fn tpex_warrant() -> Self {
+        Self::tpex_quote("WARRANT_REALTIME", "WARRANT_SNAPSHOT")
+    }
+
+    fn tpex_quote(realtime_format: &str, snapshot_format: &str) -> Self {
         Self::new(
             MarketId::Tpex,
             vec![
                 SourceFormatRule::new(
-                    SourceFormatId::new("STOCK_REALTIME")
+                    SourceFormatId::new(realtime_format)
                         .expect("TPEx source format constant is non-empty"),
                     vec![
                         EventKind::QuoteSnapshot,
@@ -239,7 +247,7 @@ impl MarketStateProfile {
                 )
                 .expect("TPEx realtime profile has accepted event kinds"),
                 SourceFormatRule::new(
-                    SourceFormatId::new("STOCK_SNAPSHOT")
+                    SourceFormatId::new(snapshot_format)
                         .expect("TPEx source format constant is non-empty"),
                     vec![
                         EventKind::QuoteSnapshot,

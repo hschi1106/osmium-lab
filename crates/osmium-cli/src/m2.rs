@@ -232,6 +232,14 @@ fn m3_queries(
             replay_start,
             replay_end_exclusive,
         )?),
+        (MarketId::Tpex, InstrumentKind::Warrant) => {
+            PartitionNormalizerConfig::TpexWarrant(TpexNormalizerConfig::new_warrant(
+                key.instrument().clone(),
+                key.trading_date(),
+                replay_start,
+                replay_end_exclusive,
+            )?)
+        }
         (MarketId::Tpex, _) => PartitionNormalizerConfig::Tpex(TpexNormalizerConfig::new(
             key.instrument().clone(),
             key.trading_date(),
@@ -563,6 +571,7 @@ pub(crate) fn m3_core(
         let reducer = match (key.instrument().market(), kind) {
             (MarketId::Twse, InstrumentKind::Warrant) => MarketStateReducer::twse_warrant(),
             (MarketId::Twse, _) => MarketStateReducer::twse_regular(),
+            (MarketId::Tpex, InstrumentKind::Warrant) => MarketStateReducer::tpex_warrant(),
             (MarketId::Tpex, _) => MarketStateReducer::tpex_regular(),
             (MarketId::Taifex, InstrumentKind::Option) => MarketStateReducer::taifex_options(),
             (MarketId::Taifex, _) => MarketStateReducer::taifex_futures(),
