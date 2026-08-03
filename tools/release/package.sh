@@ -8,6 +8,7 @@ Usage: tools/release/package.sh --output <archive.tar.gz> [--version <version>] 
 Builds the internal osmium binary archive. The archive contains the binary,
 neutral example/config documentation, release notes, license, and metadata only.
 Source data, raw dumps, target files, credentials, and acceptance payloads are excluded.
+The tar.gz bytes are deterministic when SOURCE_DATE_EPOCH is fixed.
 EOF
 }
 
@@ -62,6 +63,19 @@ fi
     exit 1
 }
 
+command -v python3 >/dev/null 2>&1 || {
+    echo "required command is unavailable: python3" >&2
+    exit 2
+}
+
+sha256_file() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    else
+        shasum -a 256 "$1" | awk '{print $1}'
+    fi
+}
+
 case "$output" in
     /*) output_path=$output ;;
     *) output_path=$root/$output ;;
@@ -100,6 +114,7 @@ cp "$root/docs/data-layout.md" "$package_dir/docs/data-layout.md"
 cp "$root/fixtures/acceptance/manifest.yaml" "$package_dir/fixture-manifest.yaml"
 cp "$root/LICENSE" "$package_dir/LICENSE"
 cp "$root/docs/release/RELEASE-NOTES.md" "$package_dir/RELEASE-NOTES.md"
+cp "$root/docs/release/SUPPORT.md" "$package_dir/SUPPORT.md"
 
 cat >"$package_dir/BUILD-METADATA" <<EOF
 product: osmium
@@ -108,6 +123,7 @@ target: $target
 distribution: private-internal
 archive_contents: binary-and-documentation-only
 acceptance_payloads: separate-authorized-bundle
+source_date_epoch: ${SOURCE_DATE_EPOCH:-0}
 EOF
 
 (
@@ -115,10 +131,15 @@ EOF
     cargo tree --manifest-path "$root/crates/osmium-cli/Cargo.toml" --locked \
         --prefix none --depth 1 \
         | sed -E 's/ \([^)]*\)//g' >DEPENDENCIES.txt
+    python3 "$root/tools/release/generate_inventory.py" \
+        --root "$root" \
+        --version "$version" \
+        --sbom "$package_dir/SBOM.cdx.json" \
+        --licenses "$package_dir/THIRD-PARTY-LICENSES.txt"
     find . -type f ! -name SHA256SUMS ! -name SHA256SUMS.tmp -print \
         | LC_ALL=C sort \
         | while IFS= read -r file; do
-            sha256sum "$file"
+            printf '%s  %s\n' "$(sha256_file "$file")" "$file"
         done >SHA256SUMS.tmp
     mv SHA256SUMS.tmp SHA256SUMS
 )
@@ -130,7 +151,11 @@ if find "$package_dir" -type f \( -name '.env' -o -path '*/raw/*' -o -path '*/ta
     exit 1
 fi
 
-tar -czf "$output_path" -C "$staging" "$package_name"
-sha256sum "$output_path" >"$output_path.sha256"
+python3 "$root/tools/release/create_archive.py" \
+    --root "$package_dir" \
+    --name "$package_name" \
+    --output "$output_path" \
+    --source-date-epoch "${SOURCE_DATE_EPOCH:-0}"
+sha256_file "$output_path" >"$output_path.sha256"
 echo "archive=$output_path"
 echo "checksum=$output_path.sha256"

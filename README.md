@@ -99,8 +99,29 @@ tools/release/package.sh \
   --output target/osmium-internal.tar.gz
 ```
 
-腳本同時產生 `<archive>.sha256`，並將 neutral example、文件、fixture manifest 與
-dependency inventory 放入 archive。
+腳本同時產生 `<archive>.sha256`，並將 neutral example、文件、fixture manifest、
+dependency inventory、CycloneDX SBOM 與 third-party license inventory 放入 archive。
+在 clean machine 驗證安裝與 deterministic bytes：
+
+```sh
+tools/release/smoke_clean_machine.sh \
+  --archive target/osmium-internal.tar.gz \
+  --checksum target/osmium-internal.tar.gz.sha256
+tools/release/verify_reproducibility.sh \
+  --output target/release-repro-gate
+```
+
+Private acceptance bundle 不隨 binary archive 發布。maintainer 可使用：
+
+```sh
+tools/acceptance/fetch_fixture_bundle.sh \
+  --source https://<internal-artifact-store>/osmium/acceptance.tar.gz \
+  --output target/acceptance-bundle
+```
+
+HTTPS flow 需要 `OSMIUM_FIXTURE_BUNDLE_TOKEN`；實際 URL 與 SSO policy 由 internal
+deployment 提供。小型 synthetic smoke fixture 位於 `fixtures/smoke/`，可在無 credential
+環境驗證。
 
 完整需求、CLI 契約與驗收資料：
 
@@ -111,3 +132,4 @@ dependency inventory 放入 archive。
 - [Local data layout](docs/data-layout.md)
 - [Market replay TUI 設計](docs/design/market-replay-ui.md)
 - [Release cleanup](docs/release/release-cleanup.md)
+- [內部支援政策](docs/release/SUPPORT.md)

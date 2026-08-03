@@ -182,6 +182,35 @@ document_sets:
       - docs/architecture/decisions/0005-twse-intermediate-final-ordering.md
   release:
     - docs/release/release-cleanup.md
+    - docs/release/RELEASE-NOTES.md
+    - docs/release/SUPPORT.md
+    - docs/release/namespace-review.md
+
+release_trace:
+  status: complete
+  implementation_paths:
+    - crates/osmium-cli/src/lib.rs
+    - crates/osmium-cli/src/main.rs
+    - crates/osmium-cli/src/command.rs
+    - tools/acceptance/package_fixture_bundle.sh
+    - tools/acceptance/fetch_fixture_bundle.sh
+    - tools/acceptance/verify_fixture_bundle.sh
+    - tools/release/package.sh
+    - tools/release/create_archive.py
+    - tools/release/generate_inventory.py
+    - tools/release/install.sh
+    - tools/release/smoke_clean_machine.sh
+    - tools/release/verify_reproducibility.sh
+  fixtures:
+    - fixtures/smoke/manifest.yaml
+    - fixtures/acceptance/manifest.yaml
+  release_gates:
+    - RLS-06
+    - RLS-07
+    - RLS-08
+    - RLS-10
+    - RLS-11
+    - RLS-12
 
 m3_trace:
   status: complete

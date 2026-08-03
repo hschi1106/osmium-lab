@@ -9,4 +9,9 @@
 - 將 fixture builder、歷史 runner、acquisition helpers 與 formal scripts 移到 tools。
 - 加入 binary archive packaging、neutral example config、quickstart、config reference、
   local data layout 與 private acceptance manifest。
+- 完成 RLS-06 JSON output/quiet/no-color 與 stable exit categories。
+- 加入 synthetic smoke fixture、private fixture bundle package/fetch/verify flow，以及
+  deterministic archive、offline installer、clean-machine/reproducibility checks。
+- archive 現在包含 CycloneDX SBOM 與 transitive third-party license inventory；新增內部
+  [support policy](docs/release/SUPPORT.md) 與 namespace review。
 - 保留 M1–M5 historical evidence，不把 acceptance payload 放入 binary archive。

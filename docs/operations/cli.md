@@ -38,7 +38,7 @@ current_scope           = private/internal v2 multi-instrument offline replay an
   osmium data sync     --config <file>
   osmium data verify   --config <file>
   osmium cache prepare --config <file>
-osmium replay        --config <file>
+  osmium replay        --config <file>
   osmium display       --config <file>
   osmium backtest      --config <file> --output <new-directory>
   osmium inspect       --run <run-directory>
@@ -50,6 +50,24 @@ Acceptance fixture runner 不再掛在 release CLI；請使用
 
 所有 command 支援 `--help`。unknown option、缺少必要 argument 或互斥 argument 同時
 出現，回傳 usage error。
+
+除 `display` 外的 non-interactive command 都支援：
+
+```text
+--format human|json
+--quiet
+--no-color
+```
+
+`--format json` 只在 stdout 輸出一個 `schema_version: 1` 的 JSON object，包含 command、
+status 與 result fields；錯誤則在 stderr 輸出同一個 JSON envelope，不混入 human log。
+`--quiet` 只抑制成功輸出，不改變 exit status 或副作用；目前 human summary 沒有 ANSI
+color，`--no-color` 仍是穩定的 release option。`display` 是互動式 TUI，不接受這三個
+output option。
+
+`osmium version` 會回報 binary version、`cli_contract`、config schema、event schema、
+cache format 與 accounting compatibility version；這些欄位是 archive/automation 的
+第一層 compatibility check。
 
 ## 3. Release run configuration
 
@@ -211,8 +229,8 @@ complete source。online coverage lookup 若被 policy 允許，必須在執行�
 `network_requirement=required`；prepared-data offline plan 只使用
 local evidence。
 
-目前 CLI 的 stdout 是人類可讀 stable summary；machine-readable projection 與
-`--format` 是後續 RLS-06 work，不應在 release example 中假設已存在。
+human stdout 是可供人閱讀的 stable summary；automation 應使用 `--format json` 的
+structured result，不應解析 human line。
 
 ## 5. `data sync`
 
@@ -425,15 +443,20 @@ cargo run -p osmium-cli -- inspect --run <run-directory>
 - failed/degraded run 顯示 failure stage、processed prefix或 degraded scopes。
 - `NotApplicable`／`Unavailable(reason)` 不顯示成零。
 
-RLS-06 planned options（目前 parser 尚未開放）：
+目前支援的 output options：
 
 ```text
---format text|yaml
+--format human|json
+--quiet
+--no-color
 --orders
 --fills
 --positions
 --warnings
 ```
+
+最後四個 detail selector 仍未開放；它們不是 RLS-06 的 JSON envelope，也不能被當成
+目前 release contract。
 
 detail order 使用 canonical record order。missing attachment或 checksum mismatch
 使 inspect 回傳 data/integrity error，但仍可輸出已驗證 manifest diagnostics。
@@ -552,7 +575,7 @@ stdout：
 
 - stable stage summary。
 - user-requested `inspect` detail。
-- machine-readable output（`--format yaml`）不得混入 progress log。
+- machine-readable output（`--format json`）不得混入 progress log。
 
 stderr：
 
@@ -575,13 +598,14 @@ stderr：
 | Code | Category | 語意 |
 | --- | --- | --- |
 | `0` | `Success` | command 完整成功，或 help |
-| `10` | `DegradedSuccess` | 使用者事前明示 degraded policy且完成 |
-| `2` | `UsageOrConfig` | command syntax、config/schema/preflight error |
-| `20` | `DataUnavailableOrInvalid` | missing/building/incomplete/corrupt/checksum/manifest error |
-| `30` | `ExternalServiceOrNetwork` | Teralion/network/retry exhausted/credential service failure |
-| `40` | `VersionIncompatible` | source/cache/event/model/artifact version不相容 |
-| `50` | `ExecutionFailed` | strategy、simulation、arithmetic、accounting、reconciliation failure |
-| `1` | `Internal` | 未分類 internal/storage/panic failure；不得用於可分類 domain error |
+| `2` | `Usage` | command syntax、missing argument、unsupported option |
+| `10` | `Config` | config/schema/preflight/declaration error |
+| `20` | `Source` | Teralion、credential、network、source acquisition failure |
+| `21` | `Cache` | cache missing/build/rebuild/read failure |
+| `30` | `Replay` | event ordering、stream、replay lifecycle failure |
+| `40` | `Simulation` | strategy、fill、arithmetic、accounting、reconciliation failure |
+| `50` | `Integrity` | source/run/artifact checksum、manifest、corruption failure |
+| `1` | `Internal` | 未分類 internal/storage failure；不得用於可分類 domain error |
 
 Acceptance-only runner 的 historical fixture failure 由其 standalone test process
 處理；release config mode 必須使用上表的分類。

@@ -27,16 +27,34 @@ jobs:
         run: |
           tools/acceptance/run_m1_acceptance.sh \
             --output target/acceptance-m1-ci
+          tools/acceptance/verify_fixture_bundle.sh \
+            --bundle . \
+            --manifest fixtures/smoke/manifest.yaml
+          env CARGO_TARGET_DIR=target cargo build --release --locked \
+            --manifest-path tools/acceptance/osmium_fixture_data/Cargo.toml
+          target/release/osmium_fixture_data \
+            --config examples/smoke.yaml \
+            --fixtures fixtures/smoke/teralion \
+            --data-root target/smoke-data
+          env -u TERALION_API_KEY target/release/osmium \
+            data verify --config examples/smoke.yaml
+          env -u TERALION_API_KEY target/release/osmium \
+            cache prepare --config examples/smoke.yaml
+          env -u TERALION_API_KEY target/release/osmium \
+            replay --config examples/smoke.yaml
+          env -u TERALION_API_KEY target/release/osmium \
+            backtest --config examples/smoke.yaml --output target/smoke-run
+          env -u TERALION_API_KEY target/release/osmium \
+            inspect --run target/smoke-run
 
       - name: Build and smoke-test internal archive
         run: |
           tools/release/package.sh --output target/osmium-internal.tar.gz
-          staging=$(mktemp -d)
-          trap 'rm -rf "$staging"' EXIT
-          tar -xzf target/osmium-internal.tar.gz -C "$staging"
-          archive_root=$(tar -tzf target/osmium-internal.tar.gz | sed -n '1s#/$##p')
-          "$staging/$archive_root/bin/osmium" version
-          "$staging/$archive_root/bin/osmium" --help
+          tools/release/smoke_clean_machine.sh \
+            --archive target/osmium-internal.tar.gz \
+            --checksum target/osmium-internal.tar.gz.sha256
+          SOURCE_DATE_EPOCH=0 tools/release/verify_reproducibility.sh \
+            --output target/release-repro-ci
 
       - name: Upload acceptance evidence
         if: always()
@@ -48,5 +66,6 @@ jobs:
             target/acceptance-m1-ci.failed
             target/osmium-internal.tar.gz
             target/osmium-internal.tar.gz.sha256
+            target/release-repro-ci
           if-no-files-found: error
           retention-days: 30

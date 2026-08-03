@@ -32,6 +32,8 @@ use taifex_normalizer::NormalizerConfig as TaifexNormalizerConfig;
 use tpex_normalizer::NormalizerConfig as TpexNormalizerConfig;
 use twse_normalizer::NormalizerConfig as TwseNormalizerConfig;
 
+use crate::ExitCategory;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandKind {
     ConfigCheck,
@@ -42,6 +44,22 @@ pub enum CommandKind {
     Replay,
     Backtest,
     Run,
+}
+
+impl CommandKind {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::ConfigCheck => "config check",
+            Self::Plan => "plan",
+            Self::DataSync => "data sync",
+            Self::DataVerify => "data verify",
+            Self::CachePrepare => "cache prepare",
+            Self::Replay => "replay",
+            Self::Backtest => "backtest",
+            Self::Run => "run",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -668,7 +686,7 @@ pub enum CommandError {
 
 impl CommandError {
     #[must_use]
-    pub const fn exit_code(&self) -> u8 {
+    pub const fn category(&self) -> ExitCategory {
         match self {
             Self::Config(_)
             | Self::Query(_)
@@ -678,22 +696,28 @@ impl CommandError {
             | Self::State(_)
             | Self::Context(_)
             | Self::Strategy(_)
-            | Self::OutputRequired
-            | Self::UnsupportedStrategy => 2,
-            Self::Verify(_)
-            | Self::CacheBuild(_)
-            | Self::CacheRead(_)
-            | Self::Staging(_)
-            | Self::Artifact(_)
-            | Self::CacheMissing => 20,
-            Self::Transport(_) | Self::Sync(_) | Self::MissingCredential => 30,
-            Self::Replay(_)
-            | Self::Backtest(_)
+            | Self::UnsupportedStrategy
+            | Self::ReplayContextWindow(_) => ExitCategory::Config,
+            Self::OutputRequired => ExitCategory::Usage,
+            Self::Transport(_) | Self::Sync(_) | Self::MissingCredential | Self::Partition(_) => {
+                ExitCategory::Source
+            }
+            Self::CacheBuild(_) | Self::CacheRead(_) | Self::Staging(_) | Self::CacheMissing => {
+                ExitCategory::Cache
+            }
+            Self::Replay(_) => ExitCategory::Replay,
+            Self::Backtest(_)
             | Self::MultiBacktest(_)
             | Self::Simulation(_)
-            | Self::Accounting(_) => 50,
-            Self::Partition(_) | Self::Io(_) | Self::ReplayContextWindow(_) | Self::Other(_) => 1,
+            | Self::Accounting(_) => ExitCategory::Simulation,
+            Self::Verify(_) | Self::Artifact(_) => ExitCategory::Integrity,
+            Self::Io(_) | Self::Other(_) => ExitCategory::Internal,
         }
+    }
+
+    #[must_use]
+    pub const fn exit_code(&self) -> u8 {
+        self.category().exit_code()
     }
 }
 
@@ -747,8 +771,16 @@ mod tests {
     #[test]
     fn command_exit_codes_preserve_stable_failure_categories() {
         assert_eq!(CommandError::OutputRequired.exit_code(), 2);
-        assert_eq!(CommandError::CacheMissing.exit_code(), 20);
-        assert_eq!(CommandError::MissingCredential.exit_code(), 30);
+        assert_eq!(
+            CommandError::Config(osmium_config::ConfigError::Invalid("field")).exit_code(),
+            10
+        );
+        assert_eq!(CommandError::CacheMissing.exit_code(), 21);
+        assert_eq!(CommandError::MissingCredential.exit_code(), 20);
+        assert_eq!(
+            CommandError::Replay(replay_engine::ReplayError::EmptyUniverse).exit_code(),
+            30
+        );
         assert_eq!(CommandError::Other("internal".to_owned()).exit_code(), 1);
     }
 
