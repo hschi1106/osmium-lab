@@ -4,9 +4,9 @@ source_of_truth:
   description: 產品範圍、架構邊界、術語與交付優先順序
 
 repository_scope: release-tree
-distribution: private-internal
-delivery: binary-archive-or-installer
-crate_api_policy: internal-implementation-boundary
+distribution: public-release
+delivery: source-repository-and-binary-archive
+crate_api_policy: source-visible-unstable-library-api
 config_policy:
   current_schema: 2
   legacy_schema_1: rejected-with-upgrade-error

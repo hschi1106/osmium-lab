@@ -65,12 +65,12 @@ jobs:
           grep -q '"id": "example.price-threshold-buy-once"' \
             target/custom-strategy-smoke-run/strategy.json
 
-      - name: Build and smoke-test internal archive
+      - name: Build and smoke-test release archive
         run: |
-          tools/release/package.sh --output target/osmium-internal.tar.gz
+          tools/release/package.sh --output target/osmium-release.tar.gz
           tools/release/smoke_clean_machine.sh \
-            --archive target/osmium-internal.tar.gz \
-            --checksum target/osmium-internal.tar.gz.sha256
+            --archive target/osmium-release.tar.gz \
+            --checksum target/osmium-release.tar.gz.sha256
           SOURCE_DATE_EPOCH=0 tools/release/verify_reproducibility.sh \
             --output target/release-repro-ci
 
@@ -80,8 +80,8 @@ jobs:
         with:
           name: release-ci-${{ github.sha }}
           path: |
-            target/osmium-internal.tar.gz
-            target/osmium-internal.tar.gz.sha256
+            target/osmium-release.tar.gz
+            target/osmium-release.tar.gz.sha256
             target/release-repro-ci
           if-no-files-found: error
           retention-days: 30

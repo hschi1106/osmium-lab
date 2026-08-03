@@ -5,7 +5,7 @@ usage() {
     cat <<'EOF'
 Usage: tools/release/package.sh --output <archive.tar.gz> [--version <version>] [--target <target>]
 
-Builds the internal osmium binary archive. The archive contains the binary,
+Builds the osmium release binary archive. The archive contains the binary,
 neutral example/config documentation, release notes, license, and metadata only.
 Source data, raw dumps, target files, credentials, and acceptance payloads are excluded.
 The tar.gz bytes are deterministic when SOURCE_DATE_EPOCH is fixed.
@@ -120,9 +120,9 @@ cat >"$package_dir/BUILD-METADATA" <<EOF
 product: osmium
 version: $version
 target: $target
-distribution: private-internal
+distribution: public-release
 archive_contents: binary-and-documentation-only
-acceptance_payloads: separate-authorized-bundle
+acceptance_payloads: excluded
 source_date_epoch: ${SOURCE_DATE_EPOCH:-0}
 EOF
 

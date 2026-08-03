@@ -1,9 +1,9 @@
-# osmium 0.1.0 internal release
+# osmium 0.1.0 public release
 
 ## Distribution
 
-此版本只供 private/internal distribution。交付物是 target-specific binary archive；Rust
-crates 是 internal implementation boundary，不承諾 crates.io library API。
+此版本以 public source repository 與 target-specific binary archive 交付。Rust crates
+不承諾 crates.io 發布或穩定的第三方 library API。
 
 ## User-visible boundary
 

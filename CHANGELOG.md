@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 — internal release preparation
+## 0.1.0 — public release preparation
 
 - 建立 neutral `osmium-config` 與 `osmium-runner` production boundary。
 - 移除 M1/M2/M3 milestone crates 與 legacy config v1 parser。
@@ -12,7 +12,7 @@
 - 完成 RLS-06 JSON output/quiet/no-color 與 stable exit categories。
 - 加入 synthetic smoke fixture、fixture bundle package/fetch/verify flow，以及
   deterministic archive、offline installer、clean-machine/reproducibility checks。
-- archive 現在包含 CycloneDX SBOM 與 transitive third-party license inventory；新增內部
+- archive 現在包含 CycloneDX SBOM 與 transitive third-party license inventory；新增
   [support policy](docs/release/SUPPORT.md)。
 - 移除 historical increment／verification／milestone config 與舊 acceptance tooling；完整
   historical evidence 改由 Git history 或 external archive 保存。

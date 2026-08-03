@@ -12,7 +12,7 @@ run_config_version      = 2
 execution_plan_version  = 1
 run_manifest_version    = 2
 binary                  = osmium
-current_scope           = private/internal v2 multi-instrument offline replay and backtest
+current_scope           = public v2 multi-instrument offline replay and backtest
 ```
 
 本文固定 command spelling、config shape、stage side effects、exit status 與 artifacts。
@@ -45,8 +45,8 @@ current_scope           = private/internal v2 multi-instrument offline replay an
 ```
 
 Acceptance fixture runner 不掛在 release CLI。maintainer 使用
-`tools/acceptance/` 下的 standalone tools；完整日資料與 formal evidence 由 private
-bundle 管理，不提交至本 repository。
+`tools/acceptance/` 下的 standalone tools；完整日資料與 formal evidence 由 repository
+外、經授權的 bundle 管理，不提交至本 repository。
 
 所有 command 支援 `--help`。unknown option、缺少必要 argument 或互斥 argument 同時
 出現，回傳 usage error。
@@ -667,5 +667,5 @@ network-disabled, no-key:
 - acceptance-only fixture runner 與 release CLI boundary。
 
 compact fixture 的 repository gate 見
-[Release validation](../release/VALIDATION.md)；完整日 acceptance evidence 由 private
+[Release validation](../release/VALIDATION.md)；完整日 acceptance evidence 由經授權
 bundle 的外部報告保存。

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a deterministic gzip-compressed tar archive for an internal release."""
+"""Create a deterministic gzip-compressed tar archive for a release."""
 
 from __future__ import annotations
 
