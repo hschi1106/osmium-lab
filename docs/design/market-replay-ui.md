@@ -4,7 +4,7 @@
 
 ## 命令
 
-    osmium display --config config/m4-day-multi.yaml
+osmium display --config examples/config.yaml
 
 Release display 只接受目前的 `config_version: 2`，且只處理一個
 trading_date。執行前完成：

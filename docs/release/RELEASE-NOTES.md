@@ -17,6 +17,10 @@ crates 是 internal implementation boundary，不承諾 crates.io library API。
 - acceptance fixture builder 與 formal harness 不包含在 binary archive；需依 fixture
   manifest、checksum 與 authorization 另行取得。`tools/acceptance/fetch_fixture_bundle.sh`
   會驗證下載 archive 後才發布 local bundle。
+- repository 只保留 compact representative real-data slices；它們的 metadata 固定標示
+  `complete_day: false`。TWSE fixture 保留 `2330/2026-07-20`，`2026-07-27` 已移除。
+- `fixtures/acceptance/manifest.yaml` 仍定義 private full-day bundle 的 access boundary；
+  `tools/acceptance/verify_compact_fixtures.sh` 是目前 repository fixture gate。
 - archive 包含 deterministic `SHA256SUMS`、CycloneDX `SBOM.cdx.json` 與
   `THIRD-PARTY-LICENSES.txt`；`tools/release/install.sh` 支援無網路安裝。
 - 支援政策見 [SUPPORT.md](SUPPORT.md)。

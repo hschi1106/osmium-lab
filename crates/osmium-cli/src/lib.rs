@@ -629,14 +629,14 @@ mod tests {
         let parsed = parse_args([
             "replay".into(),
             "--config".into(),
-            "config/m5-option.yaml".into(),
+            "examples/config.yaml".into(),
         ])
         .unwrap();
         assert_eq!(
             parsed.command,
             ParsedCommand::Command(Command {
                 kind: CommandKind::Replay,
-                config: "config/m5-option.yaml".into(),
+                config: "examples/config.yaml".into(),
                 output: None,
             })
         );
@@ -688,13 +688,11 @@ mod tests {
             parse_args([
                 "display".into(),
                 "--config".into(),
-                "config/m4-day-multi.yaml".into(),
+                "examples/config.yaml".into(),
             ])
             .unwrap()
             .command,
-            ParsedCommand::MarketReplay(MarketReplayCommand::new(
-                "config/m4-day-multi.yaml".into()
-            ))
+            ParsedCommand::MarketReplay(MarketReplayCommand::new("examples/config.yaml".into()))
         );
         assert!(parse_args(["display".into()]).is_err());
         assert!(parse_args(["market".into(), "replay".into()]).is_err());
@@ -707,13 +705,13 @@ mod tests {
                 "cache".into(),
                 "prepare".into(),
                 "--config".into(),
-                "config/m3-taifex-three.yaml".into(),
+                "examples/config.yaml".into(),
             ])
             .unwrap()
             .command,
             ParsedCommand::Command(Command {
                 kind: CommandKind::CachePrepare,
-                config: "config/m3-taifex-three.yaml".into(),
+                config: "examples/config.yaml".into(),
                 output: None,
             })
         );

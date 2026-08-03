@@ -984,25 +984,22 @@ mod tests {
     use super::*;
 
     fn fixture() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/m3-taifex-multi.yaml")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/config.yaml")
     }
 
     #[test]
-    fn run_config_materializes_three_taifex_profiles_and_twse() {
+    fn run_config_materializes_the_representative_twse_profile() {
         let config = load(fixture()).unwrap();
-        assert_eq!(config.selections().len(), 4);
-        assert_eq!(config.effective().universe().len(), 4);
-        assert_eq!(
-            config.effective().session_kinds(),
-            &[SessionKind::Regular, SessionKind::AfterHours]
-        );
+        assert_eq!(config.selections().len(), 1);
+        assert_eq!(config.effective().universe().len(), 1);
+        assert_eq!(config.effective().session_kinds(), &[SessionKind::Regular]);
         assert_eq!(
             config.effective().simulation().latency(),
             run_planner::LatencyConfig::new(0, 0)
         );
         let bundle = plan(config).unwrap();
-        assert_eq!(bundle.execution.partitions().len(), 4);
-        assert_eq!(bundle.session_plans.len(), 4);
+        assert_eq!(bundle.execution.partitions().len(), 1);
+        assert_eq!(bundle.session_plans.len(), 1);
         assert!(
             bundle
                 .execution

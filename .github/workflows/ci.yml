@@ -25,8 +25,7 @@ jobs:
 
       - name: Run release and acceptance checks
         run: |
-          tools/acceptance/run_m1_acceptance.sh \
-            --output target/acceptance-m1-ci
+          tools/acceptance/verify_compact_fixtures.sh
           tools/acceptance/verify_fixture_bundle.sh \
             --bundle . \
             --manifest fixtures/smoke/manifest.yaml
@@ -60,10 +59,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: acceptance-m1-${{ github.sha }}
+          name: release-ci-${{ github.sha }}
           path: |
-            target/acceptance-m1-ci
-            target/acceptance-m1-ci.failed
             target/osmium-internal.tar.gz
             target/osmium-internal.tar.gz.sha256
             target/release-repro-ci

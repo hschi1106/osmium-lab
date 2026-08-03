@@ -17,7 +17,7 @@ fn effective_config_applies_defaults_and_canonicalizes_sets() {
     let mut config = run_config(
         vec![date("2026-07-27"), date("2026-07-27")],
         vec![instrument.clone(), instrument.clone()],
-        "target/m2-data",
+        "target/test-data",
     );
     config.session_kinds = vec![SessionKind::Regular, SessionKind::Regular];
     config.strategy = strategy_binding(
@@ -34,7 +34,7 @@ fn effective_config_applies_defaults_and_canonicalizes_sets() {
     assert_eq!(effective.source_policy(), SourcePolicy::Strict);
     assert_eq!(effective.cache_policy(), CachePolicy::ReuseOrRebuild);
     assert_eq!(effective.replay_data_policy(), ReplayDataPolicy::Strict);
-    assert_eq!(effective.data_root(), Path::new("target/m2-data"));
+    assert_eq!(effective.data_root(), Path::new("target/test-data"));
     assert!(effective.canonical_semantics().starts_with(b"OSECFG01"));
 }
 
@@ -61,7 +61,11 @@ fn semantic_checksum_excludes_data_root() {
 #[test]
 fn unsupported_config_version_is_rejected() {
     let instrument = instrument("2330");
-    let mut config = run_config(vec![date("2026-07-27")], vec![instrument], "target/m2-data");
+    let mut config = run_config(
+        vec![date("2026-07-27")],
+        vec![instrument],
+        "target/test-data",
+    );
     config.config_version = 99;
 
     assert_eq!(
@@ -73,7 +77,7 @@ fn unsupported_config_version_is_rejected() {
 #[test]
 fn strategy_declaration_must_match_effective_universe() {
     let selected = instrument("2330");
-    let mut config = run_config(vec![date("2026-07-27")], vec![selected], "target/m2-data");
+    let mut config = run_config(vec![date("2026-07-27")], vec![selected], "target/test-data");
     config.strategy = strategy_binding(vec![instrument("2317")], vec![SessionKind::Regular]);
 
     assert_eq!(
@@ -88,7 +92,7 @@ fn every_universe_instrument_requires_valid_economics() {
     let mut config = run_config(
         vec![date("2026-07-27")],
         vec![instrument.clone()],
-        "target/m2-data",
+        "target/test-data",
     );
     config.instrument_economics.clear();
 
@@ -104,7 +108,7 @@ fn negative_slippage_is_rejected_before_planning() {
     let mut config = run_config(
         vec![date("2026-07-27")],
         vec![instrument.clone()],
-        "target/m2-data",
+        "target/test-data",
     );
     let mut simulation = simulation();
     simulation = run_planner::SimulationConfig::new(
@@ -133,11 +137,14 @@ fn latency_is_part_of_effective_identity() {
     let zero = EffectiveRunConfig::resolve(run_config(
         vec![date("2026-07-27")],
         vec![instrument.clone()],
-        "target/m2-data",
+        "target/test-data",
     ))
     .unwrap();
-    let mut delayed_config =
-        run_config(vec![date("2026-07-27")], vec![instrument], "target/m2-data");
+    let mut delayed_config = run_config(
+        vec![date("2026-07-27")],
+        vec![instrument],
+        "target/test-data",
+    );
     delayed_config.simulation = delayed_config
         .simulation
         .with_latency(LatencyConfig::new(12, 34));
@@ -151,7 +158,11 @@ fn latency_is_part_of_effective_identity() {
 #[test]
 fn latency_that_cannot_fit_replay_time_is_rejected_before_planning() {
     let instrument = instrument("2330");
-    let mut config = run_config(vec![date("2026-07-27")], vec![instrument], "target/m2-data");
+    let mut config = run_config(
+        vec![date("2026-07-27")],
+        vec![instrument],
+        "target/test-data",
+    );
     config.simulation = config
         .simulation
         .with_latency(LatencyConfig::new(i64::MAX as u64, 0));
@@ -166,7 +177,7 @@ fn latency_that_cannot_fit_replay_time_is_rejected_before_planning() {
 fn economics_outside_universe_is_rejected() {
     let selected = instrument("2330");
     let outside = instrument("2317");
-    let mut config = run_config(vec![date("2026-07-27")], vec![selected], "target/m2-data");
+    let mut config = run_config(vec![date("2026-07-27")], vec![selected], "target/test-data");
     config.instrument_economics.push(economics(outside.clone()));
 
     assert_eq!(

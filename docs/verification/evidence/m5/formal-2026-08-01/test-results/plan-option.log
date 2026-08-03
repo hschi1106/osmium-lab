@@ -1,5 +1,0 @@
-plan_identity=383fb3759a118622fbb77fad817cbc8c0424abd5331c3293d48001b1d337be71
-network_requirement=NotRequired
-partitions=2
-partition[0]=Taifex/Symbol("TXFH6")@2026-07-28 sessions=[Regular, AfterHours] source_action=ReuseCompleteSource { revision: SourceRevisionIdentity([77, 219, 3, 82, 101, 50, 135, 27, 255, 137, 185, 215, 249, 46, 7, 255, 119, 106, 128, 164, 83, 252, 12, 83, 108, 255, 173, 54, 20, 72, 54, 232]) } cache_action=ReuseValidCache { identity: CacheIdentity([186, 91, 31, 195, 183, 207, 98, 223, 135, 4, 118, 74, 89, 199, 8, 24, 113, 157, 154, 150, 139, 41, 119, 198, 57, 194, 212, 59, 146, 52, 83, 216]) }
-partition[1]=Taifex/Symbol("TXO24000U6")@2026-07-28 sessions=[Regular, AfterHours] source_action=ReuseCompleteSource { revision: SourceRevisionIdentity([67, 56, 167, 109, 10, 227, 101, 102, 94, 217, 184, 19, 200, 179, 73, 71, 68, 2, 222, 162, 153, 8, 119, 71, 171, 146, 104, 95, 214, 168, 26, 37]) } cache_action=ReuseValidCache { identity: CacheIdentity([100, 14, 18, 221, 84, 20, 186, 187, 24, 50, 121, 109, 227, 194, 154, 20, 74, 247, 57, 216, 170, 117, 235, 67, 85, 200, 67, 14, 107, 145, 186, 59]) }

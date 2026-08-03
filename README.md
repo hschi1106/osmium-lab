@@ -60,24 +60,25 @@ cargo run -p osmium-cli -- inspect \
 
 ```sh
 cargo run --release -p osmium-cli -- display \
-  --config config/m4-day-multi.yaml
+  --config examples/config.yaml
 ```
 
 操作：`←/→` 切換標的、`Space` 暫停／繼續、`+/-` 切換固定速度、`R` 重設為 `1.0x`、`Q` 離開。
 
 VOLUME 圖以 `match_time` 的一分鐘桶加總 observed quantity，並以柱狀圖呈現。
 
-## Acceptance fixture tooling
+## Fixture tooling
 
-fixture runner 不屬於 release CLI。maintainer 若要驗證歷史 TWSE fixture，使用：
+repository 只保留小型 synthetic smoke fixture，以及各市場／狀態的 compact
+representative slices。real acceptance payload 不是完整交易日資料，且依
+`fixtures/acceptance/manifest.yaml` 的 private authorization policy 管理。
 
 ```sh
-tools/acceptance/run_m1_acceptance.sh \
-  --output target/acceptance-m1-local
+tools/acceptance/verify_compact_fixtures.sh
 ```
 
-其他 fixture builder／formal harness 皆位於 `tools/acceptance/`；release `osmium`
-不接受 `--fixture`。
+fixture builder 與 bundle fetch／verify 都是 maintainer tooling；release `osmium`
+不接受 `--fixture`，也不會在 replay 中隱式下載資料。
 
 ## 一次完成完整流程
 
@@ -131,5 +132,7 @@ deployment 提供。小型 synthetic smoke fixture 位於 `fixtures/smoke/`，�
 - [RunConfig reference](docs/config-reference.md)
 - [Local data layout](docs/data-layout.md)
 - [Market replay TUI 設計](docs/design/market-replay-ui.md)
+- [Release validation](docs/release/VALIDATION.md)
+- [Fixture policy](fixtures/README.md)
 - [Release cleanup](docs/release/release-cleanup.md)
 - [內部支援政策](docs/release/SUPPORT.md)

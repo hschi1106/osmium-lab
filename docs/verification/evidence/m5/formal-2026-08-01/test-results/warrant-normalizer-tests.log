@@ -1,9 +1,0 @@
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
-     Running tests/m5_fixture.rs (target/debug/deps/m5_fixture-c95acb00190aae13)
-
-running 2 tests
-test m5_warrant_profile_rejects_wrong_market_and_equity_profile_rejects_warrant_format ... ok
-test m5_warrant_fixture_normalizes_all_real_records ... ok
-
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-

@@ -13,5 +13,8 @@
 - 加入 synthetic smoke fixture、private fixture bundle package/fetch/verify flow，以及
   deterministic archive、offline installer、clean-machine/reproducibility checks。
 - archive 現在包含 CycloneDX SBOM 與 transitive third-party license inventory；新增內部
-  [support policy](docs/release/SUPPORT.md) 與 namespace review。
-- 保留 M1–M5 historical evidence，不把 acceptance payload 放入 binary archive。
+  [support policy](docs/release/SUPPORT.md)。
+- 移除 historical increment／verification／milestone config 與舊 acceptance tooling；完整
+  historical evidence 改由 Git history 或 external archive 保存。
+- 保留 `examples/config.yaml` 原樣，並將 real fixture 縮成 compact representative slices；
+  TWSE 保留 `2330/2026-07-20`、移除 `2330/2026-07-27`。
