@@ -1,0 +1,77 @@
+manifest_version: 2
+bundle_format_version: 1
+bundle_id: osmium-public-synthetic-fixtures-v1
+distribution_scope: synthetic-redistributable
+authorization:
+  required: false
+  transport: local
+payload_policy: repository-owned synthetic scenarios generated without market records
+entries:
+  - id: synthetic-twse-equity
+    path: fixtures/teralion/twse/SYNTH-TWSE-EQ/2026-07-20
+    market: twse
+    instrument_kind: equity
+    symbol: "SYNTH-TWSE-EQ"
+    trading_date: "2026-07-20"
+    sessions: [regular-quotes]
+    complete_day: false
+    record_count: 5
+    fixture_set_sha256: bc1b655914b682fb1b131c3de80cd0826d62c24d38201c57ecdf3f2d41f88926
+    redistribution: synthetic-redistributable
+  - id: synthetic-twse-warrant
+    path: fixtures/teralion/twse/SYNTH-TWSE-W/2026-07-20
+    market: twse
+    instrument_kind: warrant
+    symbol: "SYNTH-TWSE-W"
+    trading_date: "2026-07-20"
+    sessions: [regular-quotes]
+    complete_day: false
+    record_count: 3
+    fixture_set_sha256: b70e18df5df968f6fa8b75c12b1185d13b25e9fec40c3ddd0742f361e9e7d9b0
+    redistribution: synthetic-redistributable
+  - id: synthetic-tpex-equity
+    path: fixtures/teralion/tpex/SYNTH-TPEX-EQ/2026-07-20
+    market: tpex
+    instrument_kind: equity
+    symbol: "SYNTH-TPEX-EQ"
+    trading_date: "2026-07-20"
+    sessions: [regular-quotes]
+    complete_day: false
+    record_count: 5
+    fixture_set_sha256: 690ae3f86be4b97d19c5f42eb9372f318596d07db0a999ee66d506aa9046cb5f
+    redistribution: synthetic-redistributable
+  - id: synthetic-tpex-warrant
+    path: fixtures/teralion/tpex/SYNTH-TPEX-W/2026-07-20
+    market: tpex
+    instrument_kind: warrant
+    symbol: "SYNTH-TPEX-W"
+    trading_date: "2026-07-20"
+    sessions: [regular-quotes]
+    complete_day: false
+    record_count: 3
+    fixture_set_sha256: ce32952f8691bd4a61cc1b30248bf7ffddae16a0bbab570a9ea5f90e146fcf52
+    redistribution: synthetic-redistributable
+  - id: synthetic-taifex-future
+    path: fixtures/teralion/taifex/SYNTH-FUT/2026-07-20
+    market: taifex
+    source_market: taifex_fut
+    instrument_kind: future
+    symbol: "SYNTH-FUT"
+    trading_date: "2026-07-20"
+    sessions: [regular]
+    complete_day: false
+    record_count: 4
+    fixture_set_sha256: c8bade9c2fc4443de8469303ead33c7a04f2d064fc6e6304a3781ae095298af0
+    redistribution: synthetic-redistributable
+  - id: synthetic-taifex-option
+    path: fixtures/teralion/taifex/SYNTH-OPT/2026-07-20
+    market: taifex
+    source_market: taifex_opt
+    instrument_kind: option
+    symbol: "SYNTH-OPT"
+    trading_date: "2026-07-20"
+    sessions: [after-hours, regular]
+    complete_day: false
+    record_count: 7
+    fixture_set_sha256: a2438ebd6aba9bb49ba4098ea16759189809a1075f0472579ff234716e8cd221
+    redistribution: synthetic-redistributable
