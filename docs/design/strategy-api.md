@@ -23,7 +23,7 @@ serialization library。Rust 實作可以調整型別排列，但 public semanti
 
 - [產品需求](../product-requirements.md)
 - [Strategy 需求](../requirements/strategy.md)
-- [M1 TWSE replay](../increments/M1-twse-replay.md)
+- [User guide](../user-guide.md)
 - [Replay engine 設計](replay-engine.md)
 - [MarketState 設計](market-state.md)
 - [ADR-0003：Session window 與 strategy activation](../architecture/decisions/0003-session-windows-and-strategy-activation.md)
