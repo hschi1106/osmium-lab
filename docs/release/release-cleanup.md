@@ -154,6 +154,7 @@ osmium data verify --config <file>
 osmium cache prepare --config <file>
 osmium replay --config <file> [--output <directory>]
 osmium backtest --config <file> --output <new-directory>
+osmium display --config <file>
 osmium inspect --run <run-directory>
 ```
 
@@ -179,9 +180,10 @@ network side effect；若需要網路，必須在 summary 明示並要求使用�
 | `cache prepare` | no | new cache identity | 由 verified local source deterministic rebuild cache |
 | `replay` | no | new replay artifacts | 只執行 market state、strategy observation，不做 accounting |
 | `backtest` | no | new run directory | 執行 strategy、fill、fee/tax、accounting 與 artifacts |
+| `display` | no | no | 以只讀 TUI 依 `match_time` 播放 explicit universe 的歷史行情 |
 | `inspect` | no | no | 驗證並呈現 run/source/cache lineage |
 
-所有 command 應支援：
+所有 non-interactive command 應支援：
 
 - `--help`
 - `--format human|json`（machine-readable output 不與 human log 混用）
@@ -192,7 +194,21 @@ network side effect；若需要網路，必須在 summary 明示並要求使用�
 Release CLI 不提供 implicit online fallback。`replay`／`backtest` 缺資料時應明確
 要求先執行 `data sync` 或 `cache prepare`，不能在回播中途建立 HTTP client。
 
-### 5.3 CLI migration from current commands
+### 5.3 Display contract
+
+`display` 是只讀的 historical-market TUI，不是 strategy、simulation 或另一套 replay
+engine。它必須：
+
+- 使用已驗證的 local source／cache；啟動與播放不使用網路或 credential，也不寫入 run
+  directory。
+- 依 `match_time` 播放 explicit universe；標的切換不得改變 replay clock 或市場狀態。
+- 預設以 `1.0x` 播放，支援 pause、resume、固定倍率調整與標的切換。
+- 顯示目前標的、`match_time`、播放狀態、速度、簡單價格折線、同時間範圍成交量、完整
+  五檔與最新成交明細。
+- 不新增 strategy、撮合、queue position、imbalance 或 trade delta 語意；TUI display
+  logic 必須與 replay／market-state domain 分離。
+
+### 5.4 CLI migration from current commands
 
 目前 top-level `sync`、`verify`、`cache prepare`、`replay`、`backtest`、`inspect` 的
 行為是既有基礎；release cleanup 主要調整 namespace 與 help text：
@@ -326,6 +342,10 @@ Release candidate 必須通過：
 
 - `osmium --help`、`version`、`init`、`config check` 可用。
 - smoke fixture 可完成 plan、verify、cache prepare、replay、backtest、inspect。
+- `osmium display --config <file>` 可在已準備的 source/cache 上離線啟動只讀 TUI；預設
+  `1.0x`，支援 pause/resume、固定倍率調整與 explicit universe 標的切換，且切換不改變
+  replay clock 或市場狀態；畫面需包含標的、時間、狀態、速度、價格折線、成交量、完整
+  五檔與最新成交。
 - prepared source/cache 下，network-disabled replay/backtest 成功。
 - second run reuse source/cache，不重複下載或覆寫 complete source。
 - cache 刪除後可由 source deterministic rebuild。
