@@ -17,7 +17,7 @@
 
 ## Recorded metrics
 
-`tools/run_m3_acceptance.sh` 會在 `test-results/performance.yaml` 記錄：
+`tools/acceptance/run_m3_acceptance.sh` 會在 `test-results/performance.yaml` 記錄：
 
 ```yaml
 dataset: taifex-three
@@ -50,7 +50,7 @@ baseline 是同一 machine、同一 Rust toolchain、同一 fixture 與同一 co
 ## Reproduction
 
 ```sh
-tools/run_m3_acceptance.sh \
+tools/acceptance/run_m3_acceptance.sh \
   --output docs/verification/evidence/m3/formal-$(date +%Y-%m-%d)
 ```
 

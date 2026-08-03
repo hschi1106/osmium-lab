@@ -1,0 +1,22 @@
+[package]
+name = "osmium-fixture-data"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "osmium_fixture_data"
+path = "src/main.rs"
+
+[dependencies]
+data-sync = { path = "../../../crates/data-sync" }
+market-types = { path = "../../../crates/market-types" }
+osmium-config = { path = "../../../crates/osmium-config" }
+run-planner = { path = "../../../crates/run-planner" }
+serde_json = "1"
+strategy-api = { path = "../../../crates/strategy-api" }
+taifex-normalizer = { path = "../../../crates/normalizer/taifex" }
+tpex-normalizer = { path = "../../../crates/normalizer/tpex" }
+twse-normalizer = { path = "../../../crates/normalizer/twse" }
+
+[workspace]

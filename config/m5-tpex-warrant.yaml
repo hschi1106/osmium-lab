@@ -22,7 +22,7 @@ universe:
         units_per_trading_unit: 1000
         provenance: "TPEx warrant issue endpoint and Teralion daily instrument 2026-07-20"
 strategy:
-  id: acceptance.m3-multi-market
+  id: acceptance.multi-market
   version: "1"
   parameters: {}
 replay:

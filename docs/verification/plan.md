@@ -321,7 +321,7 @@ repository 提供的完整 M1 acceptance harness 會先執行上述 debug／rele
 比對完整 artifact bytes，並以 atomic rename 發布 evidence：
 
 ```sh
-tools/run_m1_acceptance.sh \
+tools/acceptance/run_m1_acceptance.sh \
   --output target/m1-acceptance
 ```
 
@@ -744,13 +744,15 @@ M3 以 `config_version: 2` materialize 每個 instrument／trading date partitio
 三商品 offline preparation 使用 committed fixture adapter：
 
 ```sh
-cargo run -p m3-config --bin m3_fixture_data -- \
+cargo build --release \
+  --manifest-path tools/acceptance/osmium_fixture_data/Cargo.toml
+target/release/osmium_fixture_data \
   --config config/m3-taifex-three.yaml \
   --fixtures fixtures/teralion \
   --data-root target/m3-taifex-data
 
 target/debug/osmium plan --config config/m3-taifex-three.yaml
-target/debug/osmium verify --config config/m3-taifex-three.yaml
+target/debug/osmium data verify --config config/m3-taifex-three.yaml
 target/debug/osmium cache prepare --config config/m3-taifex-three.yaml
 target/debug/osmium replay --config config/m3-taifex-three.yaml
 target/debug/osmium backtest --config config/m3-taifex-three.yaml --output target/m3-run
@@ -760,7 +762,7 @@ target/debug/osmium inspect --run target/m3-run
 正式 harness：
 
 ```sh
-tools/run_m3_acceptance.sh \
+tools/acceptance/run_m3_acceptance.sh \
   --output docs/verification/evidence/m3/formal-<UTC-date>
 ```
 
@@ -792,8 +794,8 @@ M4 使用 TPEx `6488` 2026-07-20 regular fixture，並以 shared-date TWSE 與�
 TAIFEX partition 做 regression。fixture integrity 與 offline materialization：
 
 ```sh
-tools/verify_m4_fixture.sh
-cargo run -p m3-config --bin m3_fixture_data -- \
+tools/acceptance/verify_m4_fixture.sh
+target/release/osmium_fixture_data \
   --config config/m4-tpex.yaml \
   --fixtures fixtures/teralion \
   --data-root target/m4-data
@@ -802,7 +804,7 @@ cargo run -p m3-config --bin m3_fixture_data -- \
 正式 network-disabled harness：
 
 ```sh
-tools/run_m4_acceptance.sh \
+tools/acceptance/run_m4_acceptance.sh \
   --output docs/verification/evidence/m4/formal-<UTC-date>
 ```
 

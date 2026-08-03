@@ -5,7 +5,7 @@ use strategy_api::SessionKind;
 
 use crate::partition::SessionPlanIdentity;
 
-/// Version of the exchange-calendar rules used by the built-in M3 profiles.
+/// Version of the exchange-calendar rules used by the built-in profiles.
 pub const SESSION_CALENDAR_VERSION: u16 = 1;
 /// Version of the profile definitions (instrument-to-session mapping).
 pub const SESSION_PROFILE_VERSION: u16 = 1;
@@ -26,7 +26,7 @@ pub enum SessionProfileId {
 }
 
 impl SessionProfileId {
-    /// Resolves the profile for the M3 acceptance instruments.
+    /// Resolves the built-in profile for an instrument.
     pub fn for_instrument(instrument: &InstrumentId) -> Result<Self, SessionPlanError> {
         let kind = match instrument.market() {
             MarketId::Twse | MarketId::Tpex => InstrumentKind::Equity,

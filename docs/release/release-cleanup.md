@@ -6,12 +6,18 @@
 結構、CLI、fixture 邊界、migration 規則與待辦事項。
 
 截至 2026-08-03，M1–M5 已完成 formal acceptance，並另外完成 TPEx warrant 的
-focused real-fixture acceptance；本文件是下一個 release cleanup 工作的設計與
-checklist，尚未代表 crate rename、舊 crate deletion 或 CLI migration 已完成。
+focused real-fixture acceptance。本輪 cleanup 已完成 production crate rename/deletion、
+current-schema-only config、CLI namespace 收斂、acceptance tooling 分離與 operations
+文件搬遷；binary archive、fixture authorization、JSON output 與 clean-machine packaging
+仍是後續 release gate。
 
 本文件不改寫歷史 milestone 文件、formal acceptance report、checksum 或 source
-provenance。歷史文件可以保留 `m1-*`、`m2-*`、`m3-*` 名稱；release source、public
+provenance。歷史文件可以保留 `m1-*`、`m2-*`、`m3-*` 名稱；release source、release
 CLI 與 production package 則不得再以 milestone 作為主要 identity。
+
+首個 release 的 distribution scope 已決定為 private/internal，交付形式以
+`osmium` binary archive／installer 為主。Rust crates 只作 internal implementation
+boundary，不承諾穩定的第三方 library API 或 crates.io 發布。
 
 ## 2. Release 目標
 
@@ -36,8 +42,8 @@ Release 必須維持產品需求的核心邊界：
 - 資料準備完成後，replay、backtest、inspect 預設不使用網路或 credential。
 
 Release cleanup 的目標不是重寫核心 domain，也不是新增市場；目標是移除 milestone
-命名造成的 public boundary、收斂 CLI、分離 acceptance tooling，並使安裝與使用流程
-可以獨立於 repository 歷史理解。
+命名造成的 implementation boundary、收斂 CLI、分離 acceptance tooling，並使安裝與
+使用流程可以獨立於 repository 歷史理解。
 
 ## 3. Target repository structure
 
@@ -45,7 +51,7 @@ Release cleanup 的目標不是重寫核心 domain，也不是新增市場；目
 
 ```text
 crates/
-  osmium-cli/              # public binary: osmium
+  osmium-cli/              # release binary: osmium (private/internal first release)
   osmium-config/           # versioned config parsing, validation and plan resolution
   osmium-runner/           # replay/backtest orchestration and run artifacts
   data-sync/               # source acquisition, cursor, source repository and cache build
@@ -63,6 +69,7 @@ crates/
 tools/
   acquisition/             # maintainer-only source acquisition helpers
   acceptance/               # maintainer-only fixture builders and formal harnesses
+  release/                  # internal archive packaging and release smoke checks
 
 fixtures/
   smoke/                   # small, explicitly redistributable CI/developer fixture
@@ -74,26 +81,28 @@ docs/
   verification/             # historical evidence and current release gates
 ```
 
-`osmium-cli` 是 release binary；Rust crates 是 implementation boundary，除非另有
-明確 API policy，不承諾它們是穩定的第三方 library API。`normalizer/*` 可以保留
-market-specific 名稱，因為它們描述 domain adapter，不是 delivery milestone。
+`osmium-cli` 是 release binary；首個 release 以 binary archive／installer 交付。Rust
+crates 是 implementation boundary，除非另有明確 API policy，不承諾它們是穩定的第三方
+library API，也不要求 crates.io packaging。`normalizer/*` 可以保留 market-specific
+名稱，因為它們描述 domain adapter，不是 delivery milestone。
 
 ### 3.2 Milestone crate migration
 
 | Current identity | Release identity | Action |
 | --- | --- | --- |
-| `crates/m3-config`、`M3Config`、`M3PlanBundle` | `osmium-config`、`RunConfig`、`PlanBundle` | 先搬移並改名；驗證完成後刪除 `crates/m3-config`、workspace member 與 milestone public types |
-| `crates/m2-config` | `osmium-config::legacy` 或 migration module | 將 `config_version: 1` 的讀取集中到 neutral config crate；migration 完成後刪除 `crates/m2-config` package |
-| `crates/m2-runner` | `osmium-runner` | 搬移 replay/backtest、inspection、artifact publication；驗證 checksum 後刪除 `crates/m2-runner` |
-| `crates/m1-runner` | `replay-engine` 或 `osmium-runner` module | 依責任合併；驗證完成後刪除 `crates/m1-runner`，不得保留 milestone production crate |
-| `m3_fixture_data` binary | `tools/acceptance/osmium_fixture_data` | 移出 production workspace；release source 不編譯原 binary，搬移完成後刪除原 target |
-| `M2Command`、`M2CommandKind` | `Command`、`CommandKind` | CLI parser 改用產品 workflow 命名 |
-| `M2AcceptanceStrategy` | acceptance-only strategy module | 不進 public strategy API；只保留 acceptance harness 所需 binding |
+| `crates/m3-config`、`M3Config`、`M3PlanBundle` | `osmium-config`、`RunConfig`、`PlanBundle` | 已搬移並改名；舊 workspace member、directory 與 public types 已移除 |
+| `crates/m2-config` | — | 未搬移 v1 parser；`osmium-config` 只接受 v2，release binary 對 v1 回傳穩定 upgrade error；package 已刪除 |
+| `crates/m2-runner` | `osmium-runner` | replay/backtest、inspection、artifact publication 已搬移；舊 package/directory 已移除 |
+| `crates/m1-runner` | `tools/acceptance/osmium_m1_runner` | acceptance runner 移出 production workspace；release binary 不再提供 fixture mode |
+| `m3_fixture_data` binary | `tools/acceptance/osmium_fixture_data` | 已移出 production workspace；fixture builder 以 standalone manifest 建置 |
+| `M2Command`、`M2CommandKind` | `Command`、`CommandKind` | 已改用產品 workflow 命名，並將 sync/verify 收斂至 `data` namespace |
+| `M2AcceptanceStrategy` | neutral acceptance strategy module | 已移除 v1 strategy；acceptance binding 改為 neutral，僅由 current runner/CLI 使用 |
 
 Migration 完成後，release workspace 必須刪除 `m1-*`、`m2-*` 與 `m3-*` production
 package、crate directory、workspace member 與其 public milestone types；release
-version 不保留這些 package 作為 alias。刪除只能發生在 replacement 已編譯、測試、
-打包並完成 reference search 之後；不能用 `git rm` 取代功能搬移。
+version 不保留這些 package 作為 alias。本輪已在 replacement 編譯、測試與 reference
+search 後完成刪除；binary packaging 仍由 RLS-08/RLS-12 驗證。未來刪除不能用 `git rm`
+取代功能搬移。
 
 刪除的目標是 release source tree，不是歷史 evidence：舊 package name 可以留在
 milestone 文件、既有 acceptance report 與 migration report 中，讓歷史 checksum
@@ -101,6 +110,10 @@ milestone 文件、既有 acceptance report 與 migration report 中，讓歷史
 
 歷史 evidence 中出現的舊 package name 不需重寫。新的 release evidence 必須使用
 neutral crate name，並在 migration report 中記錄 old-to-new mapping。
+
+首個 release 不維護 M2 config compatibility。`config/m2-twse-2330.yaml` 與其他
+`config_version: 1` 檔案只作 historical acceptance material；它們不是 release
+example，release binary 也不應以 legacy parser 讀取它們。
 
 ## 4. Release config boundary
 
@@ -113,8 +126,8 @@ Release 的 user-facing identity 是 `RunConfig`，不是 `M3Config`。YAML 的
 第一個 release cleanup 版本應：
 
 - 以 neutral parser 接受目前有效的 `config_version: 2`。
-- 將舊 `config_version: 1` 支援放在明確的 legacy migration path；migration 後使用
-  同一個 canonical `RunConfig`。
+- 不支援 `config_version: 1` migration；遇到 v1 時以穩定錯誤明確要求使用者升級至
+  目前 schema，不保留 legacy parser 或 migration module。
 - 拒絕 unknown fields、credential-bearing fields、invalid market/reference/economics
   combinations。
 - 將 instrument kind、underlying、expiry、strike、option side、currency、multiplier、
@@ -126,14 +139,15 @@ Release 的 user-facing identity 是 `RunConfig`，不是 `M3Config`。YAML 的
 ```text
 config file
   -> parse and validate
-  -> migrate legacy schema if explicitly allowed
+  -> accept current schema only
   -> resolve sessions, partitions, instruments and economics
   -> materialize effective config
   -> calculate plan identity
 ```
 
 `effective-config.yaml`、`execution-plan.yaml` 與 run manifest 必須使用 neutral
-terminology。舊名稱只能出現在 migration diagnostics 或歷史 evidence。
+terminology。舊名稱只能出現在歷史 evidence；release diagnostics 不應暴露 milestone
+config identity。
 
 目前的 `config/m5-tpex-warrant.yaml` 是 maintainer acceptance configuration，不是
 release example；它固定 TPEx `72328U`／`2026-07-20` 的 private fixture 與 contract
@@ -152,7 +166,7 @@ osmium plan --config <file>
 osmium data sync --config <file>
 osmium data verify --config <file>
 osmium cache prepare --config <file>
-osmium replay --config <file> [--output <directory>]
+osmium replay --config <file>
 osmium backtest --config <file> --output <new-directory>
 osmium display --config <file>
 osmium inspect --run <run-directory>
@@ -173,7 +187,7 @@ network side effect；若需要網路，必須在 summary 明示並要求使用�
 | --- | --- | --- | --- |
 | `version` | no | no | 顯示 binary、schema、event/cache compatibility versions |
 | `init` | no | new config only | 建立無 secret 的 config skeleton |
-| `config check` | no | no | 解析、migration、validation 與 effective config diagnostics |
+| `config check` | no | no | 解析目前 schema、validation 與 effective config diagnostics |
 | `plan` | no by default | no | 顯示 source/cache reuse 或 preparation action |
 | `data sync` | yes, explicit | source revision | 下載、驗證並 atomic publish complete source |
 | `data verify` | no | no | 重驗 source completeness、identity、checksum 與 compatibility |
@@ -183,13 +197,17 @@ network side effect；若需要網路，必須在 summary 明示並要求使用�
 | `display` | no | no | 以只讀 TUI 依 `match_time` 播放 explicit universe 的歷史行情 |
 | `inspect` | no | no | 驗證並呈現 run/source/cache lineage |
 
-所有 non-interactive command 應支援：
+RLS-06 的 target contract 是所有 non-interactive command 支援：
 
 - `--help`
 - `--format human|json`（machine-readable output 不與 human log 混用）
 - `--quiet`、`--no-color` 與明確 log level
 - stable non-zero exit code categories：usage、config、source、cache、replay、
   simulation、integrity、internal
+
+目前 implementation 已提供 `--help`、human-readable summary、namespace 與穩定主要
+exit categories；`--format`、`--quiet`、`--no-color` 與完整 machine-readable JSON
+仍列為 RLS-06 follow-up，不把未實作選項放入使用者 quickstart。
 
 Release CLI 不提供 implicit online fallback。`replay`／`backtest` 缺資料時應明確
 要求先執行 `data sync` 或 `cache prepare`，不能在回播中途建立 HTTP client。
@@ -229,8 +247,8 @@ current others   -> same spelling, neutral help and artifact terminology
 
 | Layer | Location | Release policy | Lifecycle |
 | --- | --- | --- | --- |
-| Smoke fixture | `fixtures/smoke/` | 可放入 source distribution；必須有 redistribution approval、metadata、checksum | 小型 CI／quickstart，immutable |
-| Acceptance fixture | `fixtures/acceptance/` 或獨立 bundle | 依 market authorization 決定；M5 目前為 private-internal-review-only，不預設隨 public release 發布 | 大型 formal verification，checksum pinning |
+| Smoke fixture | `fixtures/smoke/` | 可放入 private/internal source distribution；仍必須有 redistribution approval、metadata、checksum | 小型 CI／quickstart，immutable |
+| Acceptance fixture | `fixtures/acceptance/` 或獨立 bundle | private/internal access-controlled bundle；M5 目前為 private-internal-review-only，不進 unrestricted archive | 大型 formal verification，checksum pinning |
 | User source/cache | 使用者設定的 `data_root` | 不進 Git、不進 binary archive、不由 repository fixture 自動建立 | source 可重用；cache 可刪除重建 |
 
 目前 repository 的歷史 fixture path 可以保留以維持 evidence link；release bundle 不
@@ -250,8 +268,9 @@ current others   -> same spelling, neutral help and artifact terminology
 
 TPEx warrant 的 fixture metadata、daily instrument、source revision 與 focused
 network-disabled acceptance report 已提交，但 redistribution scope 仍是
-`private-internal-review-only`。因此它可以作為 release acceptance bundle 的 manifest
-entry，不能直接放進 public archive；RLS-01 與 RLS-07 完成前不得改變這個 scope。
+`private-internal-review-only`。因此它可以作為 private/internal acceptance bundle 的
+manifest entry，但不能直接放進 unrestricted binary archive；RLS-07 仍須完成 bundle
+的 authorization 與 verify flow。
 
 ### 6.2 不得進 release archive 的內容
 
@@ -263,25 +282,26 @@ entry，不能直接放進 public archive；RLS-01 與 RLS-07 完成前不得改
 
 ### 6.3 Fixture commands
 
-Public CLI 不需要知道 repository fixture path。Maintainer-only tooling 可以提供：
+Release CLI 不需要知道 repository fixture path。Maintainer-only tooling 可以提供：
 
 ```sh
-tools/acquisition/acquire_fixture.sh <selection>
-tools/acceptance/verify_fixtures.sh <manifest>
-tools/acceptance/build_source_cache.sh --config <file> --fixtures <bundle>
-tools/acceptance/run_formal.sh --output <evidence-directory>
+tools/acquisition/acquire_m5_fixtures.sh
+tools/acceptance/verify_m5_fixtures.sh
+cargo build --release \
+  --manifest-path tools/acceptance/osmium_fixture_data/Cargo.toml
+tools/acceptance/run_m5_acceptance.sh --output <evidence-directory>
 ```
 
-在 tools 尚未完成搬移前，TPEx warrant 的現行 maintainer harness 是：
+目前 TPEx warrant 的 maintainer harness 是：
 
 ```sh
-tools/run_tpex_warrant_acceptance.sh --output target/acceptance-tpex-warrant-<date>
+tools/acceptance/run_tpex_warrant_acceptance.sh --output target/acceptance-tpex-warrant-<date>
 ```
 
 它會在 network-disabled、credentials-absent 環境驗證 fixture integrity、source/cache
 lineage、replay、backtest、inspect、重跑 determinism、cache rebuild、debug/release
-一致性與 corruption rejection；release cleanup 應將這項能力搬到
-`tools/acceptance/`，而不是讓 public `osmium` runtime 依賴 repository script。
+一致性與 corruption rejection；這些能力維持在 `tools/acceptance/`，不讓 `osmium`
+runtime 依賴 repository script。
 
 這些工具的 source／fixture access policy 必須獨立於 `osmium` runtime；formal acceptance
 可以使用 sandbox 或其他 network-denial runner，但 release CLI 不應依賴它。
@@ -298,8 +318,10 @@ osmium-<version>-<target>/
   docs/config-reference.md
   docs/data-layout.md
   RELEASE-NOTES.md
+  BUILD-METADATA
+  DEPENDENCIES.txt
   SHA256SUMS
-  fixture-manifest.yaml       # metadata only unless separately approved
+  fixture-manifest.yaml       # metadata only; acceptance payload is separate and access-controlled
 ```
 
 Run output remains user-owned and is not bundled into the binary archive：
@@ -335,8 +357,12 @@ Release candidate 必須通過：
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo test --workspace`
 - `cargo build --release -p osmium-cli`
-- `cargo package` 或等價 release archive smoke test
-- clean environment 的 `cargo install`／binary invocation test
+- `tools/release/package.sh --output target/osmium-internal.tar.gz`
+- private/internal binary archive／installer smoke test
+- clean environment 由 binary archive／installer 安裝並執行 `osmium --help`／`version`
+
+首個 release 不以 `cargo package`、`cargo install` 或 crates.io library API 作為交付
+gate；Rust crates 仍須通過 workspace build/test，但不構成 user-facing package。
 
 ### CLI and data
 
@@ -358,34 +384,37 @@ Release candidate 必須通過：
 - corruption、unknown format、wrong market、missing economics 與 invalid config 都有
   stable failure evidence。
 - release archive、logs、manifest、run artifacts 與 Git history 不含 secret。
-- fixture license／redistribution scope 逐份 review；未授權資料不能標成 public release。
+- fixture license／redistribution scope 逐份 review；未授權資料不能進入 release
+  distribution。
 
-現階段已完成的是 milestone／extension acceptance，不是 release candidate gate：
+現階段已完成的是 production source cleanup 與 milestone／extension acceptance；仍不是
+完整 release candidate gate：
 `docs/verification/evidence/m5/tpex-warrant-2026-08-03/acceptance-report.yaml` 記錄
 TPEx warrant exact-symbol/date 的 real-fixture 結果；它證明 domain、source/cache 與
-offline determinism 邊界，不能取代 clean-machine install、package archive 或 public
-fixture distribution review。
+offline determinism 邊界，不能取代 clean-machine install、binary archive／installer
+或 private/internal fixture authorization review。
 
 ## 9. Release cleanup TODO
 
-以下項目仍是 release cleanup `todo`；TPEx warrant acceptance 已補足 release planning
-所需的 fixture evidence，但不會自動完成 distribution、crate migration 或 packaging
+以下項目是 release cleanup execution checklist；首個 release 的 distribution、schema
+compatibility 與 delivery policy 已在第 11 節固定。TPEx warrant acceptance 已補足
+release planning 所需的 fixture evidence，但不會自動完成 crate migration 或 packaging
 工作。完成後仍應各自使用小型、可 review 的 commit。
 
 | ID | 優先級 | Todo | 完成條件 |
 | --- | --- | --- | --- |
-| RLS-01 | P0 | 決定 release distribution scope：public、private 或 internal | fixture／source／license policy 有 signed-off decision |
-| RLS-02 | P0 | 建立 `osmium-config` 並搬移 `m3-config`／`m2-config` 行為 | config v1/v2 migration、plan identity、tests 通過 |
-| RLS-03 | P0 | 建立 `osmium-runner` 並搬移 `m2-runner` | replay/backtest/inspect artifact checksum 不變 |
-| RLS-04 | P0 | 移除 `m1-*`、`m2-*`、`m3-*` production workspace packages | `cargo metadata` 與 release tree 不再出現 milestone production crates |
-| RLS-05 | P0 | 將 `m3_fixture_data` 與 formal scripts 移到 `tools/acceptance` | production build 不編譯 acceptance-only binary |
-| RLS-06 | P1 | 收斂 CLI namespace、help、exit codes 與 JSON output | release CLI contract test 完整 |
-| RLS-07 | P1 | 定義 smoke fixture 與大型 acceptance bundle distribution（包含 TPEx warrant private scope） | manifest、checksum、authorization、download/verify flow 完整 |
-| RLS-08 | P1 | 建立 release CI 與 clean-machine install test | no-secret、offline、package、reproducibility gates 通過 |
-| RLS-09 | P1 | 更新 operations／quickstart／config reference | 使用者不需閱讀 M1–M5 文件即可完成一次 backtest |
-| RLS-10 | P2 | 建立 versioning、CHANGELOG、release notes 與 support policy | binary、schema、event/cache compatibility policy 發布 |
-| RLS-11 | P2 | 清理 historical code comments 與 public error names | production public surface 不再暴露 milestone terminology |
-| RLS-12 | P2 | 產生 release archive、SBOM／license inventory 與 checksums | archive 可驗證、可安裝、可重現 |
+| RLS-01 | P0 | [完成] 首個 release 採 private/internal distribution | decision 已記錄於第 11 節；fixture authorization 仍由 RLS-07 管理 |
+| RLS-02 | P0 | [完成] 建立 `osmium-config` 並搬移 current config 行為 | v2 parser、v1 rejection、plan identity、focused tests 通過 |
+| RLS-03 | P0 | [完成] 建立 `osmium-runner` 並搬移 runner 行為 | runner package 已 neutral；workspace/release tests 驗證中，checksum gate 仍由 RLS-08 收尾 |
+| RLS-04 | P0 | [完成] 移除 `m1-*`、`m2-*`、`m3-*` production workspace packages | `cargo metadata` 與 production tree 不再包含 milestone crates |
+| RLS-05 | P0 | [完成] 將 fixture builder 與 formal scripts 移到 `tools/acceptance` | production workspace 不編譯 acceptance-only binary |
+| RLS-06 | P1 | [進行中] 收斂 CLI namespace、help、exit codes 與 JSON output | namespace/help/legacy rejection 已完成；JSON/format contract 尚待補齊 |
+| RLS-07 | P1 | [進行中] 定義 smoke fixture 與 private/internal acceptance bundle distribution（包含 TPEx warrant private scope） | acceptance manifest/checksum 已建立；access authorization、download/verify flow 尚待完成 |
+| RLS-08 | P1 | [進行中] 建立 release CI 與 binary archive／installer clean-machine install test | CI archive smoke 已加入；installer、offline/reproducibility gates 尚待完成 |
+| RLS-09 | P1 | [完成] 更新 operations／quickstart／config reference | README、quickstart、config reference、data layout 與 operations docs 已更新 |
+| RLS-10 | P2 | [進行中] 建立 versioning、CHANGELOG、release notes 與 support policy | CHANGELOG/release notes 已建立；support policy 尚待發布 |
+| RLS-11 | P2 | [進行中] 清理 historical code comments 與 public error names | production public error/comments 已 neutral；remaining historical references 需分類 review |
+| RLS-12 | P2 | [進行中] 產生 release archive、SBOM／license inventory 與 checksums | archive/checksum/package script 已完成；SBOM 與完整 license inventory 尚待完成 |
 
 ## 10. Definition of done
 
@@ -393,26 +422,34 @@ Release cleanup 完成時必須同時滿足：
 
 - production workspace 沒有 `m1-*`、`m2-*`、`m3-*` crate 或 public type。
 - neutral config／runner crate 通過完整 workspace、release、offline acceptance。
-- `osmium` 可以在 clean machine 由 documented command 安裝並顯示 help/version。
+- 首個 release 以 binary archive／installer 交付；`osmium` 可以在 clean machine 由
+  documented command 安裝並顯示 help/version。
+- `osmium` 只接受目前 schema；`config_version: 1` 以明確錯誤拒絕，不提供 M2 config
+  compatibility。
 - 使用者以一份 neutral config 可完成 data check、cache preparation、replay/backtest
   與 inspect。
-- smoke fixture 可取得；大型或私有 acceptance fixture 有獨立 manifest 與權限邊界。
+- smoke fixture 可由 private/internal distribution 取得；大型或私有 acceptance
+  fixture 有獨立 manifest 與權限邊界。
 - release archive 不含 raw dump、target、secret、未授權資料或 repository absolute path。
 - source/cache/run artifact schema、checksum 與 accounting identity 可向前追溯。
 - M1–M5 historical evidence 與 traceability links 維持可讀，並新增 release acceptance
   report。
 
-## 11. Decisions required before implementation
+## 11. Release decisions fixed before implementation
 
-在開始 RLS-02 之前需要固定三個 product decision：
+以下三項 product decision 已固定，並作為 RLS-02 之後 implementation 的邊界：
 
-1. 首個 release 是 public distribution 還是 private/internal distribution？這會決定
-   M5 acceptance fixtures 是否能隨 bundle 提供。目前 TPEx warrant fixture 明確維持
-   `private-internal-review-only`，在 decision 前不可進 public archive。
-2. 是否需要在首個 release 支援 `config_version: 1` migration，或直接要求使用者升級
-   至目前 schema？
-3. 首個 release 是 binary archive／installer 優先，還是同時承諾 crates.io library
-   API？若沒有 library API 承諾，Rust crates 應保持 internal implementation boundary。
+1. 首個 release 採 private/internal distribution，使用 access-controlled binary
+   archive／installer；不做 unrestricted public release。M5 acceptance fixtures 依各自
+   authorization 提供，TPEx warrant 維持 `private-internal-review-only`，不直接放入
+   unrestricted archive。
+2. 首個 release 不維護 M2 `config_version: 1` compatibility。只接受目前的
+   `config_version: 2` schema；遇到 v1 時以穩定、可操作的錯誤要求使用者升級，不保留
+   legacy parser、migration module 或 v1 writer。M2 v1 configs 與 evidence 仍可保留
+   作為歷史追溯資料。
+3. 首個 release 以 binary archive／installer 為優先交付形式。`osmium` binary 是
+   user-facing product；Rust crates 維持 internal implementation boundary，不承諾
+   crates.io 發布或穩定的第三方 library API。
 
-這三項決定完成前，不應刪除 acceptance evidence，也不應將 large/private fixture
-直接移入 public distribution。
+這些決定不授權刪除 acceptance evidence，也不改變既有 fixture 的 redistribution
+scope；它們只固定 release package、config compatibility 與 public API 的邊界。

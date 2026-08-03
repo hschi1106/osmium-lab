@@ -1,8 +1,8 @@
 use std::{env, process::ExitCode};
 
 use osmium_cli::{
-    ParsedCommand, USAGE, execute_m2, execute_m2_inspect, execute_market_replay, execute_replay,
-    parse_args,
+    ParsedCommand, USAGE, execute, execute_config_check, execute_inspect, execute_market_replay,
+    init_config, parse_args,
 };
 
 fn main() -> ExitCode {
@@ -11,19 +11,24 @@ fn main() -> ExitCode {
             print!("{USAGE}");
             ExitCode::SUCCESS
         }
-        Ok(ParsedCommand::Replay(command)) => match execute_replay(&command) {
-            Ok(outcome) => {
-                let summary = outcome.summary();
-                println!("M1 TWSE replay completed");
-                println!("input_records={}", summary.input_record_count);
-                println!("normalized_events={}", summary.normalized_event_count);
-                println!("strategy_callbacks={}", summary.callback_count);
-                println!(
-                    "strategy_output_records={}",
-                    summary.strategy_output_record_count
-                );
-                println!("warnings={}", summary.warning_count);
-                println!("output={}", outcome.output_directory().display());
+        Ok(ParsedCommand::Version) => {
+            println!("osmium {}", env!("CARGO_PKG_VERSION"));
+            println!("config_schema={}", osmium_config::RUN_CONFIG_VERSION);
+            ExitCode::SUCCESS
+        }
+        Ok(ParsedCommand::Init(path)) => match init_config(&path) {
+            Ok(()) => {
+                println!("config={}", path.display());
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("error: {error}");
+                ExitCode::from(error.exit_code())
+            }
+        },
+        Ok(ParsedCommand::ConfigCheck(path)) => match execute_config_check(&path) {
+            Ok(summary) => {
+                println!("{summary}");
                 ExitCode::SUCCESS
             }
             Err(error) => {
@@ -38,7 +43,7 @@ fn main() -> ExitCode {
                 ExitCode::from(error.exit_code())
             }
         },
-        Ok(ParsedCommand::M2(command)) => match execute_m2(&command) {
+        Ok(ParsedCommand::Command(command)) => match execute(&command) {
             Ok(summary) => {
                 println!("{summary}");
                 ExitCode::SUCCESS
@@ -48,7 +53,7 @@ fn main() -> ExitCode {
                 ExitCode::from(error.exit_code())
             }
         },
-        Ok(ParsedCommand::Inspect(run)) => match execute_m2_inspect(&run) {
+        Ok(ParsedCommand::Inspect(run)) => match execute_inspect(&run) {
             Ok(summary) => {
                 println!("{summary}");
                 ExitCode::SUCCESS

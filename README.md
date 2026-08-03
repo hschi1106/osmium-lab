@@ -5,13 +5,14 @@ Rust market replay 與 backtesting platform，支援 Teralion market data、veri
 ## 環境
 
 - Rust toolchain 與 Cargo
-- `config/` 內的 YAML 設定檔
+- `config_version: 2` 的 YAML `RunConfig`
 - 需要下載資料時，可在 `.env` 設定 `TERALION_API_KEY`
 
 所有 CLI 指令都可用 `--help` 查看參數：
 
 ```sh
 cargo run -p osmium-cli -- --help
+cargo run -p osmium-cli -- version
 cargo run -p osmium-cli -- display --help
 ```
 
@@ -24,14 +25,16 @@ cargo run -p osmium-cli -- display --help
 cp .env.example .env
 # 編輯 .env，填入 TERALION_API_KEY
 
+cargo run -p osmium-cli -- config check \
+  --config examples/config.yaml
 cargo run -p osmium-cli -- plan \
-  --config config/m2-twse-2330.yaml
-cargo run -p osmium-cli -- sync \
-  --config config/m2-twse-2330.yaml
-cargo run -p osmium-cli -- verify \
-  --config config/m2-twse-2330.yaml
+  --config examples/config.yaml
+cargo run -p osmium-cli -- data sync \
+  --config examples/config.yaml
+cargo run -p osmium-cli -- data verify \
+  --config examples/config.yaml
 cargo run -p osmium-cli -- cache prepare \
-  --config config/m2-twse-2330.yaml
+  --config examples/config.yaml
 ```
 
 ## 離線回播與回測
@@ -40,20 +43,20 @@ cargo run -p osmium-cli -- cache prepare \
 
 ```sh
 cargo run --release -p osmium-cli -- replay \
-  --config config/m2-twse-2330.yaml \
-  --output target/m2-replay
+  --config examples/config.yaml
 cargo run --release -p osmium-cli -- backtest \
-  --config config/m2-twse-2330.yaml \
-  --output target/m2-backtest
+  --config examples/config.yaml \
+  --output target/example-backtest
 cargo run -p osmium-cli -- inspect \
-  --run target/m2-backtest
+  --run target/example-backtest
 ```
 
 `--output` 必須指定尚不存在的新目錄。
 
 ## 日盤歷史行情 TUI
 
-使用日盤 config `config/m4-day-multi.yaml` 啟動台指、2330 與 TPEx 6488 的互動式歷史行情回播；執行前須完成 `verify` 與 `cache prepare`：
+使用已準備 source/cache 的 v2 config 啟動互動式歷史行情回播；執行前須完成
+`data verify` 與 `cache prepare`：
 
 ```sh
 cargo run --release -p osmium-cli -- display \
@@ -64,17 +67,17 @@ cargo run --release -p osmium-cli -- display \
 
 VOLUME 圖以 `match_time` 的一分鐘桶加總 observed quantity，並以柱狀圖呈現。
 
-## M1 fixture replay
+## Acceptance fixture tooling
 
-已有 fixture 時可離線直接回播，不需要 source、cache 或 API key：
+fixture runner 不屬於 release CLI。maintainer 若要驗證歷史 TWSE fixture，使用：
 
 ```sh
-cargo run --release -p osmium-cli -- replay \
-  --fixture <fixture-directory> \
-  --output target/m1-replay
+tools/acceptance/run_m1_acceptance.sh \
+  --output target/acceptance-m1-local
 ```
 
-`--fixture` 與 `--config` 互斥。
+其他 fixture builder／formal harness 皆位於 `tools/acceptance/`；release `osmium`
+不接受 `--fixture`。
 
 ## 一次完成完整流程
 
@@ -82,13 +85,29 @@ cargo run --release -p osmium-cli -- replay \
 
 ```sh
 cargo run --release -p osmium-cli -- run \
-  --config config/m2-twse-2330.yaml \
-  --output target/m2-run
+  --config examples/config.yaml \
+  --output target/example-run
 ```
+
+## 建立 internal binary archive
+
+首個 release 以 private/internal binary archive 交付；archive 不包含 raw data、target、
+`.env` 或 acceptance payload：
+
+```sh
+tools/release/package.sh \
+  --output target/osmium-internal.tar.gz
+```
+
+腳本同時產生 `<archive>.sha256`，並將 neutral example、文件、fixture manifest 與
+dependency inventory 放入 archive。
 
 完整需求、CLI 契約與驗收資料：
 
 - [產品需求](docs/product-requirements.md)
 - [CLI 操作說明](docs/operations/cli.md)
+- [Quickstart](docs/quickstart.md)
+- [RunConfig reference](docs/config-reference.md)
+- [Local data layout](docs/data-layout.md)
 - [Market replay TUI 設計](docs/design/market-replay-ui.md)
-- [M2 reference acceptance](docs/verification/m2-acceptance.md)
+- [Release cleanup](docs/release/release-cleanup.md)

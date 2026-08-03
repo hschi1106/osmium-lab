@@ -2,13 +2,13 @@
 
 ## 1. 文件目的
 
-本文件定義 M2/M3 本地來源資料、staging、replay cache 與 run artifacts 的目錄布局、
+本文件定義 release run config 的本地來源資料、staging、replay cache 與 run artifacts 的目錄布局、
 操作流程、修復方式及安全邊界。它讓使用者能判斷哪些資料可重用、哪些衍生檔可刪除，
 以及中斷或損壞後應如何恢復。
 
 ```text
 local_data_contract_version = 2
-current_scope               = M2 TWSE 2330 + M3 TWSE/TAIFEX partitioned source and cache
+current_scope               = v2 TWSE/TPEx/TAIFEX partitioned source and cache
 ```
 
 資料內容及狀態演算法由 [Data Sync 設計](../design/data-sync.md)定義；CLI command
@@ -30,7 +30,7 @@ source revision 不是 cache，cache 也不能取代 source provenance。刪除 
 
 ## 3. Data root layout
 
-M2 使用單一 user-configured `data_root`。推薦布局：
+Release 使用單一 user-configured `data_root`。推薦布局：
 
 ```text
 <data_root>/
@@ -79,14 +79,14 @@ M2 使用單一 user-configured `data_root`。推薦布局：
 - directory traversal order 不參與任何 checksum 或事件排序。
 - manifest 與 descriptor 內保存 relative logical identity；machine-specific absolute
   path 只可出現在非 canonical diagnostics。
-- M2 不使用 symlink 作 correctness boundary；`current.yaml` 保存 revision identity，
+- Release 不使用 symlink 作 correctness boundary；`current.yaml` 保存 revision identity，
   reader 必須重新驗證它指向同 partition。
 
 repository 的 `fixtures/` 是 committed acceptance fixture，不是使用者的
-`data_root`，也不是 M2 live source catalog。M1 `--fixture` workflow 不得自動掃描
-或修改 M2 data root。
+`data_root`，也不是 live source catalog。release CLI 不接受 `--fixture`，也不得自動
+掃描或修改 user data root。
 
-M3 使用相同 contract 的 partitioned layout；每個 instrument/date/session selection
+多商品 run 使用相同 contract 的 partitioned layout；每個 instrument/date/session selection
 有獨立 source current pointer 與 cache identity：
 
 ```text
@@ -213,16 +213,16 @@ zstd --decompress --stdout <page>.json.zst | <read-only-inspection-command>
 `Complete`。
 
 `ExplicitDegraded` 只能針對 plan 已列出的 incomplete scope，不能接受 corrupt
-revision。M2 reference acceptance 必須使用 `Strict`。
+revision。Reference acceptance 必須使用 `Strict`。
 
 ## 6. 常見操作
 
 ### 6.1 第一次準備資料
 
 ```text
-osmium plan   --config <file>
-osmium sync   --config <file>
-osmium verify --config <file>
+osmium plan        --config <file>
+osmium data sync   --config <file>
+osmium data verify --config <file>
 ```
 
 完成後檢查 plan／sync／verify summary：
@@ -264,7 +264,7 @@ cache 可以安全刪除單一明確 target：
 - 產生相同 cache payload checksum。
 
 不要以 recursive broad target 刪除整個 `data_root`、`source/` 或使用 unresolved
-glob。M2 CLI 若未提供專用 cache-prune command，刪除由操作者對已 inspect 的完整
+glob。CLI 若未提供專用 cache-prune command，刪除由操作者對已 inspect 的完整
 cache identity 執行。
 
 ### 6.4 Interrupted sync
@@ -308,7 +308,7 @@ incomplete。
 
 ## 7. Run artifacts
 
-M2 run output 不得發布到 cache/source directory。`--output` 必須是不存在的新
+Run output 不得發布到 cache/source directory。`--output` 必須是不存在的新
 directory，publisher 先在同一 parent 建 staging，成功後 atomic rename。
 
 successful backtest 至少包含：

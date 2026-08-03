@@ -147,7 +147,7 @@ pub enum TeralionQuery {
         end: ArchiveTimestamp,
         kinds: Box<[ArchiveKind]>,
         limit: u16,
-        /// `None` preserves the original query identity. M5 sets this for
+        /// `None` preserves the original query identity. Warrant queries set this for
         /// `taifex_opt` so options cannot be read as futures.
         archive_market: Option<ArchiveMarket>,
     },

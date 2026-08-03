@@ -80,9 +80,9 @@ m5_trace:
     - crates/normalizer/taifex/src/lib.rs
     - crates/market-state/src/profile.rs
     - crates/run-planner/src/session.rs
-    - crates/m3-config/src/lib.rs
-    - crates/m3-config/src/bin/m3_fixture_data.rs
-    - crates/osmium-cli/src/m2.rs
+    - crates/osmium-config/src/lib.rs
+    - tools/acceptance/osmium_fixture_data/src/main.rs
+    - crates/osmium-cli/src/command.rs
     - crates/execution-sim/src/accounting.rs
   configuration:
     - config/m5-warrant.yaml
@@ -92,12 +92,12 @@ m5_trace:
     - fixtures/teralion/twse/03003T/2026-07-20
     - fixtures/teralion/taifex/TXO24000U6/2026-07-28
     - fixtures/teralion/tpex/72328U/2026-07-20
-    - tools/acquire_m5_fixtures.sh
-    - tools/extract_m5_fixtures.rs
-    - tools/extract_tpex_fixture.rs
-    - tools/verify_m5_fixtures.sh
-    - tools/run_m5_acceptance.sh
-    - tools/run_tpex_warrant_acceptance.sh
+    - tools/acquisition/acquire_m5_fixtures.sh
+    - tools/acquisition/extract_m5_fixtures.rs
+    - tools/acquisition/extract_tpex_fixture.rs
+    - tools/acceptance/verify_m5_fixtures.sh
+    - tools/acceptance/run_m5_acceptance.sh
+    - tools/acceptance/run_tpex_warrant_acceptance.sh
   extension_tests:
     - crates/normalizer/tpex/tests/m5_warrant_fixture.rs
   interface_documents:
@@ -189,20 +189,20 @@ m3_trace:
     - crates/data-sync/src/query.rs
     - crates/data-sync/src/cursor.rs
     - crates/data-sync/src/cache.rs
-    - crates/m3-config/src/bin/m3_fixture_data.rs
-    - crates/osmium-cli/src/m2.rs
+    - tools/acceptance/osmium_fixture_data/src/main.rs
+    - crates/osmium-cli/src/command.rs
     - crates/osmium-cli/src/lib.rs
-    - crates/m2-runner/src/lib.rs
+    - crates/osmium-runner/src/lib.rs
     - crates/execution-sim/src/accounting.rs
-    - tools/acquire_m3_twse_fixture.sh
-    - tools/extract_twse_fixture.rs
+    - tools/acquisition/acquire_m3_twse_fixture.sh
+    - tools/acquisition/extract_twse_fixture.rs
     - fixtures/teralion/twse/2330/2026-07-20
   configuration:
     - config/m3-taifex-three.yaml
     - config/m3-taifex-multi.yaml
   operational_tools:
-    - tools/verify_m3_fixtures.sh
-    - tools/run_m3_acceptance.sh
+    - tools/acceptance/verify_m3_fixtures.sh
+    - tools/acceptance/run_m3_acceptance.sh
   acceptance_scope:
     passed:
       - M3-AC-01
@@ -229,8 +229,8 @@ m4_trace:
     - crates/normalizer/tpex/src/lib.rs
     - crates/market-types/src/annotations.rs
     - crates/data-sync/src/cache.rs
-    - crates/m3-config/src/bin/m3_fixture_data.rs
-    - crates/osmium-cli/src/m2.rs
+    - tools/acceptance/osmium_fixture_data/src/main.rs
+    - crates/osmium-cli/src/command.rs
     - crates/market-state/src/profile.rs
     - crates/replay-engine/src/ordering.rs
     - crates/strategy-api/src/context.rs
@@ -240,10 +240,10 @@ m4_trace:
   fixture_and_tools:
     - docs/interfaces/tpex.md
     - fixtures/teralion/tpex/6488/2026-07-20
-    - tools/acquire_m4_tpex_fixture.sh
-    - tools/extract_tpex_fixture.rs
-    - tools/verify_m4_fixture.sh
-    - tools/run_m4_acceptance.sh
+    - tools/acquisition/acquire_m4_tpex_fixture.sh
+    - tools/acquisition/extract_tpex_fixture.rs
+    - tools/acceptance/verify_m4_fixture.sh
+    - tools/acceptance/run_m4_acceptance.sh
   formal_evidence: docs/verification/evidence/m4/formal-2026-08-01/acceptance-report.yaml
   acceptance_scope:
     passed:
@@ -846,7 +846,7 @@ requirements:
       - docs/verification/evidence/m2/refreshed-2026-07-31.yaml
     implementation_paths:
       - crates/data-sync/src/storage.rs
-      - crates/m2-config/src/lib.rs
+      - crates/osmium-config/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
@@ -900,7 +900,7 @@ requirements:
       - crates/market-types/src/event.rs
       - crates/normalizer/twse/src/lib.rs
       - crates/normalizer/taifex/src/lib.rs
-      - crates/m1-runner/src/lib.rs
+      - tools/acceptance/osmium_m1_runner/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
@@ -942,7 +942,7 @@ requirements:
     implementation_paths:
       - crates/replay-engine/src/ordering.rs
       - crates/replay-engine/src/engine.rs
-      - crates/m1-runner/src/lib.rs
+      - tools/acceptance/osmium_m1_runner/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
@@ -1039,7 +1039,7 @@ requirements:
       - crates/replay-engine/src/engine.rs
       - crates/strategy-api/src/runner.rs
       - crates/strategy-api/src/strategy.rs
-      - crates/m2-runner/src/lib.rs
+      - crates/osmium-runner/src/lib.rs
       - crates/execution-sim/src/lib.rs
     lifecycle:
       specification: complete
@@ -1084,7 +1084,7 @@ requirements:
     implementation_paths:
       - crates/replay-engine/src/stream.rs
       - crates/data-sync/src/cache.rs
-      - crates/m2-runner/src/lib.rs
+      - crates/osmium-runner/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
@@ -1133,9 +1133,9 @@ requirements:
       - crates/normalizer/twse/src/lib.rs
       - crates/normalizer/taifex/src/lib.rs
       - crates/replay-engine/src/engine.rs
-      - crates/m1-runner/src/lib.rs
+      - tools/acceptance/osmium_m1_runner/src/lib.rs
       - crates/data-sync/src/verify.rs
-      - crates/osmium-cli/src/m2.rs
+      - crates/osmium-cli/src/command.rs
     lifecycle:
       specification: complete
       design: partial
@@ -1190,7 +1190,7 @@ requirements:
       - crates/strategy-api/src/example.rs
       - crates/strategy-api/src/orders.rs
       - crates/strategy-api/src/m2_acceptance.rs
-      - crates/m2-runner/src/lib.rs
+      - crates/osmium-runner/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
@@ -1230,7 +1230,7 @@ requirements:
       - docs/verification/evidence/m2/refreshed-2026-07-31.yaml
     implementation_paths:
       - crates/execution-sim/src/lib.rs
-      - crates/m2-runner/src/lib.rs
+      - crates/osmium-runner/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
@@ -1267,7 +1267,7 @@ requirements:
       - docs/verification/evidence/m2/refreshed-2026-07-31.yaml
     implementation_paths:
       - crates/execution-sim/src/accounting.rs
-      - crates/m2-runner/src/artifacts.rs
+      - crates/osmium-runner/src/artifacts.rs
     lifecycle:
       specification: complete
       design: partial
@@ -1305,11 +1305,11 @@ requirements:
     implementation_paths:
       - crates/osmium-cli/src/lib.rs
       - crates/osmium-cli/src/main.rs
-      - crates/m1-runner/src/lib.rs
-      - crates/osmium-cli/src/m2.rs
+      - tools/acceptance/osmium_m1_runner/src/lib.rs
+      - crates/osmium-cli/src/command.rs
       - crates/osmium-cli/src/market_replay.rs
       - crates/osmium-cli/src/market_replay_ui.rs
-      - crates/m2-config/src/lib.rs
+      - crates/osmium-config/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
@@ -1356,9 +1356,9 @@ requirements:
       - crates/replay-engine/src/checksum.rs
       - crates/market-state/src/canonical.rs
       - crates/strategy-api/src/output.rs
-      - crates/m1-runner/src/lib.rs
+      - tools/acceptance/osmium_m1_runner/src/lib.rs
       - crates/osmium-cli/src/lib.rs
-      - crates/m2-runner/src/artifacts.rs
+      - crates/osmium-runner/src/artifacts.rs
       - crates/execution-sim/src/accounting.rs
     lifecycle:
       specification: complete
@@ -1407,9 +1407,9 @@ requirements:
       - crates/replay-engine/src/checksum.rs
       - crates/market-state/src/canonical.rs
       - crates/strategy-api/src/output.rs
-      - crates/m1-runner/tests/m1_vertical_slice.rs
-      - crates/m2-runner/src/artifacts.rs
-      - crates/m2-runner/src/lib.rs
+      - tools/acceptance/osmium_m1_runner/tests/m1_vertical_slice.rs
+      - crates/osmium-runner/src/artifacts.rs
+      - crates/osmium-runner/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
@@ -1446,7 +1446,7 @@ requirements:
       - docs/verification/evidence/m2/refreshed-2026-07-31.yaml
     implementation_paths:
       - crates/data-sync/src/cache.rs
-      - crates/m2-runner/src/lib.rs
+      - crates/osmium-runner/src/lib.rs
     lifecycle:
       specification: complete
       design: partial
@@ -1490,10 +1490,10 @@ requirements:
     implementation_paths:
       - crates/market-types/src/event.rs
       - crates/replay-engine/src/ordering.rs
-      - crates/m1-runner/src/lib.rs
+      - tools/acceptance/osmium_m1_runner/src/lib.rs
       - crates/data-sync/src/transport.rs
       - crates/data-sync/src/cache.rs
-      - crates/m2-runner/src/artifacts.rs
+      - crates/osmium-runner/src/artifacts.rs
     lifecycle:
       specification: complete
       design: partial

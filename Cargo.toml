@@ -1,11 +1,9 @@
 [workspace]
 members = [
-    "crates/m1-runner",
     "crates/market-state",
     "crates/market-types",
-    "crates/m2-runner",
-    "crates/m2-config",
-    "crates/m3-config",
+    "crates/osmium-runner",
+    "crates/osmium-config",
     "crates/normalizer/twse",
     "crates/normalizer/tpex",
     "crates/normalizer/taifex",

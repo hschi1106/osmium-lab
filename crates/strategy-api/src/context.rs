@@ -453,7 +453,7 @@ fn evaluate_annotated_matching(
     }
 }
 
-/// Evaluates the market-specific trading rules used by the M3 multi-market run.
+/// Evaluates the market-specific trading rules used by a multi-market run.
 ///
 /// TWSE keeps its annotation-driven evaluator. TAIFEX events currently carry no
 /// market annotation flags, so its context is derived only from the session

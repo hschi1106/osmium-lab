@@ -7,12 +7,12 @@ use std::{
 };
 
 use data_sync::{CacheReader, LocalCacheFactory};
-use m3_config::{M3Config, load as load_m3, plan as plan_m3};
 use market_state::MarketState;
 use market_types::{
     DomainEvent, EventPayload, InstrumentId, MatchTime, Observation, Price, Quantity, TradeOrder,
     TradePrint,
 };
+use osmium_config::{RunConfig, load, plan};
 use replay_engine::{EventStream, OrderingKey, ReplayCore, ReplayError, ReplayStreamFactory};
 
 const MICROSECONDS_PER_SECOND: i64 = 1_000_000;
@@ -482,59 +482,7 @@ fn price_as_f64(price: Price) -> f64 {
 }
 
 fn prepare_replay(path: &Path) -> Result<PreparedReplay, MarketReplayError> {
-    let version =
-        m3_config::config_version(path).map_err(|error| MarketReplayError::Preparation {
-            message: format!("market replay config failed: {error}").into_boxed_str(),
-            exit_code: 2,
-        })?;
-    match version {
-        1 => prepare_m2_replay(path),
-        2 => prepare_m3_replay(path),
-        _ => Err(MarketReplayError::Preparation {
-            message: format!("unsupported market replay config_version: {version}").into(),
-            exit_code: 2,
-        }),
-    }
-}
-
-fn prepare_m2_replay(path: &Path) -> Result<PreparedReplay, MarketReplayError> {
-    let config = m2_config::load(path).map_err(|error| MarketReplayError::Preparation {
-        message: format!("market replay config failed: {error}").into_boxed_str(),
-        exit_code: 2,
-    })?;
-    let data_root = config.data_root().to_path_buf();
-    let bundle = m2_config::plan(config).map_err(|error| MarketReplayError::Preparation {
-        message: format!("market replay plan failed: {error}").into_boxed_str(),
-        exit_code: 20,
-    })?;
-    let replay_plan = bundle
-        .replay
-        .as_ref()
-        .ok_or(MarketReplayError::CacheMissing)?;
-    let core = crate::m2::core(&bundle).map_err(|error| MarketReplayError::Preparation {
-        message: format!("market replay state setup failed: {error}").into_boxed_str(),
-        exit_code: error.exit_code(),
-    })?;
-    let mut factory = LocalCacheFactory::new(data_root);
-    let mut streams = Vec::with_capacity(replay_plan.bindings().len());
-    for binding in replay_plan.bindings() {
-        streams.push(
-            factory
-                .open(binding)
-                .map_err(MarketReplayError::CacheRead)?,
-        );
-    }
-    Ok(finish_prepared(
-        core,
-        streams,
-        replay_plan,
-        bundle.session.replay_start,
-        bundle.session.replay_end_exclusive,
-    ))
-}
-
-fn prepare_m3_replay(path: &Path) -> Result<PreparedReplay, MarketReplayError> {
-    let config = load_m3(path).map_err(|error| MarketReplayError::Preparation {
+    let config = load(path).map_err(|error| MarketReplayError::Preparation {
         message: format!("market replay config failed: {error}").into_boxed_str(),
         exit_code: 2,
     })?;
@@ -544,7 +492,7 @@ fn prepare_m3_replay(path: &Path) -> Result<PreparedReplay, MarketReplayError> {
             exit_code: 2,
         });
     }
-    let bundle = plan_m3(config.clone()).map_err(|error| MarketReplayError::Preparation {
+    let bundle = plan(config.clone()).map_err(|error| MarketReplayError::Preparation {
         message: format!("market replay plan failed: {error}").into_boxed_str(),
         exit_code: 20,
     })?;
@@ -553,11 +501,12 @@ fn prepare_m3_replay(path: &Path) -> Result<PreparedReplay, MarketReplayError> {
         .as_ref()
         .ok_or(MarketReplayError::CacheMissing)?;
     let (replay_start, replay_end) = replay_bounds(&config)?;
-    let core =
-        crate::m2::m3_core(&config, &bundle).map_err(|error| MarketReplayError::Preparation {
+    let core = crate::command::replay_core(&config, &bundle).map_err(|error| {
+        MarketReplayError::Preparation {
             message: format!("market replay state setup failed: {error}").into_boxed_str(),
             exit_code: error.exit_code(),
-        })?;
+        }
+    })?;
     let mut factory = LocalCacheFactory::new_partitioned(config.effective().data_root());
     let mut streams = Vec::with_capacity(replay_plan.bindings().len());
     for binding in replay_plan.bindings() {
@@ -600,7 +549,7 @@ fn finish_prepared(
     }
 }
 
-fn replay_bounds(config: &M3Config) -> Result<(MatchTime, MatchTime), MarketReplayError> {
+fn replay_bounds(config: &RunConfig) -> Result<(MatchTime, MatchTime), MarketReplayError> {
     let keys = config
         .partition_keys()
         .map_err(|error| MarketReplayError::Preparation {
