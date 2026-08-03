@@ -619,6 +619,7 @@ fn execute_backtest(path: &Path, output: &Path) -> Result<String, M2CommandError
     )?;
     let simulation = config.simulation();
     let fill = simulation.fill_model();
+    let latency = simulation.latency();
     let slippage = match simulation.slippage_model() {
         SlippageModelConfig::AdverseFixedDelta { delta } => delta,
     };
@@ -636,6 +637,8 @@ fn execute_backtest(path: &Path, output: &Path) -> Result<String, M2CommandError
                 QuantityEvidence::Observed => QuantityPolicy::Displayed,
             },
             adverse_price_delta: slippage,
+            market_data_latency_ms: latency.market_data_latency_ms(),
+            order_latency_ms: latency.order_latency_ms(),
         },
     );
     let ledger = Ledger::new(
@@ -704,6 +707,7 @@ fn execute_m3_backtest(path: &Path, output: &Path) -> Result<String, M2CommandEr
     )?;
     let simulation = bundle.execution.config().simulation();
     let fill = simulation.fill_model();
+    let latency = simulation.latency();
     let slippage = match simulation.slippage_model() {
         SlippageModelConfig::AdverseFixedDelta { delta } => delta,
     };
@@ -723,6 +727,8 @@ fn execute_m3_backtest(path: &Path, output: &Path) -> Result<String, M2CommandEr
                             QuantityEvidence::Observed => QuantityPolicy::Displayed,
                         },
                         adverse_price_delta: slippage,
+                        market_data_latency_ms: latency.market_data_latency_ms(),
+                        order_latency_ms: latency.order_latency_ms(),
                     },
                 )
             },

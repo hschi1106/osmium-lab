@@ -12,8 +12,8 @@ use strategy_api::{
     TradingContext,
 };
 
-pub const EXECUTION_SIM_VERSION: u16 = 1;
-pub const FILL_MODEL_VERSION: u16 = 1;
+pub const EXECUTION_SIM_VERSION: u16 = 2;
+pub const FILL_MODEL_VERSION: u16 = 2;
 
 pub use accounting::{
     ACCOUNTING_VERSION, AccountingError, AccountingModel, ChargeModel, ChargeSides,
@@ -38,6 +38,8 @@ pub struct FillModel {
     pub evidence: EvidenceMode,
     pub quantity: QuantityPolicy,
     pub adverse_price_delta: market_types::Decimal,
+    pub market_data_latency_ms: u64,
+    pub order_latency_ms: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +55,7 @@ pub struct SimOrder {
     id: OrderId,
     intent: OrderIntent,
     origin_ordinal: u64,
+    eligible_match_time: MatchTime,
     origin_segment_id: SessionSegmentId,
     acceptance_sequence: u64,
     filled: u64,
@@ -75,6 +78,11 @@ impl SimOrder {
     #[must_use]
     pub const fn remaining(&self) -> u64 {
         self.intent.quantity().value() - self.filled
+    }
+
+    #[must_use]
+    pub const fn eligible_match_time(&self) -> MatchTime {
+        self.eligible_match_time
     }
     #[must_use]
     pub const fn status(&self) -> OrderStatus {
@@ -193,6 +201,11 @@ impl Simulator {
         identity.extend_from_slice(&output_sequence.to_be_bytes());
         identity.extend_from_slice(&canonical);
         let id = OrderId::from_bytes(*blake3::hash(&identity).as_bytes());
+        let eligible_match_time = add_latency(
+            occurrence.ordering_key().match_time(),
+            self.model.market_data_latency_ms,
+            self.model.order_latency_ms,
+        )?;
         let sequence = self.next_acceptance_sequence;
         self.next_acceptance_sequence = sequence
             .checked_add(1)
@@ -201,6 +214,7 @@ impl Simulator {
             id,
             intent,
             origin_ordinal: occurrence.run_event_ordinal(),
+            eligible_match_time,
             origin_segment_id: trading.session().segment_id().clone(),
             acceptance_sequence: sequence,
             filled: 0,
@@ -234,8 +248,12 @@ impl Simulator {
             if !matches!(
                 order.status,
                 OrderStatus::Pending | OrderStatus::PartiallyFilled
-            ) || occurrence.run_event_ordinal() <= order.origin_ordinal
-                || event.instrument() != order.intent.instrument()
+            ) || !order_is_eligible(
+                order.origin_ordinal,
+                order.eligible_match_time,
+                occurrence.run_event_ordinal(),
+                event.match_time(),
+            ) || event.instrument() != order.intent.instrument()
             {
                 continue;
             }
@@ -410,6 +428,34 @@ fn apply_slippage(
     Price::new(decimal).map_err(|_| SimulationError::InvalidSlippage)
 }
 
+fn add_latency(
+    match_time: MatchTime,
+    market_data_latency_ms: u64,
+    order_latency_ms: u64,
+) -> Result<MatchTime, SimulationError> {
+    let total_latency_millis = market_data_latency_ms
+        .checked_add(order_latency_ms)
+        .ok_or(SimulationError::LatencyOverflow)?;
+    let latency_micros = total_latency_millis
+        .checked_mul(1_000)
+        .and_then(|value| i64::try_from(value).ok())
+        .ok_or(SimulationError::LatencyOverflow)?;
+    let value = match_time
+        .as_unix_microseconds()
+        .checked_add(latency_micros)
+        .ok_or(SimulationError::LatencyOverflow)?;
+    Ok(MatchTime::from_unix_microseconds(value))
+}
+
+fn order_is_eligible(
+    origin_ordinal: u64,
+    eligible_match_time: MatchTime,
+    current_ordinal: u64,
+    current_match_time: MatchTime,
+) -> bool {
+    current_ordinal > origin_ordinal && current_match_time >= eligible_match_time
+}
+
 #[derive(Debug)]
 pub enum SimulationError {
     Canonical(String),
@@ -417,6 +463,7 @@ pub enum SimulationError {
     QuantityOverflow,
     InvalidQuantity,
     InvalidSlippage,
+    LatencyOverflow,
     EmptyUniverse,
     DuplicateInstrument,
 }
@@ -638,6 +685,8 @@ mod tests {
             evidence: EvidenceMode::TopOfBook,
             quantity: QuantityPolicy::Displayed,
             adverse_price_delta: "1".parse().unwrap(),
+            market_data_latency_ms: 0,
+            order_latency_ms: 0,
         };
         assert_eq!(
             apply_slippage(Price::parse("100").unwrap(), OrderSide::Buy, model).unwrap(),
@@ -670,5 +719,34 @@ mod tests {
         );
         assert!(evidence(&auction, EvidenceMode::TopOfBook, OrderSide::Buy).is_none());
         assert!(evidence(&auction, EvidenceMode::TradePrint, OrderSide::Buy).is_none());
+    }
+
+    #[test]
+    fn latency_is_added_in_milliseconds_and_requires_a_later_match_time() {
+        let origin = MatchTime::from_unix_microseconds(10_000);
+        let eligible = add_latency(origin, 3, 7).unwrap();
+
+        assert_eq!(eligible, MatchTime::from_unix_microseconds(20_000));
+        assert!(!order_is_eligible(
+            4,
+            eligible,
+            5,
+            MatchTime::from_unix_microseconds(19_999)
+        ));
+        assert!(order_is_eligible(
+            4,
+            eligible,
+            5,
+            MatchTime::from_unix_microseconds(20_000)
+        ));
+        assert!(!order_is_eligible(4, origin, 4, origin));
+    }
+
+    #[test]
+    fn latency_overflow_is_rejected() {
+        assert!(matches!(
+            add_latency(MatchTime::from_unix_microseconds(0), u64::MAX, 0),
+            Err(SimulationError::LatencyOverflow)
+        ));
     }
 }

@@ -7,7 +7,7 @@ mod session;
 pub use config::{
     CACHE_POLICY_VERSION, CONFIG_SCHEMA_VERSION, CachePolicy, ChargeConfig, ChargeSides,
     ConfigError, Currency, CurrencyAmount, EFFECTIVE_CONFIG_VERSION, EffectiveConfigChecksum,
-    EffectiveRunConfig, FillEvidence, FillModelConfig, InstrumentEconomicsConfig,
+    EffectiveRunConfig, FillEvidence, FillModelConfig, InstrumentEconomicsConfig, LatencyConfig,
     MarkingPolicyConfig, OutputPolicy, PositionAccountingConfig, QuantityAllocationConfig,
     QuantityEvidence, REPLAY_DATA_POLICY_VERSION, ReplayDataPolicy, RoundingPolicy, RunConfig,
     SOURCE_POLICY_VERSION, SimulationConfig, SlippageModelConfig, SourcePolicy, StrategyBinding,

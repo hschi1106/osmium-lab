@@ -722,6 +722,8 @@ mod tests {
                 evidence: EvidenceMode::TopOfBook,
                 quantity: QuantityPolicy::Displayed,
                 adverse_price_delta: Decimal::ZERO,
+                market_data_latency_ms: 0,
+                order_latency_ms: 0,
             },
         );
         let completed =
@@ -796,7 +798,7 @@ mod tests {
     }
 
     #[test]
-    fn multi_backtest_runs_isolated_subsequent_fills() {
+    fn multi_backtest_isolates_instruments_and_respects_latency() {
         let instrument = InstrumentId::new(MarketId::Taifex, Symbol::new("TXFH6").unwrap());
         let date = TradingDate::parse("2026-07-27").unwrap();
         let segment_id = SessionSegmentId::new("regular").unwrap();
@@ -820,6 +822,10 @@ mod tests {
             taifex_event(
                 &instrument,
                 MatchTime::parse("2026-07-27T09:00:02+08:00").unwrap(),
+            ),
+            taifex_event(
+                &instrument,
+                MatchTime::parse("2026-07-27T09:00:03+08:00").unwrap(),
             ),
         ];
         let core = ReplayCore::new_multi(
@@ -854,6 +860,8 @@ mod tests {
                 evidence: execution_sim::EvidenceMode::TopOfBook,
                 quantity: execution_sim::QuantityPolicy::Displayed,
                 adverse_price_delta: "0".parse().unwrap(),
+                market_data_latency_ms: 500,
+                order_latency_ms: 1_500,
             },
         )])
         .unwrap();
@@ -896,9 +904,18 @@ mod tests {
             false,
         )
         .unwrap();
-        assert_eq!(completed.replay.summary().event_count(), 3);
+        assert_eq!(completed.replay.summary().event_count(), 4);
         assert_eq!(completed.simulator.order_count(), 2);
         assert_eq!(completed.simulator.fill_count(), 2);
+        assert_eq!(
+            completed
+                .simulator
+                .fills()
+                .iter()
+                .map(|fill| fill.triggering_ordinal())
+                .collect::<Vec<_>>(),
+            vec![3, 4]
+        );
         let root = tempfile::tempdir().unwrap();
         let output = root.path().join("m3-run");
         publish_multi_backtest(&output, &completed, &[6; 32], "source", "cache").unwrap();

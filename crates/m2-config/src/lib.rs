@@ -11,7 +11,7 @@ use replay_engine::{ReplayPlan, ReplayStreamBinding, StableStreamDescriptorId};
 use run_planner::{
     CacheIdentity, CacheState, ChargeConfig, ChargeSides, Currency, CurrencyAmount,
     EffectiveRunConfig, ExecutionPlan, FillEvidence, FillModelConfig, InstrumentEconomicsConfig,
-    MarkingPolicyConfig, OutputPolicy, PlannedPartition, PositionAccountingConfig,
+    LatencyConfig, MarkingPolicyConfig, OutputPolicy, PlannedPartition, PositionAccountingConfig,
     QuantityAllocationConfig, QuantityEvidence, ReplayDataPolicy, RoundingPolicy, RunConfig,
     SessionPlan, SessionPlanIdentity, SimulationConfig, SlippageModelConfig, SourceId,
     SourcePartitionKey, SourcePolicy, StrategyBinding,
@@ -89,6 +89,10 @@ struct ReplayConfig {
 #[serde(deny_unknown_fields)]
 struct SimulationFileConfig {
     fill: FillConfig,
+    #[serde(default)]
+    market_data_latency_ms: u64,
+    #[serde(default)]
+    order_latency_ms: u64,
     allocation: String,
     slippage: SlippageConfig,
     fee: ChargeFileConfig,
@@ -253,7 +257,11 @@ fn resolve(raw: FileConfig) -> Result<EffectiveRunConfig, M2ConfigError> {
         MarkingPolicyConfig::LastObservableV1 {
             allow_midpoint_fallback: raw.simulation.marking.allow_midpoint_fallback,
         },
-    );
+    )
+    .with_latency(LatencyConfig::new(
+        raw.simulation.market_data_latency_ms,
+        raw.simulation.order_latency_ms,
+    ));
     let economics = raw
         .instrument_economics
         .into_iter()
@@ -529,6 +537,25 @@ mod tests {
             session.replay_end_exclusive,
             MatchTime::parse("2026-07-27T13:35:00+08:00").unwrap()
         );
+        assert_eq!(config.simulation().latency().market_data_latency_ms(), 0);
+        assert_eq!(config.simulation().latency().order_latency_ms(), 0);
+    }
+
+    #[test]
+    fn config_materializes_nonzero_latency() {
+        let source = fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/m2-twse-2330.yaml"),
+        )
+        .unwrap()
+        .replace("market_data_latency_ms: 0", "market_data_latency_ms: 12")
+        .replace("order_latency_ms: 0", "order_latency_ms: 34");
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("latency.yaml");
+        fs::write(&path, source).unwrap();
+
+        let config = load(path).unwrap();
+        assert_eq!(config.simulation().latency().market_data_latency_ms(), 12);
+        assert_eq!(config.simulation().latency().order_latency_ms(), 34);
     }
 
     #[test]

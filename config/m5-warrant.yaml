@@ -35,6 +35,8 @@ replay:
   data_policy: strict
 simulation:
   fill: { evidence: top_of_book, quantity: observed }
+  market_data_latency_ms: 0
+  order_latency_ms: 0
   allocation: acceptance_sequence
   slippage: { model: adverse_fixed_delta, delta: "0" }
   fee:
