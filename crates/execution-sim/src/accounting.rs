@@ -746,6 +746,22 @@ fn charge(
     Ok(Decimal::from_atoms(rounded.max(model.minimum.atoms())))
 }
 
+/// Assesses one configured charge against one actual execution fill.
+///
+/// This is the same exact-decimal path used by `Ledger`; research strategies that need
+/// round-trip attribution can use it without duplicating fee or tax rounding rules.
+pub fn assess_fill_charge(
+    price: market_types::Price,
+    quantity: market_types::Quantity,
+    side: OrderSide,
+    economics: &InstrumentEconomics,
+    model: ChargeModel,
+) -> Result<Decimal, AccountingError> {
+    validate_models(economics, model, model)?;
+    let notional = scale_by_quantity(price.as_decimal(), u128::from(quantity.value()), economics)?;
+    charge(notional, quantity.value(), side, model)
+}
+
 fn transition_position(
     position: i128,
     cost_basis_atoms: i128,
