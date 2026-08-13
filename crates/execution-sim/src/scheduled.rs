@@ -502,6 +502,12 @@ impl ScheduledDepthSimulator {
             });
         }
 
+        if self.orders[order_index].request.execution_policy()
+            == ScheduledExecutionPolicy::SettlementAtActivationV1
+        {
+            return self.settle_at_activation(order_index, control_sequence, at);
+        }
+
         let request = self.orders[order_index].request.clone();
         let instrument = request.intent().instrument().clone();
         let (_, model) = self
@@ -902,6 +908,60 @@ impl ScheduledDepthSimulator {
         }))
     }
 
+    fn settle_at_activation(
+        &mut self,
+        order_index: usize,
+        control_sequence: u64,
+        at: MatchTime,
+    ) -> Result<ScheduledActivation, ScheduledSimulationError> {
+        let request = self.orders[order_index].request.clone();
+        let order_id = self.orders[order_index].id;
+        let OrderType::Limit {
+            limit_price: settlement_price,
+        } = request.intent().order_type()
+        else {
+            return Err(ScheduledSimulationError::InvalidSettlementOrderType);
+        };
+        let quantity = request.intent().quantity();
+        let fill_id = fill_id(order_id, control_sequence, 1);
+        self.fills.push(FillRecord::from_control(
+            order_id,
+            control_sequence,
+            at,
+            request.intent().side(),
+            settlement_price,
+            quantity,
+        ));
+        let fill = ExecutionFillFeedback::new(
+            fill_id,
+            order_id,
+            request.client_order_id().clone(),
+            request.batch_id().cloned(),
+            request.intent().instrument().clone(),
+            request.activate_at(),
+            at,
+            request.intent().side(),
+            1,
+            settlement_price,
+            quantity,
+            quantity,
+            None,
+        )
+        .map_err(|error| ScheduledSimulationError::FillFeedback(error.to_string()))?;
+        self.execution_fills.push(fill.clone());
+        self.orders[order_index].filled_value = quantity.value();
+        self.orders[order_index].status = ScheduledOrderStatus::Filled;
+        Ok(ScheduledActivation {
+            order_id,
+            status: ScheduledOrderStatus::Filled,
+            feedback: OrderFeedback::Filled {
+                order_id,
+                filled: quantity,
+            },
+            execution_fills: Box::new([fill]),
+        })
+    }
+
     #[must_use]
     pub fn orders(&self) -> &[ScheduledOrder] {
         &self.orders
@@ -1000,6 +1060,7 @@ pub enum ScheduledSimulationError {
     InvalidAdversePriceDelta,
     VisibilityBeforeMatchTime,
     InvalidAuctionMatchEvidence,
+    InvalidSettlementOrderType,
     RegressingBookTime,
     ActivationBeforeDecision,
     ActivationTimeMismatch,
@@ -1054,6 +1115,8 @@ impl fmt::Display for ScheduledSimulationError {
             Self::InvalidAuctionMatchEvidence => {
                 formatter.write_str("auction match evidence requires enabled call-auction matching")
             }
+            Self::InvalidSettlementOrderType => formatter
+                .write_str("settlement execution requires a limit order carrying its fixed price"),
             Self::RegressingBookTime => formatter.write_str("visible book time regressed"),
             Self::ActivationBeforeDecision => {
                 formatter.write_str("order activation is earlier than strategy decision")
@@ -1293,6 +1356,38 @@ mod tests {
         assert_eq!(result.execution_fills()[1].level_index(), 2);
         assert_eq!(simulator.fills().len(), 2);
         assert_eq!(simulator.execution_fills(), result.execution_fills());
+        assert_eq!(simulator.fills()[0].control_sequence(), Some(42));
+    }
+
+    #[test]
+    fn settlement_fills_at_reference_price_without_market_depth() {
+        let activation = MatchTime::from_unix_microseconds(2_000);
+        let settlement_price = Price::parse("101.25").unwrap();
+        let request = ScheduledOrderRequest::new(
+            ClientOrderId::new("expiry-settlement").unwrap(),
+            None,
+            activation,
+            None,
+            OrderIntent::new(
+                instrument(),
+                OrderSide::Buy,
+                quantity(3),
+                OrderType::Limit {
+                    limit_price: settlement_price,
+                },
+            ),
+            ScheduledExecutionPolicy::SettlementAtActivationV1,
+        )
+        .unwrap();
+        let mut simulator = simulator(5, 1_000);
+        let order_id = submit(&mut simulator, request, 1);
+
+        let result = simulator.activate(order_id, 42, activation).unwrap();
+
+        assert_eq!(result.status(), ScheduledOrderStatus::Filled);
+        assert_eq!(result.execution_fills().len(), 1);
+        assert_eq!(result.execution_fills()[0].price(), settlement_price);
+        assert_eq!(simulator.fills()[0].price(), settlement_price);
         assert_eq!(simulator.fills()[0].control_sequence(), Some(42));
     }
 
