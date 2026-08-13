@@ -42,6 +42,8 @@ use run_planner::SourcePartitionKey;
 
 const CACHE_MAGIC: &[u8; 9] = b"OSMCACHE1";
 pub const CACHE_FORMAT_VERSION: u16 = 1;
+pub const EXTERNAL_DOMAIN_MAPPING_NAME: &str = "external-domain-events-v1";
+pub const EXTERNAL_DOMAIN_MAPPING_VERSION: u16 = 1;
 
 #[derive(Debug, Clone)]
 pub enum PartitionNormalizerConfig {
@@ -139,6 +141,40 @@ impl CacheBuilder {
             &cache_root,
             Some(hex(key.identity().as_bytes())),
             config,
+        )
+    }
+
+    /// Publishes already-normalized domain events while retaining a verified source revision.
+    ///
+    /// This path is intended for explicit offline adapters. Callers remain responsible for
+    /// preserving source lineage and must not use it to bypass source verification.
+    pub fn build_external_partition(
+        &self,
+        key: &SourcePartitionKey,
+        events: Vec<DomainEvent>,
+    ) -> Result<PublishedCache, CacheBuildError> {
+        let repository = crate::PartitionedSourceRepository::new(&self.data_root, key.clone())
+            .map_err(|error| CacheBuildError::Partition(error.to_string()))?;
+        let source = repository.verify_current()?;
+        let cache_root = crate::cache_partition_root(&self.data_root, key)
+            .map_err(|error| CacheBuildError::Partition(error.to_string()))?;
+        let events =
+            order_events(events).map_err(|error| CacheBuildError::Ordering(error.to_string()))?;
+        if events.iter().any(|event| {
+            event.instrument() != key.instrument() || event.trading_date() != key.trading_date()
+        }) {
+            return Err(CacheBuildError::SourceManifest);
+        }
+        self.publish_events(
+            &source,
+            &cache_root,
+            &cache_root,
+            key.instrument(),
+            key.trading_date(),
+            Some(hex(key.identity().as_bytes())),
+            EXTERNAL_DOMAIN_MAPPING_NAME,
+            EXTERNAL_DOMAIN_MAPPING_VERSION,
+            events,
         )
     }
 
@@ -272,6 +308,32 @@ impl CacheBuilder {
         let events =
             order_events(events).map_err(|error| CacheBuildError::Ordering(error.to_string()))?;
 
+        self.publish_events(
+            source,
+            staging_root,
+            cache_root,
+            &instrument,
+            trading_date,
+            partition_identity,
+            &mapping_name,
+            mapping_version,
+            events,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn publish_events(
+        &self,
+        source: &VerificationReport,
+        staging_root: &Path,
+        cache_root: &Path,
+        instrument: &market_types::InstrumentId,
+        trading_date: market_types::TradingDate,
+        partition_identity: Option<String>,
+        mapping_name: &str,
+        mapping_version: u16,
+        events: Vec<DomainEvent>,
+    ) -> Result<PublishedCache, CacheBuildError> {
         let attempt = staging_root.join("cache-build");
         if attempt.exists() {
             return Err(CacheBuildError::BuildAlreadyExists);
@@ -309,7 +371,7 @@ impl CacheBuilder {
         let payload_sha256 = hex(&payload_hasher.finalize());
         let cache_identity = cache_identity(
             source,
-            &instrument,
+            instrument,
             trading_date,
             mapping_version,
             partition_identity.as_deref(),
@@ -332,7 +394,7 @@ impl CacheBuilder {
             canonical_event_version: CANONICAL_EVENT_VERSION,
             ordering_rule_version: ORDERING_RULE_VERSION,
             partition_identity,
-            normalizer_mapping_name: mapping_name,
+            normalizer_mapping_name: mapping_name.to_owned(),
             normalizer_mapping_version: mapping_version,
         };
         let descriptor_bytes = serde_json::to_vec_pretty(&descriptor)
@@ -697,20 +759,25 @@ fn validate_descriptor(descriptor: &CacheDescriptor) -> Result<(), CacheReadErro
         || (descriptor.normalizer_mapping_name == TAIFEX_MAPPING_NAME
             && descriptor.normalizer_mapping_version == TAIFEX_MAPPING_VERSION)
         || (descriptor.normalizer_mapping_name == TAIFEX_OPTION_MAPPING_NAME
-            && descriptor.normalizer_mapping_version == TAIFEX_OPTION_MAPPING_VERSION);
+            && descriptor.normalizer_mapping_version == TAIFEX_OPTION_MAPPING_VERSION)
+        || (descriptor.normalizer_mapping_name == EXTERNAL_DOMAIN_MAPPING_NAME
+            && descriptor.normalizer_mapping_version == EXTERNAL_DOMAIN_MAPPING_VERSION);
     let mapping_market_compatible = match MarketId::from_discriminant(descriptor.instrument_market)
     {
         Ok(MarketId::Twse) => {
             descriptor.normalizer_mapping_name == TWSE_MAPPING_NAME
                 || descriptor.normalizer_mapping_name == TWSE_WARRANT_MAPPING_NAME
+                || descriptor.normalizer_mapping_name == EXTERNAL_DOMAIN_MAPPING_NAME
         }
         Ok(MarketId::Tpex) => {
             descriptor.normalizer_mapping_name == TPEX_MAPPING_NAME
                 || descriptor.normalizer_mapping_name == TPEX_WARRANT_MAPPING_NAME
+                || descriptor.normalizer_mapping_name == EXTERNAL_DOMAIN_MAPPING_NAME
         }
         Ok(MarketId::Taifex) => {
             descriptor.normalizer_mapping_name == TAIFEX_MAPPING_NAME
                 || descriptor.normalizer_mapping_name == TAIFEX_OPTION_MAPPING_NAME
+                || descriptor.normalizer_mapping_name == EXTERNAL_DOMAIN_MAPPING_NAME
         }
         Err(_) => false,
     };

@@ -7,11 +7,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use execution_sim::ACCOUNTING_VERSION;
 use strategy_api::{ResolvedStrategyMetadata, StrategyParameterValue};
 
 use crate::CompletedBacktest;
 use crate::CompletedMultiBacktest;
+use crate::CompletedScheduledMultiBacktest;
 
 pub const RUN_MANIFEST_VERSION: u16 = 2;
 
@@ -165,6 +165,7 @@ pub fn publish_multi_backtest(
     cache_identity: &str,
     strategy_metadata: &ResolvedStrategyMetadata,
 ) -> Result<(), ArtifactError> {
+    let accounting_version = completed.ledger.accounting_version();
     validate_strategy_metadata(&completed.strategy_output, strategy_metadata)?;
     if output.exists() {
         return Err(ArtifactError::OutputExists(output.to_path_buf()));
@@ -243,7 +244,7 @@ pub fn publish_multi_backtest(
             "event_count": completed.replay.summary().event_count(),
             "event_checksum": event_checksum,
             "final_state_checksum": state_checksum,
-            "accounting_version": ACCOUNTING_VERSION,
+            "accounting_version": accounting_version,
         }))
         .map_err(|error| ArtifactError::Encoding(error.to_string()))?,
     );
@@ -254,7 +255,7 @@ pub fn publish_multi_backtest(
             completed.replay.summary().event_count(),
             completed.simulator.order_count(),
             completed.simulator.fill_count(),
-            ACCOUNTING_VERSION,
+            accounting_version,
             completed.performance.final_cash().atoms(),
             completed.performance.realized_pnl().atoms(),
             completed.performance.unrealized_pnl().atoms(),
@@ -270,13 +271,171 @@ pub fn publish_multi_backtest(
         "run_manifest_version": RUN_MANIFEST_VERSION,
         "status": "successful",
         "completion_quality": "full",
-        "accounting_version": ACCOUNTING_VERSION,
+        "accounting_version": accounting_version,
         "plan_identity": hex(plan_identity),
         "source_revision": source_revision,
         "cache_identity": cache_identity,
         "event_count": completed.replay.summary().event_count(),
         "order_count": completed.simulator.order_count(),
         "fill_count": completed.simulator.fill_count(),
+        "artifact_checksums": checksums,
+    });
+    files.insert(
+        "run-manifest.yaml",
+        serde_json::to_vec_pretty(&manifest)
+            .map_err(|error| ArtifactError::Encoding(error.to_string()))?,
+    );
+    for (name, bytes) in files {
+        write_file(&staging.join(name), &bytes)?;
+    }
+    File::open(&staging)?.sync_all()?;
+    fs::rename(&staging, output)?;
+    File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+pub fn publish_scheduled_multi_backtest(
+    output: &Path,
+    completed: &CompletedScheduledMultiBacktest,
+    plan_identity: &[u8; 32],
+    source_revision: &str,
+    cache_identity: &str,
+    strategy_metadata: &ResolvedStrategyMetadata,
+) -> Result<(), ArtifactError> {
+    let accounting_version = completed.ledger.accounting_version();
+    validate_strategy_metadata(&completed.strategy_output, strategy_metadata)?;
+    if output.exists() {
+        return Err(ArtifactError::OutputExists(output.to_path_buf()));
+    }
+    let parent = output.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    let name = output
+        .file_name()
+        .ok_or_else(|| ArtifactError::InvalidOutput(output.to_path_buf()))?
+        .to_string_lossy();
+    let staging = parent.join(format!(".{name}.osmium-staging"));
+    if staging.exists() {
+        return Err(ArtifactError::OutputExists(staging));
+    }
+    fs::create_dir(&staging)?;
+
+    let strategy = completed
+        .strategy_output
+        .to_canonical_bytes()
+        .map_err(|error| ArtifactError::Encoding(error.to_string()))?;
+    let orders = encode_scheduled_orders(completed)?;
+    let fills = encode_scheduled_fills(completed)?;
+    let execution_trace = encode_scheduled_execution_trace(completed)?;
+    let ledger = encode_multi_ledger_parts(&completed.performance, &completed.ledger);
+    let ledger_checksum = hash(&ledger);
+    let event_checksum = hex(completed.replay.summary().event_checksum().as_bytes());
+    let state_checksum = hex(completed.replay.summary().final_state_checksum().as_bytes());
+    let mut files = BTreeMap::<&str, Vec<u8>>::new();
+    files.insert(
+        "effective-config.yaml",
+        format!("config_checksum: {}\n", hex(plan_identity)).into_bytes(),
+    );
+    files.insert(
+        "execution-plan.yaml",
+        format!(
+            "plan_identity: {}\nexecution_policy: scheduled_visible_depth_v1\n",
+            hex(plan_identity)
+        )
+        .into_bytes(),
+    );
+    files.insert(
+        "data-lineage.yaml",
+        format!("source_revision: {source_revision}\n").into_bytes(),
+    );
+    files.insert(
+        "cache-lineage.yaml",
+        format!("cache_identity: {cache_identity}\n").into_bytes(),
+    );
+    files.insert(
+        "strategy.json",
+        encode_strategy_metadata(strategy_metadata)?,
+    );
+    files.insert(
+        "event-stream.blake3",
+        format!("{event_checksum}\n").into_bytes(),
+    );
+    files.insert(
+        "final-state.blake3",
+        format!("{state_checksum}\n").into_bytes(),
+    );
+    files.insert("strategy-output.bin", strategy.clone());
+    files.insert(
+        "strategy-output.blake3",
+        format!("{}\n", hash(&strategy)).into_bytes(),
+    );
+    files.insert("orders.bin", orders.clone());
+    files.insert("orders.blake3", format!("{}\n", hash(&orders)).into_bytes());
+    files.insert("fills.bin", fills.clone());
+    files.insert("fills.blake3", format!("{}\n", hash(&fills)).into_bytes());
+    files.insert("execution-trace.bin", execution_trace.clone());
+    files.insert(
+        "execution-trace.blake3",
+        format!("{}\n", hash(&execution_trace)).into_bytes(),
+    );
+    files.insert("ledger.bin", ledger.clone());
+    files.insert("ledger.blake3", format!("{ledger_checksum}\n").into_bytes());
+    files.insert(
+        "positions.yaml",
+        encode_multi_positions_parts(&completed.performance, accounting_version, &ledger_checksum),
+    );
+    files.insert(
+        "performance.yaml",
+        encode_multi_performance_parts(
+            &completed.performance,
+            accounting_version,
+            &ledger_checksum,
+        ),
+    );
+    files.insert(
+        "replay-summary.json",
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "format": "osmium-replay-summary-v1",
+            "status": "successful",
+            "event_count": completed.replay.summary().event_count(),
+            "event_checksum": event_checksum,
+            "final_state_checksum": state_checksum,
+            "accounting_version": accounting_version,
+            "execution_policy": "scheduled_visible_depth_v1",
+        }))
+        .map_err(|error| ArtifactError::Encoding(error.to_string()))?,
+    );
+    files.insert(
+        "run-summary.yaml",
+        format!(
+            "status: successful\ncompletion_quality: full\nexecution_policy: scheduled_visible_depth_v1\nevents: {}\norders: {}\nfills: {}\naccounting_version: {}\nfinal_cash_atoms: {}\nrealized_pnl_atoms: {}\nunrealized_pnl_atoms: {}\n",
+            completed.replay.summary().event_count(),
+            completed.simulator.orders().len(),
+            completed.simulator.fills().len(),
+            accounting_version,
+            completed.performance.final_cash().atoms(),
+            completed.performance.realized_pnl().atoms(),
+            completed.performance.unrealized_pnl().atoms(),
+        )
+        .into_bytes(),
+    );
+    files.insert("warnings.yaml", b"warnings: []\n".to_vec());
+    let checksums = files
+        .iter()
+        .map(|(name, bytes)| ((*name).to_owned(), hash(bytes)))
+        .collect::<BTreeMap<_, _>>();
+    let manifest = serde_json::json!({
+        "run_manifest_version": RUN_MANIFEST_VERSION,
+        "status": "successful",
+        "completion_quality": "full",
+        "execution_policy": "scheduled_visible_depth_v1",
+        "accounting_version": accounting_version,
+        "plan_identity": hex(plan_identity),
+        "source_revision": source_revision,
+        "cache_identity": cache_identity,
+        "event_count": completed.replay.summary().event_count(),
+        "order_count": completed.simulator.orders().len(),
+        "fill_count": completed.simulator.fills().len(),
+        "execution_fill_count": completed.simulator.execution_fills().len(),
         "artifact_checksums": checksums,
     });
     files.insert(
@@ -393,11 +552,17 @@ fn encode_orders(completed: &CompletedBacktest) -> Result<Vec<u8>, ArtifactError
 }
 
 fn encode_fills(completed: &CompletedBacktest) -> Vec<u8> {
-    let mut bytes = b"OSFILLS1".to_vec();
-    bytes.extend_from_slice(&(completed.simulator.fills().len() as u64).to_be_bytes());
-    for fill in completed.simulator.fills() {
+    let fills = completed.simulator.fills();
+    let control_triggers = fills.iter().any(|fill| fill.control_sequence().is_some());
+    let mut bytes = if control_triggers {
+        b"OSFILLS2".to_vec()
+    } else {
+        b"OSFILLS1".to_vec()
+    };
+    bytes.extend_from_slice(&(fills.len() as u64).to_be_bytes());
+    for fill in fills {
         bytes.extend_from_slice(fill.order_id().as_bytes());
-        bytes.extend_from_slice(&fill.triggering_ordinal().to_be_bytes());
+        append_fill_trigger(&mut bytes, fill, control_triggers);
         bytes.extend_from_slice(&fill.match_time().as_unix_microseconds().to_be_bytes());
         bytes.push(fill.side() as u8);
         bytes.extend_from_slice(&fill.price().to_canonical_bytes());
@@ -425,6 +590,91 @@ fn encode_multi_orders(completed: &CompletedMultiBacktest) -> Result<Vec<u8>, Ar
     Ok(bytes)
 }
 
+fn encode_scheduled_orders(
+    completed: &CompletedScheduledMultiBacktest,
+) -> Result<Vec<u8>, ArtifactError> {
+    let mut bytes = b"OSORDERS2".to_vec();
+    bytes.extend_from_slice(&(completed.simulator.orders().len() as u64).to_be_bytes());
+    for order in completed.simulator.orders() {
+        bytes.extend_from_slice(order.id().as_bytes());
+        bytes.extend_from_slice(&order.acceptance_sequence().to_be_bytes());
+        let request = order
+            .request()
+            .to_canonical_bytes()
+            .map_err(|error| ArtifactError::Encoding(error.to_string()))?;
+        bytes.extend_from_slice(&(request.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(&request);
+        bytes.extend_from_slice(&order.filled_value().to_be_bytes());
+        let (status, failure) = scheduled_status(order.status());
+        bytes.push(status);
+        bytes.push(failure);
+    }
+    Ok(bytes)
+}
+
+fn scheduled_status(status: execution_sim::ScheduledOrderStatus) -> (u8, u8) {
+    match status {
+        execution_sim::ScheduledOrderStatus::Scheduled => (1, 0),
+        execution_sim::ScheduledOrderStatus::Filled => (2, 0),
+        execution_sim::ScheduledOrderStatus::Failed(reason) => (3, execution_failure(reason)),
+        execution_sim::ScheduledOrderStatus::Expired => (4, 0),
+        execution_sim::ScheduledOrderStatus::Replaced => (5, 0),
+        execution_sim::ScheduledOrderStatus::Cancelled => (6, 0),
+        execution_sim::ScheduledOrderStatus::Active => (7, 0),
+        execution_sim::ScheduledOrderStatus::PartiallyFilled => (8, 0),
+        execution_sim::ScheduledOrderStatus::MatchAttempted => (9, 0),
+    }
+}
+
+fn execution_failure(reason: strategy_api::ExecutionFailureReason) -> u8 {
+    match reason {
+        strategy_api::ExecutionFailureReason::MissingVisibleDepth => 1,
+        strategy_api::ExecutionFailureReason::StaleVisibleDepth => 2,
+        strategy_api::ExecutionFailureReason::MatchingDisabled => 3,
+        strategy_api::ExecutionFailureReason::NewOrderEntryBlocked => 4,
+        strategy_api::ExecutionFailureReason::InsufficientVisibleDepth => 5,
+        strategy_api::ExecutionFailureReason::PriceNotMarketable => 6,
+    }
+}
+
+fn encode_scheduled_fills(
+    completed: &CompletedScheduledMultiBacktest,
+) -> Result<Vec<u8>, ArtifactError> {
+    let mut bytes = b"OSFILLS2".to_vec();
+    bytes.extend_from_slice(&(completed.simulator.fills().len() as u64).to_be_bytes());
+    for fill in completed.simulator.fills() {
+        let order = completed
+            .simulator
+            .orders()
+            .iter()
+            .find(|order| order.id() == fill.order_id())
+            .ok_or_else(|| ArtifactError::Encoding("scheduled fill has no order".to_owned()))?;
+        append_instrument_identity(&mut bytes, order.request().intent().instrument());
+        bytes.extend_from_slice(fill.order_id().as_bytes());
+        append_fill_trigger(&mut bytes, fill, true);
+        bytes.extend_from_slice(&fill.match_time().as_unix_microseconds().to_be_bytes());
+        bytes.push(fill.side() as u8);
+        bytes.extend_from_slice(&fill.price().to_canonical_bytes());
+        bytes.extend_from_slice(&fill.quantity().to_canonical_bytes());
+    }
+    Ok(bytes)
+}
+
+fn encode_scheduled_execution_trace(
+    completed: &CompletedScheduledMultiBacktest,
+) -> Result<Vec<u8>, ArtifactError> {
+    let mut bytes = b"OSEXECT1".to_vec();
+    bytes.extend_from_slice(&(completed.simulator.execution_fills().len() as u64).to_be_bytes());
+    for fill in completed.simulator.execution_fills() {
+        let canonical = fill
+            .to_canonical_bytes()
+            .map_err(|error| ArtifactError::Encoding(error.to_string()))?;
+        bytes.extend_from_slice(&(canonical.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(&canonical);
+    }
+    Ok(bytes)
+}
+
 fn encode_multi_fills(completed: &CompletedMultiBacktest) -> Vec<u8> {
     let fill_count = completed
         .performance
@@ -437,7 +687,16 @@ fn encode_multi_fills(completed: &CompletedMultiBacktest) -> Vec<u8> {
                 .map_or(0, <[execution_sim::FillRecord]>::len)
         })
         .sum::<usize>();
-    let mut bytes = b"OSFILLS1".to_vec();
+    let control_triggers = completed
+        .simulator
+        .fills()
+        .iter()
+        .any(|fill| fill.control_sequence().is_some());
+    let mut bytes = if control_triggers {
+        b"OSFILLS2".to_vec()
+    } else {
+        b"OSFILLS1".to_vec()
+    };
     bytes.extend_from_slice(&(fill_count as u64).to_be_bytes());
     for instrument in completed.performance.instruments() {
         let Some(fills) = completed.simulator.fills_for(instrument.instrument()) else {
@@ -446,7 +705,7 @@ fn encode_multi_fills(completed: &CompletedMultiBacktest) -> Vec<u8> {
         for fill in fills {
             append_instrument_identity(&mut bytes, instrument.instrument());
             bytes.extend_from_slice(fill.order_id().as_bytes());
-            bytes.extend_from_slice(&fill.triggering_ordinal().to_be_bytes());
+            append_fill_trigger(&mut bytes, fill, control_triggers);
             bytes.extend_from_slice(&fill.match_time().as_unix_microseconds().to_be_bytes());
             bytes.push(fill.side() as u8);
             bytes.extend_from_slice(&fill.price().to_canonical_bytes());
@@ -457,10 +716,28 @@ fn encode_multi_fills(completed: &CompletedMultiBacktest) -> Vec<u8> {
 }
 
 fn encode_multi_ledger(completed: &CompletedMultiBacktest) -> Vec<u8> {
-    let mut bytes = b"OSLEDGR1".to_vec();
-    bytes.extend_from_slice(&ACCOUNTING_VERSION.to_be_bytes());
-    bytes.extend_from_slice(&(completed.performance.instruments().len() as u64).to_be_bytes());
-    for instrument in completed.performance.instruments() {
+    encode_multi_ledger_parts(&completed.performance, &completed.ledger)
+}
+
+fn encode_multi_ledger_parts(
+    performance: &execution_sim::MultiPerformanceSummary,
+    ledger: &execution_sim::MultiLedger,
+) -> Vec<u8> {
+    let accounting_version = ledger.accounting_version();
+    let control_triggers = performance
+        .instruments()
+        .iter()
+        .filter_map(|instrument| ledger.ledger(instrument.instrument()))
+        .flat_map(execution_sim::Ledger::fills)
+        .any(|fill| fill.control_sequence().is_some());
+    let mut bytes = if control_triggers {
+        b"OSLEDGR2".to_vec()
+    } else {
+        b"OSLEDGR1".to_vec()
+    };
+    bytes.extend_from_slice(&accounting_version.to_be_bytes());
+    bytes.extend_from_slice(&(performance.instruments().len() as u64).to_be_bytes());
+    for instrument in performance.instruments() {
         let mut record = Vec::new();
         append_instrument_identity(&mut record, instrument.instrument());
         record.push(instrument.quantity_unit() as u8);
@@ -470,14 +747,13 @@ fn encode_multi_ledger(completed: &CompletedMultiBacktest) -> Vec<u8> {
         record.extend_from_slice(&economics.multiplier.to_canonical_bytes());
         append_text(&mut record, &economics.provenance);
         append_performance_summary(&mut record, instrument.summary(), instrument.average_cost());
-        let fills = completed
-            .ledger
+        let fills = ledger
             .ledger(instrument.instrument())
             .map_or(&[][..], execution_sim::Ledger::fills);
         record.extend_from_slice(&(fills.len() as u64).to_be_bytes());
         for fill in fills {
             record.extend_from_slice(fill.order_id().as_bytes());
-            record.extend_from_slice(&fill.triggering_ordinal().to_be_bytes());
+            append_fill_trigger(&mut record, fill, control_triggers);
             record.extend_from_slice(&fill.match_time().as_unix_microseconds().to_be_bytes());
             record.push(fill.side() as u8);
             record.extend_from_slice(&fill.price().to_canonical_bytes());
@@ -489,11 +765,39 @@ fn encode_multi_ledger(completed: &CompletedMultiBacktest) -> Vec<u8> {
     bytes
 }
 
+fn append_fill_trigger(bytes: &mut Vec<u8>, fill: &execution_sim::FillRecord, version_two: bool) {
+    match fill.trigger() {
+        execution_sim::FillTrigger::MarketEvent { run_event_ordinal } => {
+            if version_two {
+                bytes.push(1);
+            }
+            bytes.extend_from_slice(&run_event_ordinal.to_be_bytes());
+        }
+        execution_sim::FillTrigger::Control { control_sequence } => {
+            debug_assert!(version_two, "control fills require fill encoding version 2");
+            bytes.push(2);
+            bytes.extend_from_slice(&control_sequence.to_be_bytes());
+        }
+    }
+}
+
 fn encode_multi_positions(completed: &CompletedMultiBacktest, ledger_checksum: &str) -> Vec<u8> {
+    encode_multi_positions_parts(
+        &completed.performance,
+        completed.ledger.accounting_version(),
+        ledger_checksum,
+    )
+}
+
+fn encode_multi_positions_parts(
+    performance: &execution_sim::MultiPerformanceSummary,
+    accounting_version: u16,
+    ledger_checksum: &str,
+) -> Vec<u8> {
     let mut output = format!(
-        "schema_version: 1\naccounting_version: {ACCOUNTING_VERSION}\nledger_checksum: {ledger_checksum}\ninstruments:\n"
+        "schema_version: 1\naccounting_version: {accounting_version}\nledger_checksum: {ledger_checksum}\ninstruments:\n"
     );
-    for instrument in completed.performance.instruments() {
+    for instrument in performance.instruments() {
         let summary = instrument.summary();
         output.push_str(&format!(
             "  - instrument: {}\n    model: {}\n    quantity_unit: {}\n    units_per_trading_unit: {}\n    multiplier_atoms: {}\n    multiplier_provenance: {}\n    position: {}\n    average_cost_atoms: {}\n    final_cash_atoms: {}\n",
@@ -512,17 +816,29 @@ fn encode_multi_positions(completed: &CompletedMultiBacktest, ledger_checksum: &
 }
 
 fn encode_multi_performance(completed: &CompletedMultiBacktest, ledger_checksum: &str) -> Vec<u8> {
+    encode_multi_performance_parts(
+        &completed.performance,
+        completed.ledger.accounting_version(),
+        ledger_checksum,
+    )
+}
+
+fn encode_multi_performance_parts(
+    performance: &execution_sim::MultiPerformanceSummary,
+    accounting_version: u16,
+    ledger_checksum: &str,
+) -> Vec<u8> {
     let mut output = format!(
-        "schema_version: 1\naccounting_version: {ACCOUNTING_VERSION}\nledger_checksum: {ledger_checksum}\ninitial_cash_atoms: {}\nfinal_cash_atoms: {}\nrealized_pnl_atoms: {}\nunrealized_pnl_atoms: {}\ntotal_fee_atoms: {}\ntotal_tax_atoms: {}\nfill_count: {}\ninstruments:\n",
-        completed.performance.initial_cash().atoms(),
-        completed.performance.final_cash().atoms(),
-        completed.performance.realized_pnl().atoms(),
-        completed.performance.unrealized_pnl().atoms(),
-        completed.performance.total_fee().atoms(),
-        completed.performance.total_tax().atoms(),
-        completed.performance.fill_count(),
+        "schema_version: 1\naccounting_version: {accounting_version}\nledger_checksum: {ledger_checksum}\ninitial_cash_atoms: {}\nfinal_cash_atoms: {}\nrealized_pnl_atoms: {}\nunrealized_pnl_atoms: {}\ntotal_fee_atoms: {}\ntotal_tax_atoms: {}\nfill_count: {}\ninstruments:\n",
+        performance.initial_cash().atoms(),
+        performance.final_cash().atoms(),
+        performance.realized_pnl().atoms(),
+        performance.unrealized_pnl().atoms(),
+        performance.total_fee().atoms(),
+        performance.total_tax().atoms(),
+        performance.fill_count(),
     );
-    for instrument in completed.performance.instruments() {
+    for instrument in performance.instruments() {
         let summary = instrument.summary();
         output.push_str(&format!(
             "  - instrument: {}\n    model: {}\n    realized_pnl_atoms: {}\n    unrealized_pnl_atoms: {}\n    total_fee_atoms: {}\n    total_tax_atoms: {}\n    fill_count: {}\n",

@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use market_types::{Decimal, InstrumentId, QuantityUnit, TradingDate};
+use market_types::{Decimal, InstrumentId, MarketId, QuantityUnit, TradingDate};
 use strategy_api::{CanonicalParamsChecksum, SessionKind, StrategyDeclaration, StrategyIdentity};
 
 use crate::canonical::{
@@ -14,7 +14,8 @@ use crate::canonical::{
 };
 
 pub const CONFIG_SCHEMA_VERSION: u16 = 1;
-pub const EFFECTIVE_CONFIG_VERSION: u16 = 2;
+pub const EFFECTIVE_CONFIG_VERSION: u16 = 4;
+pub const LEGACY_EFFECTIVE_CONFIG_VERSION: u16 = 2;
 pub const SOURCE_POLICY_VERSION: u16 = 1;
 pub const CACHE_POLICY_VERSION: u16 = 1;
 pub const REPLAY_DATA_POLICY_VERSION: u16 = 1;
@@ -150,6 +151,37 @@ pub enum SlippageModelConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+pub enum ExecutionPolicyConfig {
+    SubsequentEventV1 = 1,
+    ScheduledVisibleDepthV1 = 2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScheduledExecutionConfig {
+    depth_levels: u8,
+    max_stale_ms: u64,
+}
+
+impl ScheduledExecutionConfig {
+    #[must_use]
+    pub const fn new(depth_levels: u8, max_stale_ms: u64) -> Self {
+        Self {
+            depth_levels,
+            max_stale_ms,
+        }
+    }
+    #[must_use]
+    pub const fn depth_levels(self) -> u8 {
+        self.depth_levels
+    }
+    #[must_use]
+    pub const fn max_stale_ms(self) -> u64 {
+        self.max_stale_ms
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum ChargeSides {
     Buy = 1,
     Sell = 2,
@@ -164,14 +196,138 @@ pub enum RoundingPolicy {
     Up = 3,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ChargeBasis {
+    NotionalRate = 1,
+    FixedPerUnit = 2,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChargeConfig {
+    basis: ChargeBasis,
     rate: Decimal,
     applicable_sides: ChargeSides,
     minimum: Decimal,
     precision: u8,
     rounding: RoundingPolicy,
     provenance: Box<str>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum DayTradeMatchingConfig {
+    SameAccountInstrumentTradingDateFifo = 1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DayTradeTaxConfig {
+    charge: ChargeConfig,
+    matching: DayTradeMatchingConfig,
+    timezone_offset_minutes: i32,
+    eligible_dates: Box<[TradingDate]>,
+    eligibility_required: bool,
+    valid_through: TradingDate,
+    provenance: Box<str>,
+}
+
+impl DayTradeTaxConfig {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        charge: ChargeConfig,
+        matching: DayTradeMatchingConfig,
+        timezone_offset_minutes: i32,
+        eligible_dates: impl IntoIterator<Item = TradingDate>,
+        eligibility_required: bool,
+        valid_through: TradingDate,
+        provenance: impl Into<Box<str>>,
+    ) -> Self {
+        let dates = eligible_dates.into_iter().collect::<BTreeSet<_>>();
+        Self {
+            charge,
+            matching,
+            timezone_offset_minutes,
+            eligible_dates: dates.into_iter().collect(),
+            eligibility_required,
+            valid_through,
+            provenance: provenance.into(),
+        }
+    }
+
+    #[must_use]
+    pub const fn charge(&self) -> &ChargeConfig {
+        &self.charge
+    }
+    #[must_use]
+    pub const fn matching(&self) -> DayTradeMatchingConfig {
+        self.matching
+    }
+    #[must_use]
+    pub const fn timezone_offset_minutes(&self) -> i32 {
+        self.timezone_offset_minutes
+    }
+    #[must_use]
+    pub const fn eligible_dates(&self) -> &[TradingDate] {
+        &self.eligible_dates
+    }
+    #[must_use]
+    pub const fn eligibility_required(&self) -> bool {
+        self.eligibility_required
+    }
+    #[must_use]
+    pub const fn valid_through(&self) -> TradingDate {
+        self.valid_through
+    }
+    #[must_use]
+    pub fn provenance(&self) -> &str {
+        &self.provenance
+    }
+
+    #[must_use]
+    pub fn is_eligible(&self, date: TradingDate) -> bool {
+        self.eligible_dates.binary_search(&date).is_ok()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstrumentChargeConfig {
+    instrument: InstrumentId,
+    fee: ChargeConfig,
+    tax: ChargeConfig,
+    day_trade_tax: Option<DayTradeTaxConfig>,
+}
+
+impl InstrumentChargeConfig {
+    #[must_use]
+    pub const fn new(
+        instrument: InstrumentId,
+        fee: ChargeConfig,
+        tax: ChargeConfig,
+        day_trade_tax: Option<DayTradeTaxConfig>,
+    ) -> Self {
+        Self {
+            instrument,
+            fee,
+            tax,
+            day_trade_tax,
+        }
+    }
+    #[must_use]
+    pub const fn instrument(&self) -> &InstrumentId {
+        &self.instrument
+    }
+    #[must_use]
+    pub const fn fee(&self) -> &ChargeConfig {
+        &self.fee
+    }
+    #[must_use]
+    pub const fn tax(&self) -> &ChargeConfig {
+        &self.tax
+    }
+    #[must_use]
+    pub const fn day_trade_tax(&self) -> Option<&DayTradeTaxConfig> {
+        self.day_trade_tax.as_ref()
+    }
 }
 
 impl ChargeConfig {
@@ -184,6 +340,7 @@ impl ChargeConfig {
         provenance: impl Into<Box<str>>,
     ) -> Self {
         Self {
+            basis: ChargeBasis::NotionalRate,
             rate,
             applicable_sides,
             minimum,
@@ -191,6 +348,29 @@ impl ChargeConfig {
             rounding,
             provenance: provenance.into(),
         }
+    }
+
+    pub fn fixed_per_unit(
+        amount: Decimal,
+        applicable_sides: ChargeSides,
+        precision: u8,
+        rounding: RoundingPolicy,
+        provenance: impl Into<Box<str>>,
+    ) -> Self {
+        Self {
+            basis: ChargeBasis::FixedPerUnit,
+            rate: amount,
+            applicable_sides,
+            minimum: Decimal::ZERO,
+            precision,
+            rounding,
+            provenance: provenance.into(),
+        }
+    }
+
+    #[must_use]
+    pub const fn basis(&self) -> ChargeBasis {
+        self.basis
     }
 
     #[must_use]
@@ -226,6 +406,8 @@ impl ChargeConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SimulationConfig {
+    execution_policy: ExecutionPolicyConfig,
+    scheduled_execution: Option<ScheduledExecutionConfig>,
     fill_model: FillModelConfig,
     latency: LatencyConfig,
     quantity_allocation: QuantityAllocationConfig,
@@ -235,6 +417,7 @@ pub struct SimulationConfig {
     initial_cash: CurrencyAmount,
     position_accounting: PositionAccountingConfig,
     marking_policy: MarkingPolicyConfig,
+    instrument_charges: Box<[InstrumentChargeConfig]>,
 }
 
 impl SimulationConfig {
@@ -250,6 +433,8 @@ impl SimulationConfig {
         marking_policy: MarkingPolicyConfig,
     ) -> Self {
         Self {
+            execution_policy: ExecutionPolicyConfig::SubsequentEventV1,
+            scheduled_execution: None,
             fill_model,
             latency: LatencyConfig::default(),
             quantity_allocation,
@@ -259,7 +444,25 @@ impl SimulationConfig {
             initial_cash,
             position_accounting,
             marking_policy,
+            instrument_charges: Box::new([]),
         }
+    }
+
+    #[must_use]
+    pub const fn with_scheduled_execution(mut self, config: ScheduledExecutionConfig) -> Self {
+        self.execution_policy = ExecutionPolicyConfig::ScheduledVisibleDepthV1;
+        self.scheduled_execution = Some(config);
+        self
+    }
+
+    #[must_use]
+    pub const fn execution_policy(&self) -> ExecutionPolicyConfig {
+        self.execution_policy
+    }
+
+    #[must_use]
+    pub const fn scheduled_execution(&self) -> Option<ScheduledExecutionConfig> {
+        self.scheduled_execution
     }
 
     #[must_use]
@@ -311,6 +514,27 @@ impl SimulationConfig {
     #[must_use]
     pub const fn marking_policy(&self) -> MarkingPolicyConfig {
         self.marking_policy
+    }
+
+    #[must_use]
+    pub fn with_instrument_charges(
+        mut self,
+        charges: impl IntoIterator<Item = InstrumentChargeConfig>,
+    ) -> Self {
+        self.instrument_charges = charges.into_iter().collect();
+        self
+    }
+
+    #[must_use]
+    pub const fn instrument_charges(&self) -> &[InstrumentChargeConfig] {
+        &self.instrument_charges
+    }
+
+    #[must_use]
+    pub fn charges_for(&self, instrument: &InstrumentId) -> Option<&InstrumentChargeConfig> {
+        self.instrument_charges
+            .iter()
+            .find(|charges| charges.instrument() == instrument)
     }
 }
 
@@ -471,7 +695,7 @@ pub struct EffectiveRunConfig {
 }
 
 impl EffectiveRunConfig {
-    pub fn resolve(config: RunConfig) -> Result<Self, ConfigError> {
+    pub fn resolve(mut config: RunConfig) -> Result<Self, ConfigError> {
         if config.config_version != CONFIG_SCHEMA_VERSION {
             return Err(ConfigError::UnsupportedConfigVersion {
                 actual: config.config_version,
@@ -504,6 +728,7 @@ impl EffectiveRunConfig {
         let output_policy = config.output_policy.unwrap_or(OutputPolicy::CreateNew);
 
         validate_simulation(&config.simulation)?;
+        validate_instrument_charges(&mut config.simulation, &universe, &trading_dates)?;
         let instrument_economics = validate_economics(config.instrument_economics, &universe)?;
 
         let mut effective = Self {
@@ -595,7 +820,7 @@ impl EffectiveRunConfig {
     fn encode_semantics(&self) -> Result<Vec<u8>, ConfigError> {
         let mut output = Vec::new();
         output.extend_from_slice(b"OSECFG01");
-        output.extend_from_slice(&EFFECTIVE_CONFIG_VERSION.to_be_bytes());
+        output.extend_from_slice(&self.canonical_version().to_be_bytes());
         output.extend_from_slice(&CONFIG_SCHEMA_VERSION.to_be_bytes());
         output.extend_from_slice(&SOURCE_POLICY_VERSION.to_be_bytes());
         output.extend_from_slice(&CACHE_POLICY_VERSION.to_be_bytes());
@@ -621,13 +846,28 @@ impl EffectiveRunConfig {
         output.push(self.source_policy as u8);
         output.push(self.cache_policy as u8);
         output.push(self.replay_data_policy as u8);
-        append_simulation(&self.simulation, &mut output)?;
+        append_simulation(
+            &self.simulation,
+            self.canonical_version() >= EFFECTIVE_CONFIG_VERSION,
+            &mut output,
+        )?;
         append_len(self.instrument_economics.len(), &mut output)?;
         for economics in &self.instrument_economics {
             append_economics(economics, &mut output)?;
         }
         output.push(self.output_policy as u8);
         Ok(output)
+    }
+
+    #[must_use]
+    pub fn canonical_version(&self) -> u16 {
+        if self.simulation.instrument_charges.is_empty()
+            && self.simulation.execution_policy == ExecutionPolicyConfig::SubsequentEventV1
+        {
+            LEGACY_EFFECTIVE_CONFIG_VERSION
+        } else {
+            EFFECTIVE_CONFIG_VERSION
+        }
     }
 }
 
@@ -663,9 +903,66 @@ fn validate_simulation(config: &SimulationConfig) -> Result<(), ConfigError> {
     }
     validate_charge(&config.fee_model, ConfigError::InvalidFee)?;
     validate_charge(&config.tax_model, ConfigError::InvalidTax)?;
+    match (config.execution_policy, config.scheduled_execution) {
+        (ExecutionPolicyConfig::SubsequentEventV1, None) => {}
+        (ExecutionPolicyConfig::ScheduledVisibleDepthV1, Some(scheduled))
+            if (1..=5).contains(&scheduled.depth_levels) && scheduled.max_stale_ms > 0 => {}
+        _ => return Err(ConfigError::InvalidScheduledExecution),
+    }
     if config.initial_cash.currency != Currency::Twd || config.initial_cash.amount <= Decimal::ZERO
     {
         return Err(ConfigError::InvalidInitialCash);
+    }
+    Ok(())
+}
+
+fn validate_instrument_charges(
+    simulation: &mut SimulationConfig,
+    universe: &[InstrumentId],
+    trading_dates: &[TradingDate],
+) -> Result<(), ConfigError> {
+    simulation
+        .instrument_charges
+        .sort_by(|left, right| left.instrument.cmp(&right.instrument));
+    for pair in simulation.instrument_charges.windows(2) {
+        if pair[0].instrument == pair[1].instrument {
+            return Err(ConfigError::DuplicateInstrumentCharges(
+                pair[0].instrument.clone(),
+            ));
+        }
+    }
+    for charges in &simulation.instrument_charges {
+        if !universe.contains(&charges.instrument) {
+            return Err(ConfigError::ChargesOutsideUniverse(
+                charges.instrument.clone(),
+            ));
+        }
+        validate_charge(&charges.fee, ConfigError::InvalidFee)?;
+        validate_charge(&charges.tax, ConfigError::InvalidTax)?;
+        let Some(day_trade) = &charges.day_trade_tax else {
+            continue;
+        };
+        if !matches!(charges.instrument.market(), MarketId::Twse | MarketId::Tpex)
+            || charges.tax.basis != ChargeBasis::NotionalRate
+            || day_trade.charge.basis != ChargeBasis::NotionalRate
+            || charges.tax.applicable_sides != ChargeSides::Sell
+            || day_trade.charge.applicable_sides != ChargeSides::Sell
+            || day_trade.charge.rate > charges.tax.rate
+            || day_trade.provenance.is_empty()
+            || !(-1_439..=1_439).contains(&day_trade.timezone_offset_minutes)
+        {
+            return Err(ConfigError::InvalidDayTradeTax(charges.instrument.clone()));
+        }
+        validate_charge(&day_trade.charge, ConfigError::InvalidTax)?;
+        if day_trade.eligibility_required
+            && trading_dates
+                .iter()
+                .any(|date| !day_trade.is_eligible(*date))
+        {
+            return Err(ConfigError::MissingDayTradeEligibility(
+                charges.instrument.clone(),
+            ));
+        }
     }
     Ok(())
 }
@@ -715,7 +1012,11 @@ fn validate_economics(
     Ok(by_instrument.into_values().collect())
 }
 
-fn append_simulation(config: &SimulationConfig, output: &mut Vec<u8>) -> Result<(), ConfigError> {
+fn append_simulation(
+    config: &SimulationConfig,
+    extended: bool,
+    output: &mut Vec<u8>,
+) -> Result<(), ConfigError> {
     output.push(config.fill_model.evidence as u8);
     output.push(config.fill_model.quantity as u8);
     output.extend_from_slice(&config.latency.market_data_latency_ms.to_be_bytes());
@@ -727,8 +1028,41 @@ fn append_simulation(config: &SimulationConfig, output: &mut Vec<u8>) -> Result<
             append_decimal(delta, output);
         }
     }
-    append_charge(&config.fee_model, output)?;
-    append_charge(&config.tax_model, output)?;
+    append_charge(&config.fee_model, extended, output)?;
+    append_charge(&config.tax_model, extended, output)?;
+    if extended {
+        output.push(config.execution_policy as u8);
+        match config.scheduled_execution {
+            None => output.push(0),
+            Some(scheduled) => {
+                output.push(1);
+                output.push(scheduled.depth_levels);
+                output.extend_from_slice(&scheduled.max_stale_ms.to_be_bytes());
+            }
+        }
+        append_len(config.instrument_charges.len(), output)?;
+        for charges in &config.instrument_charges {
+            append_instrument(&charges.instrument, output)?;
+            append_charge(&charges.fee, true, output)?;
+            append_charge(&charges.tax, true, output)?;
+            match &charges.day_trade_tax {
+                None => output.push(0),
+                Some(day_trade) => {
+                    output.push(1);
+                    append_charge(&day_trade.charge, true, output)?;
+                    output.push(day_trade.matching as u8);
+                    output.extend_from_slice(&day_trade.timezone_offset_minutes.to_be_bytes());
+                    append_len(day_trade.eligible_dates.len(), output)?;
+                    for date in &day_trade.eligible_dates {
+                        output.extend_from_slice(&date.to_canonical_bytes());
+                    }
+                    output.push(u8::from(day_trade.eligibility_required));
+                    output.extend_from_slice(&day_trade.valid_through.to_canonical_bytes());
+                    append_text(&day_trade.provenance, output)?;
+                }
+            }
+        }
+    }
     output.push(config.initial_cash.currency as u8);
     append_decimal(config.initial_cash.amount, output);
     output.push(config.position_accounting as u8);
@@ -743,7 +1077,14 @@ fn append_simulation(config: &SimulationConfig, output: &mut Vec<u8>) -> Result<
     Ok(())
 }
 
-fn append_charge(config: &ChargeConfig, output: &mut Vec<u8>) -> Result<(), ConfigError> {
+fn append_charge(
+    config: &ChargeConfig,
+    include_basis: bool,
+    output: &mut Vec<u8>,
+) -> Result<(), ConfigError> {
+    if include_basis {
+        output.push(config.basis as u8);
+    }
     append_decimal(config.rate, output);
     output.push(config.applicable_sides as u8);
     append_decimal(config.minimum, output);
@@ -779,10 +1120,15 @@ pub enum ConfigError {
     InvalidFee,
     InvalidTax,
     InvalidInitialCash,
+    InvalidScheduledExecution,
     EconomicsOutsideUniverse(InstrumentId),
     DuplicateInstrumentEconomics(InstrumentId),
     MissingInstrumentEconomics(InstrumentId),
     InvalidInstrumentEconomics(InstrumentId),
+    ChargesOutsideUniverse(InstrumentId),
+    DuplicateInstrumentCharges(InstrumentId),
+    InvalidDayTradeTax(InstrumentId),
+    MissingDayTradeEligibility(InstrumentId),
     CanonicalLengthOverflow,
 }
 
@@ -812,6 +1158,9 @@ impl fmt::Display for ConfigError {
             Self::InvalidFee => formatter.write_str("fee configuration is invalid"),
             Self::InvalidTax => formatter.write_str("tax configuration is invalid"),
             Self::InvalidInitialCash => formatter.write_str("initial cash must be positive TWD"),
+            Self::InvalidScheduledExecution => formatter.write_str(
+                "scheduled visible-depth execution requires depth_levels 1..=5 and positive max_stale_ms",
+            ),
             Self::EconomicsOutsideUniverse(instrument) => {
                 write!(
                     formatter,
@@ -827,6 +1176,22 @@ impl fmt::Display for ConfigError {
             Self::InvalidInstrumentEconomics(instrument) => {
                 write!(formatter, "invalid instrument economics: {instrument:?}")
             }
+            Self::ChargesOutsideUniverse(instrument) => {
+                write!(
+                    formatter,
+                    "charges instrument is outside universe: {instrument:?}"
+                )
+            }
+            Self::DuplicateInstrumentCharges(instrument) => {
+                write!(formatter, "duplicate instrument charges: {instrument:?}")
+            }
+            Self::InvalidDayTradeTax(instrument) => {
+                write!(formatter, "invalid day-trade tax model: {instrument:?}")
+            }
+            Self::MissingDayTradeEligibility(instrument) => write!(
+                formatter,
+                "missing day-trade eligibility for a configured trading date: {instrument:?}"
+            ),
             Self::CanonicalLengthOverflow => {
                 formatter.write_str("canonical variable-length field exceeds u32")
             }

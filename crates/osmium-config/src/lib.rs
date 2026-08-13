@@ -12,11 +12,13 @@ use market_types::{
 use replay_engine::{ReplayPlan, ReplayStreamBinding, StableStreamDescriptorId};
 use run_planner::{
     CacheIdentity, CachePolicy, CacheState, ChargeConfig, ChargeSides, Currency, CurrencyAmount,
-    EffectiveRunConfig, ExecutionPlan, FillEvidence, FillModelConfig, InstrumentEconomicsConfig,
-    LatencyConfig, MarkingPolicyConfig, OutputPolicy, PlannedPartition, PositionAccountingConfig,
+    DayTradeMatchingConfig, DayTradeTaxConfig, EffectiveRunConfig, ExecutionPlan, FillEvidence,
+    FillModelConfig, InstrumentChargeConfig, InstrumentEconomicsConfig, LatencyConfig,
+    MarkingPolicyConfig, OutputPolicy, PlannedPartition, PositionAccountingConfig,
     QuantityAllocationConfig, QuantityEvidence, ReplayDataPolicy, RoundingPolicy,
-    RunConfig as PlannerRunConfig, SessionPlan, SessionPlanError, SlippageModelConfig, SourceId,
-    SourcePartitionKey, SourcePolicy, SourceState, StrategyBinding,
+    RunConfig as PlannerRunConfig, ScheduledExecutionConfig, SessionPlan, SessionPlanError,
+    SessionProfileId, SlippageModelConfig, SourceId, SourcePartitionKey, SourcePolicy, SourceState,
+    StrategyBinding,
 };
 use serde::Deserialize;
 use strategy_api::{
@@ -27,10 +29,63 @@ use strategy_api::{
 pub const RUN_CONFIG_VERSION: u16 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StrategyReferenceInput {
+    schema_version: u16,
+    path: PathBuf,
+    checksum: Box<str>,
+}
+
+impl StrategyReferenceInput {
+    #[must_use]
+    pub const fn schema_version(&self) -> u16 {
+        self.schema_version
+    }
+
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    #[must_use]
+    pub fn checksum(&self) -> &str {
+        &self.checksum
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StrategyBootstrapConfig {
+    reference: Option<StrategyReferenceInput>,
+    simulation: run_planner::SimulationConfig,
+}
+
+impl StrategyBootstrapConfig {
+    #[must_use]
+    pub const fn reference(&self) -> Option<&StrategyReferenceInput> {
+        self.reference.as_ref()
+    }
+
+    #[must_use]
+    pub const fn order_latency_ms(&self) -> u64 {
+        self.simulation.latency().order_latency_ms()
+    }
+
+    #[must_use]
+    pub const fn market_data_latency_ms(&self) -> u64 {
+        self.simulation.latency().market_data_latency_ms()
+    }
+
+    #[must_use]
+    pub const fn simulation(&self) -> &run_planner::SimulationConfig {
+        &self.simulation
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstrumentSelection {
     instrument: InstrumentId,
     session_kinds: Box<[SessionKind]>,
     kind: InstrumentKind,
+    session_profile: Option<SessionProfileId>,
     reference: Option<InstrumentReference>,
 }
 
@@ -111,6 +166,11 @@ impl InstrumentSelection {
     }
 
     #[must_use]
+    pub const fn session_profile(&self) -> Option<SessionProfileId> {
+        self.session_profile
+    }
+
+    #[must_use]
     pub const fn reference(&self) -> Option<&InstrumentReference> {
         self.reference.as_ref()
     }
@@ -169,27 +229,32 @@ impl RunConfig {
     }
 
     pub fn session_plan_for(&self, key: &SourcePartitionKey) -> Result<SessionPlan, ConfigError> {
-        let kind = self.instrument_kind_for(key.instrument());
-        SessionPlan::for_instrument_kind(
-            key.instrument(),
-            kind,
-            key.trading_date(),
-            key.session_kinds().iter().copied(),
-        )
-        .map_err(ConfigError::SessionPlan)
+        if let Some(selection) = self.selection_for(key.instrument()) {
+            session_plan(
+                selection,
+                key.trading_date(),
+                key.session_kinds().iter().copied(),
+            )
+        } else {
+            SessionPlan::for_instrument_kind(
+                key.instrument(),
+                self.instrument_kind_for(key.instrument()),
+                key.trading_date(),
+                key.session_kinds().iter().copied(),
+            )
+            .map_err(ConfigError::SessionPlan)
+        }
     }
 
     pub fn partition_keys(&self) -> Result<Box<[SourcePartitionKey]>, ConfigError> {
         let mut keys = Vec::new();
         for selection in &self.selections {
             for trading_date in self.effective.trading_dates() {
-                let session_plan = SessionPlan::for_instrument_kind(
-                    &selection.instrument,
-                    selection.kind,
+                let session_plan = session_plan(
+                    selection,
                     *trading_date,
                     selection.session_kinds.iter().copied(),
-                )
-                .map_err(ConfigError::SessionPlan)?;
+                )?;
                 keys.push(
                     SourcePartitionKey::new(
                         SourceId::TeralionFeedArchive,
@@ -234,7 +299,24 @@ pub fn config_version(path: impl AsRef<Path>) -> Result<u16, ConfigError> {
         .ok_or(ConfigError::Invalid("config_version"))
 }
 
+pub fn strategy_bootstrap(path: impl AsRef<Path>) -> Result<StrategyBootstrapConfig, ConfigError> {
+    let path = path.as_ref();
+    let bytes = fs::read(path)?;
+    reject_secrets(&bytes)?;
+    let raw: BootstrapFileConfig =
+        serde_yaml::from_slice(&bytes).map_err(|error| ConfigError::Yaml(error.to_string()))?;
+    let reference = raw
+        .strategy_reference
+        .map(|reference| validate_strategy_reference(path, reference))
+        .transpose()?;
+    Ok(StrategyBootstrapConfig {
+        reference,
+        simulation: parse_simulation(raw.simulation)?,
+    })
+}
+
 pub fn load(path: impl AsRef<Path>, registry: &StrategyRegistry) -> Result<RunConfig, ConfigError> {
+    let path = path.as_ref();
     let bytes = fs::read(path)?;
     reject_secrets(&bytes)?;
     let value: serde_yaml::Value =
@@ -252,6 +334,9 @@ pub fn load(path: impl AsRef<Path>, registry: &StrategyRegistry) -> Result<RunCo
     }
     let raw: FileConfig =
         serde_yaml::from_value(value).map_err(|error| ConfigError::Yaml(error.to_string()))?;
+    if let Some(reference) = raw.strategy_reference.clone() {
+        validate_strategy_reference(path, reference)?;
+    }
     resolve(raw, registry)
 }
 
@@ -263,13 +348,11 @@ pub fn plan(config: &RunConfig) -> Result<PlanBundle, ConfigError> {
     let cache_catalog = PartitionCacheCatalog::new(config.effective.data_root());
     for selection in &config.selections {
         for trading_date in config.effective.trading_dates() {
-            let session_plan = SessionPlan::for_instrument_kind(
-                &selection.instrument,
-                selection.kind,
+            let session_plan = session_plan(
+                selection,
                 *trading_date,
                 selection.session_kinds.iter().copied(),
-            )
-            .map_err(ConfigError::SessionPlan)?;
+            )?;
             let key = SourcePartitionKey::new(
                 SourceId::TeralionFeedArchive,
                 selection.instrument.clone(),
@@ -460,6 +543,11 @@ fn parse_selection(raw: &InstrumentConfig) -> Result<InstrumentSelection, Config
         .map(parse_instrument_kind)
         .transpose()?
         .unwrap_or_else(|| default_kind(market));
+    let session_profile = raw
+        .session_profile
+        .as_deref()
+        .map(parse_session_profile)
+        .transpose()?;
     let reference = raw.reference.as_ref().map(parse_reference).transpose()?;
     match (market, kind) {
         (MarketId::Twse | MarketId::Tpex, InstrumentKind::Equity)
@@ -470,6 +558,9 @@ fn parse_selection(raw: &InstrumentConfig) -> Result<InstrumentSelection, Config
             return Err(ConfigError::Invalid("universe.instruments.instrument_kind"));
         }
     }
+    if session_profile.is_some_and(|profile| !profile_matches(profile, market, kind)) {
+        return Err(ConfigError::Invalid("universe.instruments.session_profile"));
+    }
     if matches!(kind, InstrumentKind::Warrant | InstrumentKind::Option) && reference.is_none() {
         return Err(ConfigError::Invalid("universe.instruments.reference"));
     }
@@ -477,8 +568,57 @@ fn parse_selection(raw: &InstrumentConfig) -> Result<InstrumentSelection, Config
         instrument,
         session_kinds: session_kinds.into_boxed_slice(),
         kind,
+        session_profile,
         reference,
     })
+}
+
+fn session_plan(
+    selection: &InstrumentSelection,
+    trading_date: TradingDate,
+    session_kinds: impl IntoIterator<Item = SessionKind>,
+) -> Result<SessionPlan, ConfigError> {
+    match selection.session_profile {
+        Some(profile) => {
+            SessionPlan::with_profile(&selection.instrument, trading_date, profile, session_kinds)
+        }
+        None => SessionPlan::for_instrument_kind(
+            &selection.instrument,
+            selection.kind,
+            trading_date,
+            session_kinds,
+        ),
+    }
+    .map_err(ConfigError::SessionPlan)
+}
+
+const fn profile_matches(
+    profile: SessionProfileId,
+    market: MarketId,
+    kind: InstrumentKind,
+) -> bool {
+    matches!(
+        (profile, market, kind),
+        (
+            SessionProfileId::TwseRegular,
+            MarketId::Twse,
+            InstrumentKind::Equity | InstrumentKind::Warrant
+        ) | (
+            SessionProfileId::TpexRegular,
+            MarketId::Tpex,
+            InstrumentKind::Equity | InstrumentKind::Warrant
+        ) | (
+            SessionProfileId::TaifexIndexFutures
+                | SessionProfileId::TaifexStockFutures
+                | SessionProfileId::TaifexStockFuturesRegularOnly,
+            MarketId::Taifex,
+            InstrumentKind::Future
+        ) | (
+            SessionProfileId::TaifexIndexOptions,
+            MarketId::Taifex,
+            InstrumentKind::Option
+        )
+    )
 }
 
 fn default_kind(market: MarketId) -> InstrumentKind {
@@ -495,6 +635,18 @@ fn parse_instrument_kind(value: &str) -> Result<InstrumentKind, ConfigError> {
         "future" => Ok(InstrumentKind::Future),
         "option" => Ok(InstrumentKind::Option),
         _ => Err(ConfigError::Invalid("universe.instruments.instrument_kind")),
+    }
+}
+
+fn parse_session_profile(value: &str) -> Result<SessionProfileId, ConfigError> {
+    match value {
+        "twse_regular" => Ok(SessionProfileId::TwseRegular),
+        "tpex_regular" => Ok(SessionProfileId::TpexRegular),
+        "taifex_index_futures" => Ok(SessionProfileId::TaifexIndexFutures),
+        "taifex_stock_futures" => Ok(SessionProfileId::TaifexStockFutures),
+        "taifex_stock_futures_regular_only" => Ok(SessionProfileId::TaifexStockFuturesRegularOnly),
+        "taifex_index_options" => Ok(SessionProfileId::TaifexIndexOptions),
+        _ => Err(ConfigError::Invalid("universe.instruments.session_profile")),
     }
 }
 
@@ -624,7 +776,7 @@ fn parse_simulation(
         raw.marking.model == "last_observable_mark_v1",
         "simulation.marking.model",
     )?;
-    Ok(run_planner::SimulationConfig::new(
+    let mut simulation = run_planner::SimulationConfig::new(
         fill,
         QuantityAllocationConfig::AcceptanceSequence,
         SlippageModelConfig::AdverseFixedDelta {
@@ -641,11 +793,72 @@ fn parse_simulation(
     .with_latency(LatencyConfig::new(
         raw.market_data_latency_ms,
         raw.order_latency_ms,
-    )))
+    ));
+    match (raw.execution_policy.as_str(), raw.scheduled_execution) {
+        ("subsequent_event_v1", None) => {}
+        ("scheduled_visible_depth_v1", Some(scheduled)) => {
+            simulation = simulation.with_scheduled_execution(ScheduledExecutionConfig::new(
+                scheduled.depth_levels,
+                scheduled.max_stale_ms,
+            ));
+        }
+        ("subsequent_event_v1", Some(_)) | ("scheduled_visible_depth_v1", None) => {
+            return Err(ConfigError::Invalid("simulation.scheduled_execution"));
+        }
+        _ => return Err(ConfigError::Invalid("simulation.execution_policy")),
+    }
+    let instrument_charges = raw
+        .instrument_charges
+        .into_iter()
+        .map(parse_instrument_charges)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(simulation.with_instrument_charges(instrument_charges))
+}
+
+fn parse_instrument_charges(
+    raw: InstrumentChargeFileConfig,
+) -> Result<InstrumentChargeConfig, ConfigError> {
+    let instrument = InstrumentId::new(
+        parse_market(&raw.market)?,
+        Symbol::new(raw.symbol).map_err(|error| ConfigError::Value(error.to_string()))?,
+    );
+    let fee = parse_charge(raw.fee)?;
+    let tax = parse_charge(raw.tax)?;
+    let day_trade_tax = raw
+        .day_trade_tax
+        .map(|day_trade| -> Result<DayTradeTaxConfig, ConfigError> {
+            require(
+                day_trade.matching == "same_account_instrument_trading_date_fifo",
+                "simulation.instrument_charges.day_trade_tax.matching",
+            )?;
+            let eligible_dates = day_trade
+                .eligible_dates
+                .iter()
+                .map(|value| {
+                    TradingDate::parse(value).map_err(|error| ConfigError::Value(error.to_string()))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(DayTradeTaxConfig::new(
+                parse_charge(day_trade.charge)?,
+                DayTradeMatchingConfig::SameAccountInstrumentTradingDateFifo,
+                day_trade.timezone_offset_minutes,
+                eligible_dates,
+                day_trade.eligibility_required,
+                TradingDate::parse(&day_trade.valid_through)
+                    .map_err(|error| ConfigError::Value(error.to_string()))?,
+                day_trade.provenance,
+            ))
+        })
+        .transpose()?;
+    Ok(InstrumentChargeConfig::new(
+        instrument,
+        fee,
+        tax,
+        day_trade_tax,
+    ))
 }
 
 fn parse_charge(raw: ChargeFileConfig) -> Result<ChargeConfig, ConfigError> {
-    require(raw.model == "configured_rate", "simulation.charge.model")?;
     let buy = raw.applicable_sides.iter().any(|side| side == "buy");
     let sell = raw.applicable_sides.iter().any(|side| side == "sell");
     let sides = match (buy, sell) {
@@ -654,19 +867,38 @@ fn parse_charge(raw: ChargeFileConfig) -> Result<ChargeConfig, ConfigError> {
         (false, true) => ChargeSides::Sell,
         _ => return Err(ConfigError::Invalid("simulation.charge.applicable_sides")),
     };
-    Ok(ChargeConfig::new(
-        decimal(&raw.rate)?,
-        sides,
-        decimal(&raw.minimum)?,
-        raw.precision,
-        match raw.rounding.as_str() {
-            "down" => RoundingPolicy::Down,
-            "half_up" => RoundingPolicy::HalfUp,
-            "up" => RoundingPolicy::Up,
-            _ => return Err(ConfigError::Invalid("simulation.charge.rounding")),
-        },
-        raw.provenance,
-    ))
+    let rounding = match raw.rounding.as_str() {
+        "down" => RoundingPolicy::Down,
+        "half_up" => RoundingPolicy::HalfUp,
+        "up" => RoundingPolicy::Up,
+        _ => return Err(ConfigError::Invalid("simulation.charge.rounding")),
+    };
+    match raw.model.as_str() {
+        "configured_rate" if raw.amount_per_unit.is_none() => Ok(ChargeConfig::new(
+            decimal(
+                raw.rate
+                    .as_deref()
+                    .ok_or(ConfigError::Invalid("simulation.charge.rate"))?,
+            )?,
+            sides,
+            decimal(raw.minimum.as_deref().unwrap_or("0"))?,
+            raw.precision,
+            rounding,
+            raw.provenance,
+        )),
+        "fixed_per_unit" if raw.rate.is_none() => Ok(ChargeConfig::fixed_per_unit(
+            decimal(
+                raw.amount_per_unit
+                    .as_deref()
+                    .ok_or(ConfigError::Invalid("simulation.charge.amount_per_unit"))?,
+            )?,
+            sides,
+            raw.precision,
+            rounding,
+            raw.provenance,
+        )),
+        _ => Err(ConfigError::Invalid("simulation.charge.model")),
+    }
 }
 
 fn parse_market(value: &str) -> Result<MarketId, ConfigError> {
@@ -788,6 +1020,33 @@ fn reject_secrets(bytes: &[u8]) -> Result<(), ConfigError> {
     }
 }
 
+fn validate_strategy_reference(
+    config_path: &Path,
+    raw: StrategyReferenceFileConfig,
+) -> Result<StrategyReferenceInput, ConfigError> {
+    if raw.schema_version != 1 || raw.path.as_os_str().is_empty() {
+        return Err(ConfigError::Invalid("strategy_reference"));
+    }
+    let checksum = decode_hex(&raw.checksum)?;
+    let path = if raw.path.is_absolute() {
+        raw.path
+    } else {
+        config_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(raw.path)
+    };
+    let bytes = fs::read(&path)?;
+    if blake3::hash(&bytes).as_bytes() != &checksum {
+        return Err(ConfigError::Invalid("strategy_reference.checksum"));
+    }
+    Ok(StrategyReferenceInput {
+        schema_version: raw.schema_version,
+        path,
+        checksum: raw.checksum.into_boxed_str(),
+    })
+}
+
 fn require(condition: bool, field: &'static str) -> Result<(), ConfigError> {
     if condition {
         Ok(())
@@ -803,10 +1062,27 @@ struct FileConfig {
     data: DataConfig,
     universe: UniverseConfig,
     strategy: StrategyConfig,
+    #[serde(default)]
+    strategy_reference: Option<StrategyReferenceFileConfig>,
     replay: ReplayConfig,
     simulation: SimulationFileConfig,
     instrument_economics: Vec<EconomicsConfig>,
     output: OutputConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StrategyReferenceFileConfig {
+    schema_version: u16,
+    path: PathBuf,
+    checksum: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct BootstrapFileConfig {
+    #[serde(default)]
+    strategy_reference: Option<StrategyReferenceFileConfig>,
+    simulation: SimulationFileConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -833,6 +1109,8 @@ struct InstrumentConfig {
     session_kinds: Vec<String>,
     #[serde(default)]
     instrument_kind: Option<String>,
+    #[serde(default)]
+    session_profile: Option<String>,
     #[serde(default)]
     reference: Option<ReferenceConfig>,
 }
@@ -869,6 +1147,10 @@ struct ReplayConfig {
 #[serde(deny_unknown_fields)]
 struct SimulationFileConfig {
     fill: FillConfig,
+    #[serde(default = "default_execution_policy")]
+    execution_policy: String,
+    #[serde(default)]
+    scheduled_execution: Option<ScheduledExecutionFileConfig>,
     #[serde(default)]
     market_data_latency_ms: u64,
     #[serde(default)]
@@ -877,9 +1159,45 @@ struct SimulationFileConfig {
     slippage: SlippageConfig,
     fee: ChargeFileConfig,
     tax: ChargeFileConfig,
+    #[serde(default)]
+    instrument_charges: Vec<InstrumentChargeFileConfig>,
     initial_cash: CashConfig,
     position_accounting: String,
     marking: MarkingConfig,
+}
+
+fn default_execution_policy() -> String {
+    "subsequent_event_v1".to_owned()
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScheduledExecutionFileConfig {
+    depth_levels: u8,
+    max_stale_ms: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InstrumentChargeFileConfig {
+    market: String,
+    symbol: String,
+    fee: ChargeFileConfig,
+    tax: ChargeFileConfig,
+    #[serde(default)]
+    day_trade_tax: Option<DayTradeTaxFileConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DayTradeTaxFileConfig {
+    charge: ChargeFileConfig,
+    matching: String,
+    timezone_offset_minutes: i32,
+    eligible_dates: Vec<String>,
+    eligibility_required: bool,
+    valid_through: String,
+    provenance: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -900,9 +1218,13 @@ struct SlippageConfig {
 #[serde(deny_unknown_fields)]
 struct ChargeFileConfig {
     model: String,
-    rate: String,
+    #[serde(default)]
+    rate: Option<String>,
+    #[serde(default)]
+    amount_per_unit: Option<String>,
     applicable_sides: Vec<String>,
-    minimum: String,
+    #[serde(default)]
+    minimum: Option<String>,
     precision: u8,
     rounding: String,
     provenance: String,
@@ -1049,6 +1371,117 @@ mod tests {
     }
 
     #[test]
+    fn run_config_accepts_an_explicit_compatible_session_profile() {
+        let source = fs::read_to_string(fixture())
+            .unwrap()
+            .replace("market: twse", "market: taifex")
+            .replace("symbol: \"2330\"", "symbol: \"CDFG6\"")
+            .replace(
+                "      session_kinds: [regular]",
+                "      instrument_kind: future\n      session_profile: taifex_stock_futures\n      session_kinds: [regular]",
+            )
+            .replace("quantity_unit: trading_unit", "quantity_unit: contract")
+            .replace("units_per_trading_unit: 1000", "units_per_trading_unit: 1");
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("explicit-profile.yaml");
+        fs::write(&path, source).unwrap();
+
+        let config = load(path, &registry()).unwrap();
+        assert_eq!(
+            config.selections()[0].session_profile(),
+            Some(SessionProfileId::TaifexStockFutures)
+        );
+        assert!(config.partition_keys().is_ok());
+    }
+
+    #[test]
+    fn run_config_requires_scheduled_parameters_with_scheduled_policy() {
+        let scheduled_source = fs::read_to_string(fixture()).unwrap().replace(
+            "simulation:\n",
+            "simulation:\n  execution_policy: scheduled_visible_depth_v1\n  scheduled_execution: { depth_levels: 5, max_stale_ms: 1000 }\n",
+        );
+        let directory = tempfile::tempdir().unwrap();
+        let scheduled_path = directory.path().join("scheduled.yaml");
+        fs::write(&scheduled_path, scheduled_source).unwrap();
+        let config = load(&scheduled_path, &registry()).unwrap();
+        assert_eq!(
+            config.effective().simulation().scheduled_execution(),
+            Some(ScheduledExecutionConfig::new(5, 1_000))
+        );
+
+        let missing_path = directory.path().join("missing-scheduled.yaml");
+        fs::write(
+            &missing_path,
+            fs::read_to_string(fixture()).unwrap().replace(
+                "simulation:\n",
+                "simulation:\n  execution_policy: scheduled_visible_depth_v1\n",
+            ),
+        )
+        .unwrap();
+        assert!(matches!(
+            load(&missing_path, &registry()),
+            Err(ConfigError::Invalid("simulation.scheduled_execution"))
+        ));
+    }
+
+    #[test]
+    fn run_config_materializes_per_instrument_day_trade_tax() {
+        let block = r#"  instrument_charges:
+    - market: twse
+      symbol: "2330"
+      fee:
+        model: configured_rate
+        rate: "0.001425"
+        applicable_sides: [buy, sell]
+        minimum: "0"
+        precision: 0
+        rounding: down
+        provenance: "broker schedule"
+      tax:
+        model: configured_rate
+        rate: "0.003"
+        applicable_sides: [sell]
+        minimum: "0"
+        precision: 0
+        rounding: down
+        provenance: "MOF ordinary stock tax"
+      day_trade_tax:
+        charge:
+          model: configured_rate
+          rate: "0.0015"
+          applicable_sides: [sell]
+          minimum: "0"
+          precision: 0
+          rounding: down
+          provenance: "MOF reduced day-trade tax"
+        matching: same_account_instrument_trading_date_fifo
+        timezone_offset_minutes: 480
+        eligible_dates: ["2026-07-27"]
+        eligibility_required: true
+        valid_through: "2027-12-31"
+        provenance: "TWSE day-trading eligibility"
+"#;
+        let source = fs::read_to_string(fixture())
+            .unwrap()
+            .replace("  initial_cash:", &format!("{block}  initial_cash:"));
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("day-trade-tax.yaml");
+        fs::write(&path, source).unwrap();
+
+        let config = load(path, &registry()).unwrap();
+        let charges = config
+            .effective()
+            .simulation()
+            .charges_for(config.effective().universe().first().unwrap())
+            .unwrap();
+        assert_eq!(charges.tax().rate(), Decimal::parse("0.003").unwrap());
+        let day_trade = charges.day_trade_tax().unwrap();
+        assert_eq!(day_trade.charge().rate(), Decimal::parse("0.0015").unwrap());
+        assert!(day_trade.is_eligible(TradingDate::parse("2026-07-27").unwrap()));
+        assert_eq!(config.effective().canonical_version(), 4);
+    }
+
+    #[test]
     fn run_config_rejects_embedded_credentials() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("secret.yaml");
@@ -1141,6 +1574,41 @@ mod tests {
             Err(ConfigError::Strategy(
                 StrategyRegistryError::UnknownParameter(field)
             )) if field == "unexpected"
+        ));
+    }
+
+    #[test]
+    fn strategy_bootstrap_resolves_and_verifies_reference_relative_to_config() {
+        let directory = tempfile::tempdir().unwrap();
+        let reference_path = directory.path().join("reference.yaml");
+        let reference = b"schema_version: 1\ndays: []\n";
+        fs::write(&reference_path, reference).unwrap();
+        let checksum = blake3::hash(reference)
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let config_path = directory.path().join("run.yaml");
+        let source = fs::read_to_string(fixture())
+            .unwrap()
+            .replace("market_data_latency_ms: 0", "market_data_latency_ms: 200")
+            .replace("order_latency_ms: 0", "order_latency_ms: 300");
+        fs::write(
+            &config_path,
+            format!(
+                "strategy_reference:\n  schema_version: 1\n  path: reference.yaml\n  checksum: \"{checksum}\"\n{source}"
+            ),
+        )
+        .unwrap();
+        let bootstrap = strategy_bootstrap(&config_path).unwrap();
+        assert_eq!(bootstrap.order_latency_ms(), 300);
+        assert_eq!(bootstrap.market_data_latency_ms(), 200);
+        assert_eq!(bootstrap.reference().unwrap().path(), reference_path);
+
+        fs::write(&reference_path, b"changed").unwrap();
+        assert!(matches!(
+            strategy_bootstrap(&config_path),
+            Err(ConfigError::Invalid("strategy_reference.checksum"))
         ));
     }
 }

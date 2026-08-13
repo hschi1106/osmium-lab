@@ -7,6 +7,7 @@ mod output;
 mod registry;
 mod runner;
 mod strategy;
+mod timer;
 
 pub use acceptance::{
     ACCEPTANCE_STRATEGY_ID, ACCEPTANCE_STRATEGY_VERSION, AcceptanceStrategy,
@@ -24,12 +25,17 @@ pub use identity::{
 };
 pub use market_state::SessionSegmentId;
 pub use orders::{
-    CancellationReason, ORDER_INTENT_VERSION, OrderFeedback, OrderId, OrderIntent,
-    OrderIntentError, OrderSide, OrderType, RejectionReason, StrategyFeedbackContext, TimeInForce,
+    CancellationReason, ClientOrderId, EXECUTION_FILL_FEEDBACK_VERSION, ExecutionFailureReason,
+    ExecutionFillFeedback, ExecutionFillFeedbackError, FillId, ORDER_INTENT_VERSION, OrderBatchId,
+    OrderCorrelationIdError, OrderFeedback, OrderId, OrderIntent, OrderIntentError, OrderSide,
+    OrderType, RejectionReason, SCHEDULED_ORDER_REQUEST_VERSION, ScheduledExecutionPolicy,
+    ScheduledOrderCapabilityError, ScheduledOrderRequest, ScheduledOrderRequestError,
+    StrategyFeedbackContext, TimeInForce,
 };
 pub use output::{
-    CANONICAL_STRATEGY_OUTPUT_VERSION, IndicatorValue, StrategyOutput, StrategyOutputChecksum,
-    StrategyOutputEncodingError, StrategyOutputRecord, StrategyOutputSink,
+    CANONICAL_STRATEGY_OUTPUT_VERSION, IndicatorValue, LEGACY_CANONICAL_STRATEGY_OUTPUT_VERSION,
+    StrategyOutput, StrategyOutputChecksum, StrategyOutputEncodingError, StrategyOutputRecord,
+    StrategyOutputSink,
 };
 pub use registry::{
     FactoryContractField, ParameterRange, RangeBound, RawStrategyParameter, RawStrategyParameters,
@@ -46,5 +52,6 @@ pub use strategy::{
     CapabilityError, Strategy, StrategyEventContext, StrategyExecutionError,
     StrategyFinalizeContext, StrategyInitializationContext,
 };
+pub use timer::{StrategyTimerContext, StrategyTimerError, StrategyTimerId, StrategyTimerRequest};
 
 pub const STRATEGY_API_VERSION: u16 = 1;

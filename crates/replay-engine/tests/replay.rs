@@ -157,6 +157,25 @@ struct MergeFactory {
     opened: Vec<StableStreamDescriptorId>,
 }
 
+#[test]
+fn unstarted_core_fork_replays_independently() {
+    let mut committed = core();
+    let mut visible = committed.fork_unstarted().unwrap();
+    let event = quote(10, "STOCK_REALTIME", 1, Some(1));
+
+    let committed_receipt = committed.apply_ordered(&event).unwrap();
+    assert!(matches!(
+        committed.fork_unstarted(),
+        Err(ReplayError::ReplayAlreadyStarted)
+    ));
+    assert_eq!(visible.clock(), ReplayClock::Unstarted);
+    let visible_receipt = visible.apply_ordered(&event).unwrap();
+
+    assert_eq!(committed_receipt.occurrence(), visible_receipt.occurrence());
+    assert_eq!(committed.clock(), visible.clock());
+    assert_eq!(committed.state(&instrument()), visible.state(&instrument()));
+}
+
 impl ReplayStreamFactory for MergeFactory {
     type Stream = VecStream;
     type Error = std::io::Error;
@@ -406,6 +425,52 @@ fn context_schedule_resets_observable_state_at_segment_boundary() {
     let completed = core.complete().unwrap();
     let state = completed.state(&instrument()).unwrap();
     assert_eq!(state.current_segment_id().unwrap().as_str(), "after_hours");
+    assert_eq!(state.cumulative_volume().known().unwrap().value(), 1);
+}
+
+#[test]
+fn context_schedule_resets_state_across_trading_dates() {
+    let next_date = TradingDate::parse("2026-07-28").unwrap();
+    let first_context = context();
+    let next_context = ReducerContext::new(
+        next_date,
+        SessionSegmentId::new("regular").unwrap(),
+        SegmentBoundaryPolicy::ResetObservableFields,
+        1,
+    );
+    let mut core = ReplayCore::new_multi_with_schedules(
+        vec![MarketState::new(instrument(), date())],
+        vec![(instrument(), MarketStateReducer::twse_regular())],
+        vec![(instrument(), first_context.clone())],
+        vec![(
+            instrument(),
+            vec![
+                ReplayContextWindow::new(
+                    MatchTime::from_unix_microseconds(0),
+                    MatchTime::from_unix_microseconds(10),
+                    first_context,
+                )
+                .unwrap(),
+                ReplayContextWindow::new(
+                    MatchTime::from_unix_microseconds(10),
+                    MatchTime::from_unix_microseconds(20),
+                    next_context,
+                )
+                .unwrap(),
+            ],
+        )],
+    )
+    .unwrap();
+
+    core.replay(vec![
+        quote_for(&instrument(), date(), 5, "STOCK_SNAPSHOT", 10, None),
+        quote_for(&instrument(), next_date, 15, "STOCK_SNAPSHOT", 1, None),
+    ])
+    .unwrap();
+
+    let completed = core.complete().unwrap();
+    let state = completed.state(&instrument()).unwrap();
+    assert_eq!(state.trading_date(), next_date);
     assert_eq!(state.cumulative_volume().known().unwrap().value(), 1);
 }
 

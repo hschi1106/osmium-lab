@@ -1,4 +1,6 @@
 mod accounting;
+mod depth;
+mod scheduled;
 
 use std::{collections::BTreeMap, collections::BTreeSet, error::Error, fmt};
 
@@ -16,9 +18,18 @@ pub const EXECUTION_SIM_VERSION: u16 = 2;
 pub const FILL_MODEL_VERSION: u16 = 2;
 
 pub use accounting::{
-    ACCOUNTING_VERSION, AccountingError, AccountingModel, ChargeModel, ChargeSides,
-    InstrumentEconomics, InstrumentLedgerConfig, InstrumentPerformance, Ledger, MultiLedger,
-    MultiPerformanceSummary, PerformanceSummary, RoundingPolicy,
+    ACCOUNTING_VERSION, AccountingError, AccountingModel, ChargeBasis, ChargeModel, ChargeSides,
+    DayTradeTaxModel, InstrumentEconomics, InstrumentLedgerConfig, InstrumentPerformance,
+    LEGACY_ACCOUNTING_VERSION, Ledger, MultiLedger, MultiPerformanceSummary, PerformanceSummary,
+    RoundingPolicy,
+};
+pub use depth::{
+    DepthSweepError, DepthSweepResult, LevelFill, sweep_marketable_depth, sweep_visible_depth,
+};
+pub use scheduled::{
+    AuctionMatchEvidence, ScheduledActivation, ScheduledDepthModel, ScheduledDepthSimulator,
+    ScheduledInstrumentConfig, ScheduledOrder, ScheduledOrderStatus, ScheduledSimulationError,
+    ScheduledSubmission, ScheduledSubmissionContext, VisibleBookEvidence,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,21 +109,79 @@ impl SimOrder {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FillRecord {
     order_id: OrderId,
-    triggering_ordinal: u64,
+    trigger: FillTrigger,
     match_time: MatchTime,
     side: OrderSide,
     price: Price,
     quantity: Quantity,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FillTrigger {
+    MarketEvent { run_event_ordinal: u64 },
+    Control { control_sequence: u64 },
+}
+
 impl FillRecord {
+    #[must_use]
+    pub const fn from_market_event(
+        order_id: OrderId,
+        run_event_ordinal: u64,
+        match_time: MatchTime,
+        side: OrderSide,
+        price: Price,
+        quantity: Quantity,
+    ) -> Self {
+        Self {
+            order_id,
+            trigger: FillTrigger::MarketEvent { run_event_ordinal },
+            match_time,
+            side,
+            price,
+            quantity,
+        }
+    }
+
+    #[must_use]
+    pub const fn from_control(
+        order_id: OrderId,
+        control_sequence: u64,
+        match_time: MatchTime,
+        side: OrderSide,
+        price: Price,
+        quantity: Quantity,
+    ) -> Self {
+        Self {
+            order_id,
+            trigger: FillTrigger::Control { control_sequence },
+            match_time,
+            side,
+            price,
+            quantity,
+        }
+    }
+
     #[must_use]
     pub const fn order_id(&self) -> OrderId {
         self.order_id
     }
     #[must_use]
-    pub const fn triggering_ordinal(&self) -> u64 {
-        self.triggering_ordinal
+    pub const fn trigger(&self) -> FillTrigger {
+        self.trigger
+    }
+    #[must_use]
+    pub const fn triggering_ordinal(&self) -> Option<u64> {
+        match self.trigger {
+            FillTrigger::MarketEvent { run_event_ordinal } => Some(run_event_ordinal),
+            FillTrigger::Control { .. } => None,
+        }
+    }
+    #[must_use]
+    pub const fn control_sequence(&self) -> Option<u64> {
+        match self.trigger {
+            FillTrigger::MarketEvent { .. } => None,
+            FillTrigger::Control { control_sequence } => Some(control_sequence),
+        }
     }
     #[must_use]
     pub const fn match_time(&self) -> MatchTime {
@@ -294,14 +363,14 @@ impl Simulator {
             } else {
                 OrderStatus::PartiallyFilled
             };
-            self.fills.push(FillRecord {
-                order_id: order.id,
-                triggering_ordinal: occurrence.run_event_ordinal(),
-                match_time: event.match_time(),
-                side: order.intent.side(),
-                price: fill_price,
+            self.fills.push(FillRecord::from_market_event(
+                order.id,
+                occurrence.run_event_ordinal(),
+                event.match_time(),
+                order.intent.side(),
+                fill_price,
                 quantity,
-            });
+            ));
             feedback.push(if completed {
                 OrderFeedback::Filled {
                     order_id: order.id,
@@ -661,6 +730,31 @@ mod tests {
                 .unwrap(),
             ),
         )
+    }
+
+    #[test]
+    fn fill_trigger_distinguishes_market_and_control_origins() {
+        let quantity = Quantity::new(1, QuantityUnit::Contract).unwrap();
+        let market = FillRecord::from_market_event(
+            OrderId::from_bytes([1; 32]),
+            7,
+            MatchTime::from_unix_microseconds(10),
+            OrderSide::Sell,
+            Price::parse("100").unwrap(),
+            quantity,
+        );
+        let control = FillRecord::from_control(
+            OrderId::from_bytes([2; 32]),
+            9,
+            MatchTime::from_unix_microseconds(11),
+            OrderSide::Buy,
+            Price::parse("101").unwrap(),
+            quantity,
+        );
+        assert_eq!(market.triggering_ordinal(), Some(7));
+        assert_eq!(market.control_sequence(), None);
+        assert_eq!(control.triggering_ordinal(), None);
+        assert_eq!(control.control_sequence(), Some(9));
     }
 
     #[test]

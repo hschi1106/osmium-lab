@@ -15,9 +15,20 @@ use strategy_api::{
 };
 
 mod artifacts;
+mod control;
+mod scheduled;
+mod visibility;
 pub use artifacts::{
     ArtifactError, InspectSummary, RUN_MANIFEST_VERSION, inspect_run, publish_backtest,
-    publish_multi_backtest,
+    publish_multi_backtest, publish_scheduled_multi_backtest,
+};
+pub use control::{
+    CONTROL_ORDERING_VERSION, ControlPhase, ControlTimeQueue, ControlTimeQueueError,
+    ScheduledControl,
+};
+pub use scheduled::{CompletedScheduledMultiBacktest, run_scheduled_multi_backtest};
+pub use visibility::{
+    ObservationVisibilityError, ObservationVisibilityQueue, VisibleObservation, add_milliseconds,
 };
 
 pub const BACKTEST_COORDINATOR_VERSION: u16 = 1;
@@ -119,12 +130,17 @@ pub fn run_multi_backtest<S: Strategy, F: ReplayStreamFactory>(
         .states()
         .map(|state| state.instrument().clone())
         .collect::<Vec<_>>();
-    if declaration.universe() != core_instruments.as_slice()
-        || schedule.instruments().cloned().collect::<Vec<_>>() != core_instruments
-        || simulator.instruments().cloned().collect::<Vec<_>>() != core_instruments
-        || ledger.instruments().cloned().collect::<Vec<_>>() != core_instruments
-    {
-        return Err(MultiBacktestError::Declaration);
+    for (name, instruments) in [
+        ("strategy", declaration.universe().to_vec()),
+        ("schedule", schedule.instruments().cloned().collect()),
+        ("simulator", simulator.instruments().cloned().collect()),
+        ("ledger", ledger.instruments().cloned().collect()),
+    ] {
+        if instruments != core_instruments {
+            return Err(MultiBacktestError::Schedule(format!(
+                "{name} instrument universe differs from replay core"
+            )));
+        }
     }
     let schedule_sessions = schedule
         .segments
@@ -132,7 +148,9 @@ pub fn run_multi_backtest<S: Strategy, F: ReplayStreamFactory>(
         .flat_map(|segments| segments.iter().map(SessionSegment::kind))
         .collect::<std::collections::BTreeSet<_>>();
     if declaration.sessions() != schedule_sessions.into_iter().collect::<Vec<_>>().as_slice() {
-        return Err(MultiBacktestError::Declaration);
+        return Err(MultiBacktestError::Schedule(
+            "strategy sessions differ from session schedule".to_owned(),
+        ));
     }
     strategy
         .initialize(&StrategyInitializationContext::new(&declaration))
@@ -265,7 +283,9 @@ fn process_multi_event<S: Strategy>(
         .iter()
         .copied()
         .find(|state| state.instrument() == event.instrument())
-        .ok_or(MultiBacktestError::Declaration)?;
+        .ok_or_else(|| {
+            MultiBacktestError::Schedule("event state is absent from replay core".to_owned())
+        })?;
     let trading = MarketTradingContextEvaluator
         .evaluate(event, commit.occurrence(), state, segment)
         .map_err(|error| MultiBacktestError::Context(error.to_string()))?;
@@ -325,9 +345,9 @@ fn process_multi_event<S: Strategy>(
             .evaluate(event, commit.occurrence(), &trading)
             .map_err(|error| MultiBacktestError::Simulation(error.to_string()))?,
     );
-    let fills = simulator
-        .fills_for(event.instrument())
-        .ok_or(MultiBacktestError::Declaration)?;
+    let fills = simulator.fills_for(event.instrument()).ok_or_else(|| {
+        MultiBacktestError::Schedule("event instrument is absent from simulator".to_owned())
+    })?;
     for fill in fills[previous_fill_count..].iter().cloned() {
         ledger
             .apply_fill(event.instrument(), fill)
@@ -657,8 +677,8 @@ impl Error for BacktestError {}
 #[cfg(test)]
 mod tests {
     use execution_sim::{
-        AccountingModel, ChargeModel, ChargeSides, EvidenceMode, FillModel, InstrumentEconomics,
-        InstrumentLedgerConfig, MultiLedger, QuantityPolicy, RoundingPolicy,
+        AccountingModel, ChargeBasis, ChargeModel, ChargeSides, EvidenceMode, FillModel,
+        InstrumentEconomics, InstrumentLedgerConfig, MultiLedger, QuantityPolicy, RoundingPolicy,
     };
     use market_state::{
         MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
@@ -724,6 +744,7 @@ mod tests {
         )
         .unwrap();
         let zero_charge = ChargeModel {
+            basis: ChargeBasis::NotionalRate,
             rate: Decimal::ZERO,
             sides: ChargeSides::Both,
             minimum: Decimal::ZERO,
@@ -918,6 +939,7 @@ mod tests {
                     provenance: "test TAIFEX multiplier".into(),
                 },
                 ChargeModel {
+                    basis: ChargeBasis::NotionalRate,
                     rate: Decimal::ZERO,
                     sides: ChargeSides::Both,
                     minimum: Decimal::ZERO,
@@ -925,6 +947,7 @@ mod tests {
                     rounding: RoundingPolicy::Down,
                 },
                 ChargeModel {
+                    basis: ChargeBasis::NotionalRate,
                     rate: Decimal::ZERO,
                     sides: ChargeSides::Sell,
                     minimum: Decimal::ZERO,
@@ -955,7 +978,7 @@ mod tests {
                 .iter()
                 .map(|fill| fill.triggering_ordinal())
                 .collect::<Vec<_>>(),
-            vec![3, 4]
+            vec![Some(3), Some(4)]
         );
         let root = tempfile::tempdir().unwrap();
         let output = root.path().join("run");
@@ -976,7 +999,10 @@ mod tests {
                 .starts_with(b"OSLEDGR1")
         );
         let performance = std::fs::read_to_string(output.join("performance.yaml")).unwrap();
-        assert!(performance.contains("accounting_version: 3"));
+        assert!(performance.contains(&format!(
+            "accounting_version: {}",
+            execution_sim::ACCOUNTING_VERSION
+        )));
         assert!(performance.contains("Taifex:TXFH6"));
     }
 }

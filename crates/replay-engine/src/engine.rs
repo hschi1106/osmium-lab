@@ -1,4 +1,9 @@
-use std::{collections::BTreeMap, error::Error, fmt};
+use std::{
+    cmp::Reverse,
+    collections::{BTreeMap, BinaryHeap},
+    error::Error,
+    fmt,
+};
 
 use market_state::{
     FinalStateChecksum, FinalStateEncodingError, MarketState, MarketStateReducer, ReducerContext,
@@ -229,16 +234,10 @@ impl ReplayCore {
                 return Err(ReplayError::ReducerConfigurationMismatch);
             }
             windows.sort_by_key(ReplayContextWindow::start);
-            if windows.windows(2).any(|pair| {
-                pair[0].end_exclusive() > pair[1].start()
-                    || pair[0].context().trading_date() != pair[1].context().trading_date()
-            }) || windows.iter().any(|window| {
-                window.context().trading_date()
-                    != by_instrument
-                        .get(&instrument)
-                        .expect("instrument checked above")
-                        .trading_date()
-            }) {
+            if windows
+                .windows(2)
+                .any(|pair| pair[0].end_exclusive() > pair[1].start())
+            {
                 return Err(ReplayError::InvalidContextSchedule);
             }
             if reducer_context_windows
@@ -264,6 +263,27 @@ impl ReplayCore {
     #[must_use]
     pub const fn clock(&self) -> ReplayClock {
         self.clock
+    }
+
+    pub fn fork_unstarted(&self) -> Result<Self, ReplayError> {
+        if self.clock != ReplayClock::Unstarted {
+            return Err(ReplayError::ReplayAlreadyStarted);
+        }
+        Self::new_multi_with_schedules(
+            self.states.values().cloned().collect(),
+            self.reducers
+                .iter()
+                .map(|(instrument, reducer)| (instrument.clone(), reducer.clone()))
+                .collect(),
+            self.reducer_contexts
+                .iter()
+                .map(|(instrument, context)| (instrument.clone(), context.clone()))
+                .collect(),
+            self.reducer_context_windows
+                .iter()
+                .map(|(instrument, windows)| (instrument.clone(), windows.to_vec()))
+                .collect(),
+        )
     }
 
     #[must_use]
@@ -351,7 +371,9 @@ impl ReplayCore {
                 .states
                 .get(binding.instrument())
                 .ok_or(ReplayError::PlanOutsideUniverse)?;
-            if state.trading_date() != binding.trading_date() {
+            if state.trading_date() != binding.trading_date()
+                && !self.has_scheduled_trading_date(binding.instrument(), binding.trading_date())
+            {
                 return Err(ReplayError::PlanTradingDateMismatch);
             }
             streams.push(
@@ -364,33 +386,31 @@ impl ReplayCore {
         let mut heads = (0..streams.len())
             .map(|_| None)
             .collect::<Vec<Option<DomainEvent>>>();
-        loop {
-            for (index, stream) in streams.iter_mut().enumerate() {
-                if heads[index].is_none() {
-                    heads[index] = stream
-                        .next_event()
-                        .map_err(|error| ReplayError::Stream(error.to_string().into_boxed_str()))?;
-                }
+        let mut pending = BinaryHeap::with_capacity(streams.len());
+        for (index, stream) in streams.iter_mut().enumerate() {
+            let event = stream
+                .next_event()
+                .map_err(|error| ReplayError::Stream(error.to_string().into_boxed_str()))?;
+            if let Some(event) = event {
+                let key = OrderingKey::for_event(&event).map_err(ReplayError::Ordering)?;
+                heads[index] = Some(event);
+                pending.push(Reverse((key, index)));
             }
-            let mut selected: Option<(usize, OrderingKey)> = None;
-            for (index, event) in heads.iter().enumerate() {
-                let Some(event) = event else { continue };
-                let key = OrderingKey::for_event(event).map_err(ReplayError::Ordering)?;
-                if selected
-                    .as_ref()
-                    .is_none_or(|(_, previous)| key < *previous)
-                {
-                    selected = Some((index, key));
-                }
-            }
-            let Some((selected_index, _)) = selected else {
-                break;
-            };
+        }
+        while let Some(Reverse((_, selected_index))) = pending.pop() {
             let event = heads[selected_index]
                 .take()
                 .expect("selected merge head is present");
             let commit = self.apply_ordered(&event)?;
             callback(self, &event, &commit).map_err(ReplayError::Callback)?;
+            let next = streams[selected_index]
+                .next_event()
+                .map_err(|error| ReplayError::Stream(error.to_string().into_boxed_str()))?;
+            if let Some(next) = next {
+                let key = OrderingKey::for_event(&next).map_err(ReplayError::Ordering)?;
+                heads[selected_index] = Some(next);
+                pending.push(Reverse((key, selected_index)));
+            }
         }
         Ok(())
     }
@@ -415,23 +435,41 @@ impl ReplayCore {
             .ok_or(ReplayError::EventOrdinalOverflow)?;
         let reducer_context = self
             .context_for_event(event.instrument(), event.match_time())
-            .ok_or(ReplayError::EventOutsideContextSchedule)?
+            .ok_or_else(|| ReplayError::EventOutsideContextSchedule {
+                instrument: event.instrument().clone(),
+                match_time: event.match_time(),
+            })?
             .clone();
-        let state = self
-            .states
-            .get_mut(event.instrument())
-            .ok_or(ReplayError::InstrumentOutsideUniverse)?;
         let reducer = self
             .reducers
             .get(event.instrument())
             .ok_or(ReplayError::ReducerConfigurationMismatch)?;
-        let proposal = reducer
-            .propose(state, event, &reducer_context)
-            .map_err(ReplayError::StateTransition)?;
-
-        let transition = reducer
-            .commit(state, proposal)
-            .map_err(ReplayError::StateTransition)?;
+        let transition = if self
+            .states
+            .get(event.instrument())
+            .is_some_and(|state| state.trading_date() == event.trading_date())
+        {
+            let state = self
+                .states
+                .get_mut(event.instrument())
+                .ok_or(ReplayError::InstrumentOutsideUniverse)?;
+            let proposal = reducer
+                .propose(state, event, &reducer_context)
+                .map_err(ReplayError::StateTransition)?;
+            reducer
+                .commit(state, proposal)
+                .map_err(ReplayError::StateTransition)?
+        } else {
+            let mut state = MarketState::new(event.instrument().clone(), event.trading_date());
+            let proposal = reducer
+                .propose(&state, event, &reducer_context)
+                .map_err(ReplayError::StateTransition)?;
+            let transition = reducer
+                .commit(&mut state, proposal)
+                .map_err(ReplayError::StateTransition)?;
+            self.states.insert(event.instrument().clone(), state);
+            transition
+        };
         self.event_stream.append_prepared(&prepared_checksum);
         self.clock = ReplayClock::At {
             match_time: event.match_time(),
@@ -505,6 +543,20 @@ impl ReplayCore {
         }
         self.reducer_contexts.get(instrument)
     }
+
+    fn has_scheduled_trading_date(
+        &self,
+        instrument: &InstrumentId,
+        trading_date: market_types::TradingDate,
+    ) -> bool {
+        self.reducer_context_windows
+            .get(instrument)
+            .is_some_and(|windows| {
+                windows
+                    .iter()
+                    .any(|window| window.context().trading_date() == trading_date)
+            })
+    }
 }
 
 #[derive(Debug)]
@@ -571,8 +623,12 @@ pub enum ReplayError {
     DuplicateInstrument,
     ReducerConfigurationMismatch,
     InvalidContextSchedule,
-    EventOutsideContextSchedule,
+    EventOutsideContextSchedule {
+        instrument: InstrumentId,
+        match_time: MatchTime,
+    },
     StateTradingDateMismatch,
+    ReplayAlreadyStarted,
     InstrumentOutsideUniverse,
     Ordering(OrderingError),
     CanonicalEncoding(CanonicalEncodingError),
@@ -601,11 +657,19 @@ impl fmt::Display for ReplayError {
             Self::InvalidContextSchedule => {
                 formatter.write_str("replay context schedule is invalid or overlaps")
             }
-            Self::EventOutsideContextSchedule => {
-                formatter.write_str("event falls outside the instrument replay context schedule")
-            }
+            Self::EventOutsideContextSchedule {
+                instrument,
+                match_time,
+            } => write!(
+                formatter,
+                "event for {instrument:?} at {} falls outside the instrument replay context schedule",
+                match_time.as_unix_microseconds()
+            ),
             Self::StateTradingDateMismatch => {
                 formatter.write_str("initial state trading date does not match reducer context")
+            }
+            Self::ReplayAlreadyStarted => {
+                formatter.write_str("only an unstarted replay core can be forked")
             }
             Self::InstrumentOutsideUniverse => {
                 formatter.write_str("event instrument is outside replay universe")

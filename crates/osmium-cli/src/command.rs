@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     env,
     error::Error,
     fmt,
@@ -10,8 +11,10 @@ use data_sync::{
     PartitionedSourceRepository, StagingRevision, TeralionCredential, TeralionQuery, TeralionSync,
 };
 use execution_sim::{
-    AccountingModel, ChargeModel, ChargeSides, EvidenceMode, FillModel, InstrumentEconomics,
-    InstrumentLedgerConfig, MultiLedger, MultiSimulator, QuantityPolicy, RoundingPolicy,
+    AccountingModel, ChargeBasis, ChargeModel, ChargeSides, DayTradeTaxModel, EvidenceMode,
+    FillModel, InstrumentEconomics, InstrumentLedgerConfig, MultiLedger, MultiSimulator,
+    QuantityPolicy, RoundingPolicy, ScheduledDepthModel, ScheduledDepthSimulator,
+    ScheduledInstrumentConfig,
 };
 use market_state::{
     MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
@@ -20,9 +23,9 @@ use market_types::{InstrumentKind, MarketId};
 use osmium_config::{RUN_CONFIG_VERSION, RunConfig, plan};
 use replay_engine::{ReplayContextWindow, ReplayCore};
 use run_planner::{
-    CacheAction, ChargeSides as PlanChargeSides, FillEvidence, NetworkRequirement,
-    QuantityEvidence, RoundingPolicy as PlanRounding, SlippageModelConfig, SourceAction,
-    SourceState,
+    CacheAction, ChargeBasis as PlanChargeBasis, ChargeSides as PlanChargeSides,
+    ExecutionPolicyConfig, FillEvidence, NetworkRequirement, QuantityEvidence,
+    RoundingPolicy as PlanRounding, SlippageModelConfig, SourceAction, SourceState,
 };
 use strategy_api::{AcceptanceStrategyFactory, SessionKind, SessionSegment, StrategyRegistry};
 use taifex_normalizer::NormalizerConfig as TaifexNormalizerConfig;
@@ -413,10 +416,10 @@ pub(crate) fn replay_core(
     config: &RunConfig,
     bundle: &osmium_config::PlanBundle,
 ) -> Result<ReplayCore, CommandError> {
-    let mut states = Vec::new();
-    let mut reducers = Vec::new();
-    let mut contexts = Vec::new();
-    let mut schedules = Vec::new();
+    let mut states = BTreeMap::new();
+    let mut reducers = BTreeMap::new();
+    let mut contexts = BTreeMap::new();
+    let mut schedules: BTreeMap<_, Vec<_>> = BTreeMap::new();
     for partition in bundle.execution.partitions() {
         let key = partition.key();
         let session_plan = config.session_plan_for(key)?;
@@ -451,21 +454,26 @@ pub(crate) fn replay_core(
             (MarketId::Taifex, InstrumentKind::Option) => MarketStateReducer::taifex_options(),
             (MarketId::Taifex, _) => MarketStateReducer::taifex_futures(),
         };
-        states.push(MarketState::new(
-            key.instrument().clone(),
-            key.trading_date(),
-        ));
-        reducers.push((key.instrument().clone(), reducer));
-        contexts.push((key.instrument().clone(), context));
-        schedules.push((key.instrument().clone(), windows));
+        states
+            .entry(key.instrument().clone())
+            .or_insert_with(|| MarketState::new(key.instrument().clone(), key.trading_date()));
+        reducers.entry(key.instrument().clone()).or_insert(reducer);
+        contexts.entry(key.instrument().clone()).or_insert(context);
+        schedules
+            .entry(key.instrument().clone())
+            .or_default()
+            .extend(windows);
     }
     Ok(ReplayCore::new_multi_with_schedules(
-        states, reducers, contexts, schedules,
+        states.into_values().collect(),
+        reducers.into_iter().collect(),
+        contexts.into_iter().collect(),
+        schedules.into_iter().collect(),
     )?)
 }
 
 fn schedule(config: &RunConfig) -> Result<osmium_runner::MultiSessionSchedule, CommandError> {
-    let mut entries = Vec::new();
+    let mut entries: BTreeMap<_, Vec<_>> = BTreeMap::new();
     for key in config.partition_keys()? {
         let session_plan = config.session_plan_for(&key)?;
         let mut segments = Vec::new();
@@ -482,7 +490,10 @@ fn schedule(config: &RunConfig) -> Result<osmium_runner::MultiSessionSchedule, C
                 window.close(),
             )?);
         }
-        entries.push((key.instrument().clone(), segments));
+        entries
+            .entry(key.instrument().clone())
+            .or_default()
+            .extend(segments);
     }
     Ok(osmium_runner::MultiSessionSchedule::new(entries)?)
 }
@@ -501,73 +512,48 @@ fn execute_backtest(path: &Path, output: &Path) -> Result<String, CommandError> 
     let slippage = match simulation.slippage_model() {
         SlippageModelConfig::AdverseFixedDelta { delta } => delta,
     };
-    let simulator =
-        MultiSimulator::new(bundle.execution.config().instrument_economics().iter().map(
-            |economics| {
-                (
-                    economics.instrument().clone(),
-                    economics.quantity_unit(),
-                    FillModel {
-                        evidence: match fill.evidence() {
-                            FillEvidence::TopOfBook => EvidenceMode::TopOfBook,
-                            FillEvidence::TradePrint => EvidenceMode::TradePrint,
-                        },
-                        quantity: match fill.quantity() {
-                            QuantityEvidence::Unlimited => QuantityPolicy::Unlimited,
-                            QuantityEvidence::Observed => QuantityPolicy::Displayed,
-                        },
-                        adverse_price_delta: slippage,
-                        market_data_latency_ms: latency.market_data_latency_ms(),
-                        order_latency_ms: latency.order_latency_ms(),
-                    },
-                )
+    let mut ledger_configs = Vec::new();
+    for economics in bundle.execution.config().instrument_economics() {
+        let model = match config.instrument_kind_for(economics.instrument()) {
+            InstrumentKind::Option => AccountingModel::OptionsV1,
+            InstrumentKind::Future => AccountingModel::FuturesV1,
+            InstrumentKind::Equity | InstrumentKind::Warrant | InstrumentKind::Unknown => {
+                AccountingModel::EquityV1
+            }
+        };
+        let charges = simulation.charges_for(economics.instrument());
+        let fee = charge(charges.map_or(simulation.fee_model(), |charges| charges.fee()));
+        let tax = charge(charges.map_or(simulation.tax_model(), |charges| charges.tax()));
+        let mut ledger_config = InstrumentLedgerConfig::new(
+            economics.instrument().clone(),
+            economics.quantity_unit(),
+            model,
+            InstrumentEconomics {
+                units_per_trading_unit: economics.units_per_trading_unit(),
+                multiplier: economics.multiplier(),
+                provenance: economics.provenance().into(),
             },
-        ))?;
-    let ledger = MultiLedger::new(
-        simulation.initial_cash().amount(),
-        bundle
-            .execution
-            .config()
-            .instrument_economics()
-            .iter()
-            .map(|economics| {
-                let model = match config.instrument_kind_for(economics.instrument()) {
-                    InstrumentKind::Option => AccountingModel::OptionsV1,
-                    InstrumentKind::Future => AccountingModel::FuturesV1,
-                    InstrumentKind::Equity | InstrumentKind::Warrant | InstrumentKind::Unknown => {
-                        AccountingModel::EquityV1
-                    }
-                };
-                InstrumentLedgerConfig::new(
-                    economics.instrument().clone(),
-                    economics.quantity_unit(),
-                    model,
-                    InstrumentEconomics {
-                        units_per_trading_unit: economics.units_per_trading_unit(),
-                        multiplier: economics.multiplier(),
-                        provenance: economics.provenance().into(),
-                    },
-                    charge(simulation.fee_model()),
-                    charge(simulation.tax_model()),
-                )
-            }),
-    )?;
+            fee,
+            tax,
+        );
+        if let Some(day_trade) = charges.and_then(|charges| charges.day_trade_tax()) {
+            ledger_config = ledger_config.with_day_trade_tax(DayTradeTaxModel::new_for_dates(
+                tax,
+                charge(day_trade.charge()),
+                day_trade.timezone_offset_minutes(),
+                day_trade.valid_through(),
+                day_trade.eligible_dates().iter().copied(),
+                day_trade.provenance(),
+            )?);
+        }
+        ledger_configs.push(ledger_config);
+    }
+    let ledger = MultiLedger::new(simulation.initial_cash().amount(), ledger_configs)?;
     let allow_midpoint_fallback = match simulation.marking_policy() {
         run_planner::MarkingPolicyConfig::LastObservableV1 {
             allow_midpoint_fallback,
         } => allow_midpoint_fallback,
     };
-    let mut factory = data_sync::LocalCacheFactory::new_partitioned(config.effective().data_root());
-    let completed = osmium_runner::run_multi_backtest(
-        core,
-        strategy,
-        replay,
-        &mut factory,
-        &schedule,
-        simulator,
-        ledger,
-        allow_midpoint_fallback,
-    )?;
     let mut source_lineage = Vec::new();
     let mut cache_lineage = Vec::new();
     for partition in bundle.execution.partitions() {
@@ -590,24 +576,124 @@ fn execute_backtest(path: &Path, output: &Path) -> Result<String, CommandError> 
     }
     let source_revision = source_lineage.join(",");
     let cache_identity = cache_lineage.join(",");
-    osmium_runner::publish_multi_backtest(
-        output,
-        &completed,
-        bundle.execution.identity().as_bytes(),
-        &source_revision,
-        &cache_identity,
-        &strategy_metadata,
-    )?;
-    Ok(format!(
-        "backtest=complete\nevents={}\norders={}\nfills={}\nfinal_cash_atoms={}\nrealized_pnl_atoms={}\nunrealized_pnl_atoms={}\noutput={}",
-        completed.replay.summary().event_count(),
-        completed.simulator.order_count(),
-        completed.simulator.fill_count(),
-        completed.performance.final_cash().atoms(),
-        completed.performance.realized_pnl().atoms(),
-        completed.performance.unrealized_pnl().atoms(),
+    let mut factory = data_sync::LocalCacheFactory::new_partitioned(config.effective().data_root());
+    match simulation.execution_policy() {
+        ExecutionPolicyConfig::SubsequentEventV1 => {
+            let simulator =
+                MultiSimulator::new(bundle.execution.config().instrument_economics().iter().map(
+                    |economics| {
+                        (
+                            economics.instrument().clone(),
+                            economics.quantity_unit(),
+                            FillModel {
+                                evidence: match fill.evidence() {
+                                    FillEvidence::TopOfBook => EvidenceMode::TopOfBook,
+                                    FillEvidence::TradePrint => EvidenceMode::TradePrint,
+                                },
+                                quantity: match fill.quantity() {
+                                    QuantityEvidence::Unlimited => QuantityPolicy::Unlimited,
+                                    QuantityEvidence::Observed => QuantityPolicy::Displayed,
+                                },
+                                adverse_price_delta: slippage,
+                                market_data_latency_ms: latency.market_data_latency_ms(),
+                                order_latency_ms: latency.order_latency_ms(),
+                            },
+                        )
+                    },
+                ))?;
+            let completed = osmium_runner::run_multi_backtest(
+                core,
+                strategy,
+                replay,
+                &mut factory,
+                &schedule,
+                simulator,
+                ledger,
+                allow_midpoint_fallback,
+            )?;
+            osmium_runner::publish_multi_backtest(
+                output,
+                &completed,
+                bundle.execution.identity().as_bytes(),
+                &source_revision,
+                &cache_identity,
+                &strategy_metadata,
+            )?;
+            Ok(backtest_summary(
+                completed.replay.summary().event_count(),
+                completed.simulator.order_count(),
+                completed.simulator.fill_count(),
+                &completed.performance,
+                output,
+            ))
+        }
+        ExecutionPolicyConfig::ScheduledVisibleDepthV1 => {
+            let scheduled = simulation.scheduled_execution().ok_or_else(|| {
+                CommandError::Other("missing scheduled execution config".to_owned())
+            })?;
+            let simulator = ScheduledDepthSimulator::new(
+                bundle
+                    .execution
+                    .config()
+                    .instrument_economics()
+                    .iter()
+                    .map(|economics| {
+                        Ok(ScheduledInstrumentConfig::new(
+                            economics.instrument().clone(),
+                            economics.quantity_unit(),
+                            ScheduledDepthModel::new(
+                                usize::from(scheduled.depth_levels()),
+                                scheduled.max_stale_ms(),
+                                slippage,
+                            )?,
+                        ))
+                    })
+                    .collect::<Result<Vec<_>, execution_sim::ScheduledSimulationError>>()?,
+            )?;
+            let completed = osmium_runner::run_scheduled_multi_backtest(
+                core,
+                strategy,
+                replay,
+                &mut factory,
+                &schedule,
+                latency.market_data_latency_ms(),
+                simulator,
+                ledger,
+                allow_midpoint_fallback,
+            )?;
+            osmium_runner::publish_scheduled_multi_backtest(
+                output,
+                &completed,
+                bundle.execution.identity().as_bytes(),
+                &source_revision,
+                &cache_identity,
+                &strategy_metadata,
+            )?;
+            Ok(backtest_summary(
+                completed.replay.summary().event_count(),
+                completed.simulator.orders().len(),
+                completed.simulator.fills().len(),
+                &completed.performance,
+                output,
+            ))
+        }
+    }
+}
+
+fn backtest_summary(
+    events: u64,
+    orders: usize,
+    fills: usize,
+    performance: &execution_sim::MultiPerformanceSummary,
+    output: &Path,
+) -> String {
+    format!(
+        "backtest=complete\nevents={events}\norders={orders}\nfills={fills}\nfinal_cash_atoms={}\nrealized_pnl_atoms={}\nunrealized_pnl_atoms={}\noutput={}",
+        performance.final_cash().atoms(),
+        performance.realized_pnl().atoms(),
+        performance.unrealized_pnl().atoms(),
         output.display()
-    ))
+    )
 }
 
 fn execute_run(path: &Path, output: Option<&Path>) -> Result<String, CommandError> {
@@ -625,6 +711,10 @@ fn execute_run(path: &Path, output: Option<&Path>) -> Result<String, CommandErro
 
 fn charge(value: &run_planner::ChargeConfig) -> ChargeModel {
     ChargeModel {
+        basis: match value.basis() {
+            PlanChargeBasis::NotionalRate => ChargeBasis::NotionalRate,
+            PlanChargeBasis::FixedPerUnit => ChargeBasis::FixedPerUnit,
+        },
         rate: value.rate(),
         sides: match value.applicable_sides() {
             PlanChargeSides::Buy => ChargeSides::Buy,
@@ -669,6 +759,7 @@ pub enum CommandError {
     Context(strategy_api::ContextError),
     Strategy(strategy_api::DeclarationError),
     Simulation(execution_sim::SimulationError),
+    ScheduledSimulation(execution_sim::ScheduledSimulationError),
     Accounting(execution_sim::AccountingError),
     Backtest(osmium_runner::BacktestError),
     MultiBacktest(osmium_runner::MultiBacktestError),
@@ -706,6 +797,7 @@ impl CommandError {
             Self::Backtest(_)
             | Self::MultiBacktest(_)
             | Self::Simulation(_)
+            | Self::ScheduledSimulation(_)
             | Self::Accounting(_) => ExitCategory::Simulation,
             Self::Verify(_) | Self::Artifact(_) => ExitCategory::Integrity,
             Self::Io(_) | Self::Other(_) => ExitCategory::Internal,
@@ -743,6 +835,7 @@ convert!(State, market_state::SessionSegmentIdError);
 convert!(Context, strategy_api::ContextError);
 convert!(Strategy, strategy_api::DeclarationError);
 convert!(Simulation, execution_sim::SimulationError);
+convert!(ScheduledSimulation, execution_sim::ScheduledSimulationError);
 convert!(Accounting, execution_sim::AccountingError);
 convert!(Backtest, osmium_runner::BacktestError);
 convert!(MultiBacktest, osmium_runner::MultiBacktestError);

@@ -1,12 +1,13 @@
 use std::{error::Error, fmt};
 
 use market_state::MarketStateView;
-use market_types::DomainEvent;
+use market_types::{DomainEvent, MatchTime};
 use replay_engine::{EventOccurrence, ReplayClock};
 
 use crate::{
     CanonicalParamsChecksum, SessionCallbackContext, StrategyDeclaration, StrategyFeedbackContext,
-    StrategyIdentity, StrategyOutputEncodingError, StrategyOutputSink, TradingContext,
+    StrategyIdentity, StrategyOutputEncodingError, StrategyOutputSink, StrategyTimerContext,
+    TradingContext,
 };
 
 pub struct StrategyInitializationContext<'a> {
@@ -50,6 +51,7 @@ pub struct StrategyEventContext<'event> {
     market_states: &'event [MarketStateView<'event>],
     trading: &'event TradingContext,
     session: &'event SessionCallbackContext,
+    decision_time: MatchTime,
 }
 
 impl<'event> StrategyEventContext<'event> {
@@ -69,6 +71,24 @@ impl<'event> StrategyEventContext<'event> {
         market_states: &'event [MarketStateView<'event>],
         trading: &'event TradingContext,
     ) -> Self {
+        Self::new_visible_with_states(
+            occurrence,
+            event,
+            market_state,
+            market_states,
+            trading,
+            event.match_time(),
+        )
+    }
+
+    pub const fn new_visible_with_states(
+        occurrence: &'event EventOccurrence,
+        event: &'event DomainEvent,
+        market_state: MarketStateView<'event>,
+        market_states: &'event [MarketStateView<'event>],
+        trading: &'event TradingContext,
+        decision_time: MatchTime,
+    ) -> Self {
         Self {
             occurrence,
             event,
@@ -76,6 +96,7 @@ impl<'event> StrategyEventContext<'event> {
             market_states,
             trading,
             session: trading.session(),
+            decision_time,
         }
     }
 
@@ -108,6 +129,11 @@ impl<'event> StrategyEventContext<'event> {
     #[must_use]
     pub const fn session(self) -> &'event SessionCallbackContext {
         self.session
+    }
+
+    #[must_use]
+    pub const fn decision_time(self) -> MatchTime {
+        self.decision_time
     }
 }
 
@@ -165,6 +191,14 @@ pub trait Strategy {
         Ok(())
     }
 
+    fn on_timer(
+        &mut self,
+        _context: StrategyTimerContext<'_>,
+        _output: &mut StrategyOutputSink,
+    ) -> Result<(), StrategyExecutionError> {
+        Ok(())
+    }
+
     fn finalize(
         &mut self,
         _context: &StrategyFinalizeContext<'_>,
@@ -208,6 +242,14 @@ impl<S: Strategy + ?Sized> Strategy for Box<S> {
         output: &mut StrategyOutputSink,
     ) -> Result<(), StrategyExecutionError> {
         (**self).on_feedback(context, output)
+    }
+
+    fn on_timer(
+        &mut self,
+        context: StrategyTimerContext<'_>,
+        output: &mut StrategyOutputSink,
+    ) -> Result<(), StrategyExecutionError> {
+        (**self).on_timer(context, output)
     }
 
     fn finalize(
@@ -261,6 +303,7 @@ impl From<StrategyOutputEncodingError> for StrategyExecutionError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CapabilityError {
     OrderIntentUnavailable,
+    ScheduledOrderUnavailable,
 }
 
 impl fmt::Display for CapabilityError {
@@ -268,6 +311,9 @@ impl fmt::Display for CapabilityError {
         match self {
             Self::OrderIntentUnavailable => {
                 formatter.write_str("order intent capability is unavailable")
+            }
+            Self::ScheduledOrderUnavailable => {
+                formatter.write_str("scheduled order capability is unavailable")
             }
         }
     }
@@ -289,6 +335,27 @@ impl From<crate::OrderIntentError> for StrategyExecutionError {
         Self {
             message: error.to_string().into_boxed_str(),
             capability_unavailable: true,
+        }
+    }
+}
+
+impl From<crate::ScheduledOrderCapabilityError> for StrategyExecutionError {
+    fn from(error: crate::ScheduledOrderCapabilityError) -> Self {
+        Self {
+            message: error.to_string().into_boxed_str(),
+            capability_unavailable: true,
+        }
+    }
+}
+
+impl From<crate::StrategyTimerError> for StrategyExecutionError {
+    fn from(error: crate::StrategyTimerError) -> Self {
+        Self {
+            message: error.to_string().into_boxed_str(),
+            capability_unavailable: matches!(
+                error,
+                crate::StrategyTimerError::CapabilityUnavailable
+            ),
         }
     }
 }

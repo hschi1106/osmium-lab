@@ -7,14 +7,16 @@ position accounting、P&L、feedback、reconciliation 與 canonical artifacts。
 
 ```text
 execution_sim_version       = 2
+accounting_version          = 6（精確總成本基礎，含可選 day-trade tax adjustment）
 order_schema_version        = 1
 fill_model_version          = 2
 ledger_schema_version       = 2
-position_accounting_version = 1
+position_accounting_version = 2
 canonical_order_version     = 1
 canonical_fill_version      = 1
 canonical_ledger_version    = 2
 result_schema_version       = 1
+control_ordering_version    = 1
 ```
 
 本文固定 logical contract 與 observable behavior，不固定 crate、module、trait 名稱或
@@ -29,6 +31,7 @@ binary float、unordered iteration 或 serializer default 取代本文 contract�
 - [Strategy API](strategy-api.md)
 - [MarketState](market-state.md)
 - [TradingContext ADR](../architecture/decisions/0004-trading-context-and-eligibility.md)
+- [Scheduled visible-depth ADR](../architecture/decisions/0006-scheduled-visible-depth-execution.md)
 - [Replay Engine](replay-engine.md)
 
 ## 2. 模型能力與限制
@@ -43,6 +46,11 @@ M2 simulation：
   multiplier、fixed market-data/order latency、Average Cost 與 final marking。
 - 使用單一 account、TWD cash 與 signed net position。
 
+position accounting 以 `Decimal atoms × quantity` 保存未平倉部位的精確總成本基礎，
+不得要求加權平均成本必須能在 18 位小數內整除。同方向加倉只累加總成本；減倉時按
+平倉數量分攤成本，並以 `HalfUp` 固定處理最小 atom 的餘數，剩餘成本留在未平倉部位。
+`average_cost` 僅為由總成本推導的 deterministic 顯示值，不得反向作為後續加倉的成本來源。
+
 M2 不提供：
 
 - 真實 exchange acceptance、queue position 或 matching engine。
@@ -50,6 +58,101 @@ M2 不提供：
 - borrow、short-sale eligibility、margin、risk liquidation。
 - multi-account、multi-currency、FX 或 corporate action。
 - source data 不支持的 intratick ordering、hidden liquidity 或 future statistics。
+
+上述清單描述預設 M2 model。後續可以依 ADR-0006 加入 opt-in、具獨立 identity 的
+scheduled visible-depth model；它不得靜默改變本文件既有 model 的 canonical 語意。
+
+`ControlTimeQueue` 由 runner 擁有，依 `(control_time, phase, insertion_sequence)` 排序。
+runner 在套用下一個 market event 前只取出嚴格早於該 event 的 actions；同
+`match_time` actions 必須等 market event commit 後，再依 ADR-0006 phase order 執行。
+control sequence 只代表 deterministic coordinator order，不代表交易所 priority。
+
+`ObservationVisibilityQueue` 只將 source observation 排到
+`match_time + market_data_latency` 的 `ReleaseObservation` phase；它不得讀取或套用
+`order_latency`。order activation 由獨立 control action 管理，避免同一 latency 被 runner
+與 simulation 重複計算。
+
+opt-in `run_scheduled_multi_backtest` 由 runner 自行開啟 frozen plan streams 並以既有
+`OrderingKey` merge；它逐筆呼叫 public `ReplayCore.apply_ordered`，不修改 replay-engine。
+每次 commit 後保存 event、occurrence、`TradingContext` 與全 universe 的 owned
+`MarketState` snapshot，再排入 `ReleaseObservation`。因此較早的 control action 可在下一個
+market event commit 前完成，延遲 callback 也不會讀到當下 core 中較新的 state。
+
+coordinator 在每個 market event 前排空所有 `control_time < event.match_time` actions；同時間
+action 則在該 event commit 後依 phase 執行。stream 耗盡後仍持續排空 queue，所以即使
+activation time 沒有 market event，也會產生正式 control-triggered fills、套用
+`MultiLedger`、傳遞 feedback，最後才 finalize／reconcile。scheduled mode 與既有
+`run_multi_backtest` 是兩個明確入口，未選擇新 mode 時不建立 observation copies 或 controls。
+
+scheduled visible-depth model 使用 `sweep_marketable_depth` 消耗 order side 的可執行五檔：
+buy 依 ask 由低至高、sell 依 bid 由高至低。先套用非負的 `adverse_price_delta`，再以調整後
+價格檢查 limit 是否 marketable；遇到第一個不可成交價位即停止。結果保留每一檔的 1-based
+level index、price 與 quantity；不足時同時回報已成交量及 remaining quantity。
+`depth_levels` 必須介於 1 與來源上限 5，quantity unit 不一致時明確拒絕。同一 snapshot 的
+各檔 `displayed_quantity` 只能消耗一次，不得由多筆 scheduled orders 重複使用。
+
+`ScheduledDepthSimulator` 與既有 subsequent-event `Simulator` 分離，只有 execution plan
+明確選擇 scheduled visible-depth policy 才建立。每個 instrument 綁定 `QuantityUnit`、
+`depth_levels`、`max_stale_ms` 與 `adverse_price_delta`；發布 book 時即驗證 universe、時間
+單調性與 quantity unit。`VisibleDepthAtActivationV1` 在 activation 只選擇
+`visible_at <= activate_at` 的最新完整 snapshot，並要求：
+
+```text
+activate_at - snapshot.match_time <= max_stale_ms
+matching == Enabled
+new_order_entry 允許該 order type
+```
+
+同一 activation time 必須依 `acceptance_sequence` 執行。pending request 可以依
+`client_order_id` deterministic replace／cancel；expiry 必須命中 request 的精確
+`expire_at`。terminal status 包含 `Filled`、`Failed`、`Expired`、`Replaced` 與
+`Cancelled`，不得再次 activation。
+
+`VisibleDepthUntilExpiryV1` 是被動限價 auction policy。activation 只將 order 從 `Scheduled`
+改為 `Active`；indicative／matching-disabled book 不產生 fill。第一筆在 activation 後可見且
+`matching == Enabled` 的完整 book 觸發一次 sweep，並依結果改為 `Filled`、
+`PartiallyFilled` 或 `MatchAttempted`。後兩種狀態不在後續 book 再次嘗試，剩餘量在精確
+`expire_at` 改為 `Expired`。因此模型可明確區分「尚未看到正式撮合結果」與「正式結果已看到但
+只成交部分／完全未成交」，又不聲稱重建真實 queue position。
+
+`AuctionCrossAtFirstMatchV1` 是集合競價限價單的 strict-cross policy。activation 只進入
+`Active`，之後只接受 `matching == Enabled(CallAuction)` 且事件 payload 明示實際 trade
+price 的第一筆正式撮合結果；試撮價、沿用的 last trade、book 價格與 continuous trade 都不是
+證據。買單僅在 `clearing_price < limit_price` 時全數成交，賣單僅在
+`clearing_price > limit_price` 時全數成交，價格相等保守視為未成交。無論 strict cross
+是否成立，第一筆正式結果都會結束撮合嘗試，未成交量留到 `expire_at` 取消。
+
+strict cross 的全數成交來自集合競價價格優先規則，不使用五檔 displayed quantity，也不推估
+同價委託 queue position；因此價格相等時不宣稱成交。fill 使用正式結果事件的
+`match_time` 與 `run_event_ordinal`，feedback 則等到該事件的 `visible_at` 才交給 strategy。
+歷史委託仍假設不會改變 clearing price；若研究數量可能造成 price impact，必須在 strategy
+另設 participation cap，而不能把此 policy 解讀為無限流動性。
+
+runner 在正式 auction event commit 後，於該 event 的 source `match_time` 執行 fill／ledger
+allocation，但不提前釋放 observation 或 feedback。若撮合已發生、market-data latency 使
+feedback 晚於本地 expiry／cancel time，market fill 仍優先，因為稍後送出的 cancel 不能抹除
+先前已發生的成交；strategy 仍只在 `visible_at` 收到 fill feedback。此安排只使用當下已 commit
+的 event，不讀取未來 event，因此不構成前視。
+
+runner 只在來源事件本身是 TAIFEX `BookSnapshot` 或 TWSE／TPEx `QuoteSnapshot` 時發布新的
+visible-depth evidence；trade-only event 不得把 MarketState 中沿用的舊 book 重新發布成新
+snapshot。`IndicativeOpeningAuction`／`IndicativeClosingAuction` 也不發布成 fill evidence。
+auction-cross evidence 則只從正式 `CallAuction` 的 `QuoteSnapshot.trade = Set(...)` 或同價
+`TradeBatch` 建立；缺少明示 trade、或同一 batch 出現多個 clearing prices 時不得推定成交。
+
+activation 無法完整成交時仍保留已產生的正式 level fills，並以 `ExecutionFailed` 明確分類
+`MissingVisibleDepth`、`StaleVisibleDepth`、`MatchingDisabled`、`NewOrderEntryBlocked`、
+`InsufficientVisibleDepth` 或 `PriceNotMarketable`。部分成交不得被回報為成功的完整成交。
+
+新 policy 以獨立的 `ExecutionFillFeedback` channel 傳遞逐檔結果，既有 aggregate
+`OrderFeedback` 保持相容。每筆 level fill 至少關聯 stable fill／order／client／batch IDs、
+instrument、activation／fill time、side、level index、price、quantity、cumulative filled 與
+remaining；欄位必須通過 quantity-unit 及時間順序驗證並具有 canonical encoding。
+
+正式 `FillRecord.trigger` 可以是 `MarketEvent { run_event_ordinal }` 或
+`Control { control_sequence }`。event-only run 仍使用既有 `OSFILLS1`／`OSLEDGR1` encoding；
+只有實際包含 control-triggered fill 時才使用帶 trigger discriminant 的
+`OSFILLS2`／`OSLEDGR2`，避免新 capability 改變既有 golden artifacts。
 
 `filled` 表示此版本模型在明示 evidence 下產生的估算，不表示歷史上真實委託一定成交。
 
@@ -504,6 +607,40 @@ Sell cash_effect = +(gross_notional - fee - tax)
 
 fee/tax 不可先合併再 rounding。
 
+### 11.4 臺灣現股當沖證交稅
+
+`DayTradeTaxModel` 是 opt-in 的 `EquityV1` tax policy，不取代其他市場的一般
+`ChargeModel`：
+
+```text
+DayTradeTaxModel {
+    ordinary
+    day_trade
+    timezone_offset_minutes
+    valid_through
+    eligible | eligible_dates
+    provenance
+}
+```
+
+配對範圍固定為同一 ledger（即同 account／instrument）、同一個以設定 timezone 換算的
+trading date，依 fill order FIFO 配對相同 quantity。先買後賣時，賣出 fill 的配對量直接
+使用 `day_trade` rate，未配對量使用 `ordinary` rate。先賣後買時，賣出當下先按已知配對量
+計稅；後續同日買進完成配對後，ledger 重新計算該賣出 fill 的 split tax，將差額作為該買入
+accounting transaction 的 tax adjustment。這項調整只改變 accounting，不倒轉 fill time、
+不修改 replay state，也不使用尚未發生的買入。
+
+當 reference 逐日提供資格時必須使用 `eligible_dates`；只有明確適用整段 run 的來源才能用
+單一 `eligible = true`。未列入 eligibility、超過 `valid_through`、不同 trading date 或未配對 quantity 均使用
+`ordinary`。每一賣出 fill 的優惠與一般部分分別依各自 rate／precision／rounding 計算後再
+相加；reconciliation 必須由原 fills 重建出相同 FIFO pools、cash 與 total tax。
+
+臺灣現行 reference config 使用普通股票賣出 `0.003`、符合當沖數量 `0.0015`、
+`timezone_offset_minutes = 480`、`valid_through = 2027-12-31`。標的 eligibility 必須由該日
+reference data 明示，不能由 symbol 推測。法規與交易制度依
+[財政部證券交易稅條例](https://law-out.mof.gov.tw/LawContent.aspx?id=FL006079)及
+[證交所當日沖銷交易專區](https://www.twse.com.tw/zh/products/system/day-trading.html)。
+
 ## 12. Accounting
 
 ### 12.1 Ledger
@@ -731,6 +868,17 @@ ledger.blake3 = BLAKE3-256(ledger.bin exact bytes)
 version 及 underlying canonical checksums。YAML key order或 formatting 不作為
 canonical identity；完整 result identity 由 versioned semantic manifest/framed
 canonical components 計算。
+
+scheduled run 使用 `OSORDERS2` 保存 canonical `ScheduledOrderRequest`、acceptance sequence、
+filled quantity、terminal status 與 failure reason；`OSFILLS2` 的 trigger 必須是 control
+sequence。另以 `OSEXECT1` 保存每筆 `ExecutionFillFeedback` canonical bytes，因此 level
+index、client／batch IDs、activation／fill time、cumulative filled 與 fill identity 均可稽核。
+publisher 同時產生 `execution-trace.blake3`，並在 manifest 明示 execution policy 與
+execution-fill count。
+
+一般 accounting ledger 繼續使用 accounting v3；只有設定 day-trade tax adjustment 的
+ledger 使用 v4。multi-instrument run 取所有 instrument ledger 的最高版本，並在
+ledger／positions／performance／manifest 使用同一值，不得因 binary 升級改寫舊 run 版本。
 
 ## 17. Failure taxonomy
 
