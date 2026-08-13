@@ -159,6 +159,11 @@ pub enum ScheduledExecutionPolicy {
     VisibleDepthAtActivationV1 = 1,
     VisibleDepthUntilExpiryV1 = 2,
     AuctionCrossAtFirstMatchV1 = 3,
+    /// Cash-settles a derivative at the exact limit price carried by the order intent.
+    ///
+    /// The price must come from immutable reference data known to the backtest plan. This policy
+    /// deliberately does not consult replay market depth.
+    SettlementAtActivationV1 = 4,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
