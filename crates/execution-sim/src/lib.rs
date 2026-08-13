@@ -21,10 +21,11 @@ pub use accounting::{
     ACCOUNTING_VERSION, AccountingError, AccountingModel, ChargeBasis, ChargeModel, ChargeSides,
     DayTradeTaxModel, InstrumentEconomics, InstrumentLedgerConfig, InstrumentPerformance,
     LEGACY_ACCOUNTING_VERSION, Ledger, MultiLedger, MultiPerformanceSummary, PerformanceSummary,
-    RoundingPolicy,
+    RoundingPolicy, assess_fill_charge,
 };
 pub use depth::{
-    DepthSweepError, DepthSweepResult, LevelFill, sweep_marketable_depth, sweep_visible_depth,
+    AtomicDepthFill, AtomicDepthLeg, ConsumableDepth, DepthSweepError, DepthSweepResult, LevelFill,
+    execute_atomic_depth, sweep_marketable_depth, sweep_visible_depth,
 };
 pub use scheduled::{
     AuctionMatchEvidence, ScheduledActivation, ScheduledDepthModel, ScheduledDepthSimulator,

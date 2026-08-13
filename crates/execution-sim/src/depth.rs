@@ -1,6 +1,10 @@
 use std::{error::Error, fmt};
 
-use market_types::{BOOK_DEPTH, CompleteBookSnapshot, Decimal, Price, Quantity, QuantityUnit};
+use std::collections::BTreeMap;
+
+use market_types::{
+    BOOK_DEPTH, CompleteBookSnapshot, Decimal, InstrumentId, Price, Quantity, QuantityUnit,
+};
 use strategy_api::{OrderSide, OrderType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +36,154 @@ pub struct DepthSweepResult {
     fills: Box<[LevelFill]>,
     requested: Quantity,
     filled_value: u64,
+}
+
+/// A visible five-level snapshot plus strategy-consumed displayed quantity.
+///
+/// Consumption belongs to the snapshot and must be discarded when a newer complete snapshot is
+/// published. Keeping it here makes shared-liquidity allocation explicit without claiming exchange
+/// queue reconstruction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsumableDepth {
+    book: CompleteBookSnapshot,
+    consumed_bids: [u64; BOOK_DEPTH],
+    consumed_asks: [u64; BOOK_DEPTH],
+}
+
+impl ConsumableDepth {
+    #[must_use]
+    pub const fn new(book: CompleteBookSnapshot) -> Self {
+        Self {
+            book,
+            consumed_bids: [0; BOOK_DEPTH],
+            consumed_asks: [0; BOOK_DEPTH],
+        }
+    }
+
+    #[must_use]
+    pub const fn book(&self) -> &CompleteBookSnapshot {
+        &self.book
+    }
+
+    pub fn replace(&mut self, book: CompleteBookSnapshot) {
+        self.book = book;
+        self.consumed_bids = [0; BOOK_DEPTH];
+        self.consumed_asks = [0; BOOK_DEPTH];
+    }
+
+    pub fn preview(
+        &self,
+        side: OrderSide,
+        requested: Quantity,
+        depth_levels: usize,
+    ) -> Result<DepthSweepResult, DepthSweepError> {
+        let consumed = match side {
+            OrderSide::Buy => &self.consumed_asks,
+            OrderSide::Sell => &self.consumed_bids,
+        };
+        sweep_marketable_depth_with_consumed(
+            &self.book,
+            side,
+            requested,
+            depth_levels,
+            OrderType::Market,
+            Decimal::ZERO,
+            consumed,
+        )
+    }
+
+    fn apply(&mut self, side: OrderSide, sweep: &DepthSweepResult) -> Result<(), DepthSweepError> {
+        let consumed = match side {
+            OrderSide::Buy => &mut self.consumed_asks,
+            OrderSide::Sell => &mut self.consumed_bids,
+        };
+        for fill in sweep.fills() {
+            let index = usize::from(fill.level_index() - 1);
+            consumed[index] = consumed[index]
+                .checked_add(fill.quantity().value())
+                .ok_or(DepthSweepError::QuantityOverflow)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AtomicDepthLeg {
+    instrument: InstrumentId,
+    side: OrderSide,
+}
+
+impl AtomicDepthLeg {
+    #[must_use]
+    pub const fn new(instrument: InstrumentId, side: OrderSide) -> Self {
+        Self { instrument, side }
+    }
+
+    #[must_use]
+    pub const fn instrument(&self) -> &InstrumentId {
+        &self.instrument
+    }
+
+    #[must_use]
+    pub const fn side(&self) -> OrderSide {
+        self.side
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AtomicDepthFill {
+    leg: AtomicDepthLeg,
+    sweep: DepthSweepResult,
+}
+
+impl AtomicDepthFill {
+    #[must_use]
+    pub const fn leg(&self) -> &AtomicDepthLeg {
+        &self.leg
+    }
+
+    #[must_use]
+    pub const fn sweep(&self) -> &DepthSweepResult {
+        &self.sweep
+    }
+}
+
+/// Preflights every leg against cloned consumption and commits only when every leg can fill the
+/// exact requested quantity. A `None` result leaves every book unchanged.
+pub fn execute_atomic_depth(
+    books: &mut BTreeMap<InstrumentId, ConsumableDepth>,
+    legs: &[AtomicDepthLeg],
+    requested: Quantity,
+    depth_levels: usize,
+) -> Result<Option<Vec<AtomicDepthFill>>, DepthSweepError> {
+    let mut staged = BTreeMap::new();
+    for leg in legs {
+        let Some(book) = books.get(leg.instrument()) else {
+            return Ok(None);
+        };
+        staged
+            .entry(leg.instrument().clone())
+            .or_insert_with(|| book.clone());
+    }
+    let mut fills = Vec::with_capacity(legs.len());
+    for leg in legs {
+        let Some(book) = staged.get_mut(leg.instrument()) else {
+            return Ok(None);
+        };
+        let sweep = book.preview(leg.side(), requested, depth_levels)?;
+        if !sweep.is_complete() {
+            return Ok(None);
+        }
+        book.apply(leg.side(), &sweep)?;
+        fills.push(AtomicDepthFill {
+            leg: leg.clone(),
+            sweep,
+        });
+    }
+    for (instrument, book) in staged {
+        books.insert(instrument, book);
+    }
+    Ok(Some(fills))
 }
 
 impl DepthSweepResult {
@@ -199,6 +351,7 @@ pub enum DepthSweepError {
         expected: QuantityUnit,
         actual: QuantityUnit,
     },
+    QuantityOverflow,
 }
 
 impl fmt::Display for DepthSweepError {
@@ -220,6 +373,7 @@ impl fmt::Display for DepthSweepError {
                 formatter,
                 "depth quantity unit mismatch: expected {expected:?}, got {actual:?}"
             ),
+            Self::QuantityOverflow => formatter.write_str("consumed depth quantity overflow"),
         }
     }
 }
@@ -389,5 +543,51 @@ mod tests {
             .unwrap_err(),
             DepthSweepError::InvalidAdversePriceDelta
         );
+    }
+
+    #[test]
+    fn atomic_depth_commits_all_three_legs_or_none() {
+        let future = InstrumentId::new(
+            market_types::MarketId::Taifex,
+            market_types::Symbol::new("MX2G6").unwrap(),
+        );
+        let call = InstrumentId::new(
+            market_types::MarketId::Taifex,
+            market_types::Symbol::new("CALL").unwrap(),
+        );
+        let put = InstrumentId::new(
+            market_types::MarketId::Taifex,
+            market_types::Symbol::new("PUT").unwrap(),
+        );
+        let mut books = [future.clone(), call.clone(), put.clone()]
+            .into_iter()
+            .map(|instrument| (instrument, ConsumableDepth::new(book())))
+            .collect::<BTreeMap<_, _>>();
+        let legs = [
+            AtomicDepthLeg::new(future.clone(), OrderSide::Sell),
+            AtomicDepthLeg::new(call, OrderSide::Buy),
+            AtomicDepthLeg::new(put.clone(), OrderSide::Sell),
+        ];
+
+        let before = books.clone();
+        assert!(
+            execute_atomic_depth(&mut books, &legs, quantity(6, QuantityUnit::Contract), 2,)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(books, before);
+
+        let fills = execute_atomic_depth(&mut books, &legs, quantity(2, QuantityUnit::Contract), 5)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fills.len(), 3);
+        assert!(fills.iter().all(|fill| fill.sweep().is_complete()));
+        let remaining = books
+            .get(&future)
+            .unwrap()
+            .preview(OrderSide::Sell, quantity(4, QuantityUnit::Contract), 5)
+            .unwrap();
+        assert_eq!(remaining.filled().unwrap().value(), 4);
+        assert_eq!(remaining.fills()[0].price(), Price::parse("99").unwrap());
     }
 }
