@@ -4,8 +4,9 @@ use std::path::Path;
 
 use market_types::Decimal;
 use run_planner::{
-    CachePolicy, ConfigError, EffectiveRunConfig, LatencyConfig, ReplayDataPolicy,
-    SlippageModelConfig, SourcePolicy,
+    CachePolicy, ConfigError, DayTradeMatchingConfig, DayTradeTaxConfig, EffectiveRunConfig,
+    InstrumentChargeConfig, LEGACY_EFFECTIVE_CONFIG_VERSION, LatencyConfig, ReplayDataPolicy,
+    ScheduledExecutionConfig, SlippageModelConfig, SourcePolicy,
 };
 use strategy_api::SessionKind;
 
@@ -36,6 +37,10 @@ fn effective_config_applies_defaults_and_canonicalizes_sets() {
     assert_eq!(effective.replay_data_policy(), ReplayDataPolicy::Strict);
     assert_eq!(effective.data_root(), Path::new("target/test-data"));
     assert!(effective.canonical_semantics().starts_with(b"OSECFG01"));
+    assert_eq!(
+        effective.canonical_version(),
+        LEGACY_EFFECTIVE_CONFIG_VERSION
+    );
 }
 
 #[test]
@@ -174,6 +179,45 @@ fn latency_that_cannot_fit_replay_time_is_rejected_before_planning() {
 }
 
 #[test]
+fn scheduled_execution_is_explicit_validated_and_identity_bound() {
+    let instrument = instrument("2330");
+    let baseline = EffectiveRunConfig::resolve(run_config(
+        vec![date("2026-07-27")],
+        vec![instrument.clone()],
+        "target/test-data",
+    ))
+    .unwrap();
+    let mut scheduled_config = run_config(
+        vec![date("2026-07-27")],
+        vec![instrument.clone()],
+        "target/test-data",
+    );
+    scheduled_config.simulation = scheduled_config
+        .simulation
+        .with_scheduled_execution(ScheduledExecutionConfig::new(5, 1_000));
+    let scheduled = EffectiveRunConfig::resolve(scheduled_config).unwrap();
+    assert_eq!(scheduled.canonical_version(), 4);
+    assert_eq!(
+        scheduled.simulation().scheduled_execution(),
+        Some(ScheduledExecutionConfig::new(5, 1_000))
+    );
+    assert_ne!(scheduled.checksum(), baseline.checksum());
+
+    let mut invalid = run_config(
+        vec![date("2026-07-27")],
+        vec![instrument],
+        "target/test-data",
+    );
+    invalid.simulation = invalid
+        .simulation
+        .with_scheduled_execution(ScheduledExecutionConfig::new(0, 0));
+    assert_eq!(
+        EffectiveRunConfig::resolve(invalid),
+        Err(ConfigError::InvalidScheduledExecution)
+    );
+}
+
+#[test]
 fn economics_outside_universe_is_rejected() {
     let selected = instrument("2330");
     let outside = instrument("2317");
@@ -183,5 +227,67 @@ fn economics_outside_universe_is_rejected() {
     assert_eq!(
         EffectiveRunConfig::resolve(config),
         Err(ConfigError::EconomicsOutsideUniverse(outside))
+    );
+}
+
+#[test]
+fn instrument_day_trade_tax_is_canonical_and_requires_every_configured_date() {
+    let instrument = instrument("2330");
+    let dates = vec![date("2026-06-23"), date("2026-06-24")];
+    let ordinary = simulation().tax_model().clone();
+    let reduced = run_planner::ChargeConfig::new(
+        Decimal::parse("0.0015").unwrap(),
+        run_planner::ChargeSides::Sell,
+        Decimal::ZERO,
+        0,
+        run_planner::RoundingPolicy::Down,
+        "MOF:SecuritiesTransactionTaxAct-2025",
+    );
+    let charges = |eligible_dates: Vec<market_types::TradingDate>| {
+        InstrumentChargeConfig::new(
+            instrument.clone(),
+            simulation().fee_model().clone(),
+            ordinary.clone(),
+            Some(DayTradeTaxConfig::new(
+                reduced.clone(),
+                DayTradeMatchingConfig::SameAccountInstrumentTradingDateFifo,
+                480,
+                eligible_dates,
+                true,
+                date("2027-12-31"),
+                "TWSE:day-trading-eligibility",
+            )),
+        )
+    };
+    let mut missing = run_config(dates.clone(), vec![instrument.clone()], "target/test-data");
+    missing.simulation = missing
+        .simulation
+        .with_instrument_charges([charges(vec![dates[0]])]);
+    assert_eq!(
+        EffectiveRunConfig::resolve(missing),
+        Err(ConfigError::MissingDayTradeEligibility(instrument.clone()))
+    );
+
+    let baseline = EffectiveRunConfig::resolve(run_config(
+        dates.clone(),
+        vec![instrument.clone()],
+        "target/test-data",
+    ))
+    .unwrap();
+    let mut configured = run_config(dates.clone(), vec![instrument.clone()], "target/test-data");
+    configured.simulation = configured
+        .simulation
+        .with_instrument_charges([charges(dates)]);
+    let configured = EffectiveRunConfig::resolve(configured).unwrap();
+    assert_eq!(configured.canonical_version(), 4);
+    assert_ne!(configured.checksum(), baseline.checksum());
+    assert!(
+        configured
+            .simulation()
+            .charges_for(&instrument)
+            .unwrap()
+            .day_trade_tax()
+            .unwrap()
+            .is_eligible(date("2026-06-24"))
     );
 }

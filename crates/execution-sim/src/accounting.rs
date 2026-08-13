@@ -1,11 +1,12 @@
-use std::{collections::BTreeMap, error::Error, fmt};
+use std::{collections::BTreeMap, collections::VecDeque, error::Error, fmt};
 
-use market_types::{Decimal, InstrumentId, MarketId, QuantityUnit};
+use market_types::{Decimal, InstrumentId, MarketId, QuantityUnit, TradingDate};
 use strategy_api::OrderSide;
 
 use crate::FillRecord;
 
-pub const ACCOUNTING_VERSION: u16 = 3;
+pub const ACCOUNTING_VERSION: u16 = 6;
+pub const LEGACY_ACCOUNTING_VERSION: u16 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -31,6 +32,7 @@ pub struct InstrumentLedgerConfig {
     economics: InstrumentEconomics,
     fee: ChargeModel,
     tax: ChargeModel,
+    day_trade_tax: Option<DayTradeTaxModel>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,12 +50,136 @@ pub enum RoundingPolicy {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChargeBasis {
+    NotionalRate,
+    FixedPerUnit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChargeModel {
+    pub basis: ChargeBasis,
     pub rate: Decimal,
     pub sides: ChargeSides,
     pub minimum: Decimal,
     pub precision: u8,
     pub rounding: RoundingPolicy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DayTradeTaxModel {
+    ordinary: ChargeModel,
+    day_trade: ChargeModel,
+    timezone_offset_minutes: i32,
+    valid_through: TradingDate,
+    eligible: bool,
+    eligible_dates: Option<Box<[TradingDate]>>,
+    provenance: Box<str>,
+}
+
+impl DayTradeTaxModel {
+    pub fn new(
+        ordinary: ChargeModel,
+        day_trade: ChargeModel,
+        timezone_offset_minutes: i32,
+        valid_through: TradingDate,
+        eligible: bool,
+        provenance: impl Into<Box<str>>,
+    ) -> Result<Self, AccountingError> {
+        let provenance = provenance.into();
+        if provenance.is_empty()
+            || ordinary.basis != ChargeBasis::NotionalRate
+            || day_trade.basis != ChargeBasis::NotionalRate
+            || ordinary.sides != ChargeSides::Sell
+            || day_trade.sides != ChargeSides::Sell
+            || day_trade.rate > ordinary.rate
+            || ordinary.rate.atoms() < 0
+            || day_trade.rate.atoms() < 0
+            || ordinary.minimum.atoms() < 0
+            || day_trade.minimum.atoms() < 0
+            || ordinary.precision > 18
+            || day_trade.precision > 18
+            || !(-1_439..=1_439).contains(&timezone_offset_minutes)
+        {
+            return Err(AccountingError::InvalidModel);
+        }
+        Ok(Self {
+            ordinary,
+            day_trade,
+            timezone_offset_minutes,
+            valid_through,
+            eligible,
+            eligible_dates: None,
+            provenance,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_for_dates(
+        ordinary: ChargeModel,
+        day_trade: ChargeModel,
+        timezone_offset_minutes: i32,
+        valid_through: TradingDate,
+        eligible_dates: impl IntoIterator<Item = TradingDate>,
+        provenance: impl Into<Box<str>>,
+    ) -> Result<Self, AccountingError> {
+        let mut model = Self::new(
+            ordinary,
+            day_trade,
+            timezone_offset_minutes,
+            valid_through,
+            false,
+            provenance,
+        )?;
+        let dates = eligible_dates
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        model.eligible_dates = Some(dates.into_iter().collect());
+        Ok(model)
+    }
+
+    #[must_use]
+    pub const fn ordinary(&self) -> ChargeModel {
+        self.ordinary
+    }
+
+    #[must_use]
+    pub const fn day_trade(&self) -> ChargeModel {
+        self.day_trade
+    }
+
+    #[must_use]
+    pub const fn timezone_offset_minutes(&self) -> i32 {
+        self.timezone_offset_minutes
+    }
+
+    #[must_use]
+    pub const fn valid_through(&self) -> TradingDate {
+        self.valid_through
+    }
+
+    #[must_use]
+    pub const fn eligible(&self) -> bool {
+        self.eligible
+    }
+
+    #[must_use]
+    pub fn eligible_dates(&self) -> Option<&[TradingDate]> {
+        self.eligible_dates.as_deref()
+    }
+
+    #[must_use]
+    pub fn is_eligible(&self, date: TradingDate) -> bool {
+        self.eligible
+            || self
+                .eligible_dates
+                .as_ref()
+                .is_some_and(|dates| dates.binary_search(&date).is_ok())
+    }
+
+    #[must_use]
+    pub fn provenance(&self) -> &str {
+        &self.provenance
+    }
 }
 
 impl InstrumentLedgerConfig {
@@ -73,7 +199,15 @@ impl InstrumentLedgerConfig {
             economics,
             fee,
             tax,
+            day_trade_tax: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_day_trade_tax(mut self, model: DayTradeTaxModel) -> Self {
+        self.tax = model.ordinary;
+        self.day_trade_tax = Some(model);
+        self
     }
 
     #[must_use]
@@ -105,6 +239,11 @@ impl InstrumentLedgerConfig {
     pub const fn tax(&self) -> ChargeModel {
         self.tax
     }
+
+    #[must_use]
+    pub const fn day_trade_tax(&self) -> Option<&DayTradeTaxModel> {
+        self.day_trade_tax.as_ref()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,6 +251,7 @@ pub struct Ledger {
     initial_cash: Decimal,
     cash: Decimal,
     position: i128,
+    cost_basis_atoms: i128,
     average_cost: Option<Decimal>,
     realized_pnl: Decimal,
     total_fee: Decimal,
@@ -121,6 +261,24 @@ pub struct Ledger {
     fee: ChargeModel,
     tax: ChargeModel,
     accounting_model: AccountingModel,
+    day_trade_tax: Option<DayTradeTaxModel>,
+    day_trade_buys: VecDeque<DayTradeBuy>,
+    day_trade_sells: VecDeque<DayTradeSell>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DayTradeBuy {
+    date: TradingDate,
+    remaining: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DayTradeSell {
+    date: TradingDate,
+    price: Decimal,
+    quantity: u64,
+    matched: u64,
+    assessed_tax: Decimal,
 }
 
 impl Ledger {
@@ -146,6 +304,7 @@ impl Ledger {
             initial_cash,
             cash: initial_cash,
             position: 0,
+            cost_basis_atoms: 0,
             average_cost: None,
             realized_pnl: Decimal::ZERO,
             total_fee: Decimal::ZERO,
@@ -155,23 +314,41 @@ impl Ledger {
             fee,
             tax,
             accounting_model,
+            day_trade_tax: None,
+            day_trade_buys: VecDeque::new(),
+            day_trade_sells: VecDeque::new(),
         }
+    }
+
+    #[must_use]
+    pub fn with_day_trade_tax(mut self, model: DayTradeTaxModel) -> Self {
+        self.tax = model.ordinary;
+        self.day_trade_tax = Some(model);
+        self
     }
 
     pub fn apply_fill(&mut self, fill: FillRecord) -> Result<(), AccountingError> {
         validate_models(&self.economics, self.fee, self.tax)?;
+        if let Some(model) = &self.day_trade_tax {
+            validate_models(&self.economics, self.fee, model.day_trade)?;
+            if self.accounting_model != AccountingModel::EquityV1 {
+                return Err(AccountingError::InvalidModel);
+            }
+        }
         let quantity = i128::from(fill.quantity().value());
         let notional = notional(&fill, &self.economics)?;
-        let fee = charge(notional, fill.side(), self.fee)?;
-        let tax = charge(notional, fill.side(), self.tax)?;
+        let fee = charge(notional, fill.quantity().value(), fill.side(), self.fee)?;
+        let mut day_trade_buys = self.day_trade_buys.clone();
+        let mut day_trade_sells = self.day_trade_sells.clone();
+        let tax = self.tax_for_fill(&fill, notional, &mut day_trade_buys, &mut day_trade_sells)?;
         let signed_quantity = match fill.side() {
             OrderSide::Buy => quantity,
             OrderSide::Sell => -quantity,
         };
         let price = fill.price().as_decimal();
-        let (position, average_cost, realized_delta) = transition_position(
+        let (position, cost_basis_atoms, average_cost, realized_delta) = transition_position(
             self.position,
-            self.average_cost,
+            self.cost_basis_atoms,
             signed_quantity,
             price,
             &self.economics,
@@ -194,10 +371,13 @@ impl Ledger {
 
         self.cash = next_cash;
         self.position = position;
+        self.cost_basis_atoms = cost_basis_atoms;
         self.average_cost = average_cost;
         self.realized_pnl = next_realized;
         self.total_fee = next_fee;
         self.total_tax = next_tax;
+        self.day_trade_buys = day_trade_buys;
+        self.day_trade_sells = day_trade_sells;
         self.fills.push(fill);
         Ok(())
     }
@@ -209,16 +389,20 @@ impl Ledger {
             self.fee,
             self.tax,
             self.accounting_model,
-        );
+        )
+        .with_optional_day_trade_tax(self.day_trade_tax.clone());
         for fill in self.fills.clone() {
             rebuilt.apply_fill(fill)?;
         }
         if rebuilt.cash != self.cash
             || rebuilt.position != self.position
+            || rebuilt.cost_basis_atoms != self.cost_basis_atoms
             || rebuilt.average_cost != self.average_cost
             || rebuilt.realized_pnl != self.realized_pnl
             || rebuilt.total_fee != self.total_fee
             || rebuilt.total_tax != self.total_tax
+            || rebuilt.day_trade_buys != self.day_trade_buys
+            || rebuilt.day_trade_sells != self.day_trade_sells
         {
             return Err(AccountingError::Reconciliation);
         }
@@ -229,17 +413,25 @@ impl Ledger {
         &self,
         final_mark: Option<Decimal>,
     ) -> Result<PerformanceSummary, AccountingError> {
-        let unrealized_pnl = match (self.position, self.average_cost, final_mark) {
-            (0, _, _) => Some(Decimal::ZERO),
-            (_, Some(cost), Some(mark)) => {
-                let difference = if self.position > 0 {
-                    checked_sub(mark, cost)?
+        let unrealized_pnl = match (self.position, final_mark) {
+            (0, _) => Some(Decimal::ZERO),
+            (_, Some(mark)) => {
+                let marked_value = mark
+                    .atoms()
+                    .checked_mul(self.position.unsigned_abs() as i128)
+                    .ok_or(AccountingError::Overflow)?;
+                let difference_atoms = if self.position > 0 {
+                    marked_value
+                        .checked_sub(self.cost_basis_atoms)
+                        .ok_or(AccountingError::Overflow)?
                 } else {
-                    checked_sub(cost, mark)?
+                    self.cost_basis_atoms
+                        .checked_sub(marked_value)
+                        .ok_or(AccountingError::Overflow)?
                 };
                 Some(scale_by_quantity(
-                    difference,
-                    self.position.unsigned_abs(),
+                    Decimal::from_atoms(difference_atoms),
+                    1,
                     &self.economics,
                 )?)
             }
@@ -286,6 +478,148 @@ impl Ledger {
     pub const fn accounting_model(&self) -> AccountingModel {
         self.accounting_model
     }
+
+    #[must_use]
+    pub const fn accounting_version(&self) -> u16 {
+        ACCOUNTING_VERSION
+    }
+
+    fn with_optional_day_trade_tax(mut self, model: Option<DayTradeTaxModel>) -> Self {
+        self.day_trade_tax = model;
+        self
+    }
+
+    fn tax_for_fill(
+        &self,
+        fill: &FillRecord,
+        notional: Decimal,
+        buys: &mut VecDeque<DayTradeBuy>,
+        sells: &mut VecDeque<DayTradeSell>,
+    ) -> Result<Decimal, AccountingError> {
+        let Some(model) = &self.day_trade_tax else {
+            return charge(notional, fill.quantity().value(), fill.side(), self.tax);
+        };
+        let date = trading_date(fill.match_time(), model.timezone_offset_minutes)?;
+        if !model.is_eligible(date) || date > model.valid_through {
+            return charge(
+                notional,
+                fill.quantity().value(),
+                fill.side(),
+                model.ordinary,
+            );
+        }
+        match fill.side() {
+            OrderSide::Buy => {
+                let mut remaining = fill.quantity().value();
+                let mut adjustment = Decimal::ZERO;
+                for sell in sells
+                    .iter_mut()
+                    .filter(|sell| sell.date == date && sell.matched < sell.quantity)
+                {
+                    if remaining == 0 {
+                        break;
+                    }
+                    let matched = remaining.min(sell.quantity - sell.matched);
+                    let previous = sell.assessed_tax;
+                    sell.matched += matched;
+                    sell.assessed_tax = split_sell_tax(
+                        sell.price,
+                        sell.quantity,
+                        sell.matched,
+                        &self.economics,
+                        model,
+                    )?;
+                    adjustment =
+                        checked_add(adjustment, checked_sub(sell.assessed_tax, previous)?)?;
+                    remaining -= matched;
+                }
+                if remaining > 0 {
+                    buys.push_back(DayTradeBuy { date, remaining });
+                }
+                Ok(adjustment)
+            }
+            OrderSide::Sell => {
+                let mut remaining = fill.quantity().value();
+                for buy in buys
+                    .iter_mut()
+                    .filter(|buy| buy.date == date && buy.remaining > 0)
+                {
+                    if remaining == 0 {
+                        break;
+                    }
+                    let matched = remaining.min(buy.remaining);
+                    buy.remaining -= matched;
+                    remaining -= matched;
+                }
+                let matched = fill.quantity().value() - remaining;
+                let assessed_tax = split_sell_tax(
+                    fill.price().as_decimal(),
+                    fill.quantity().value(),
+                    matched,
+                    &self.economics,
+                    model,
+                )?;
+                if remaining > 0 {
+                    sells.push_back(DayTradeSell {
+                        date,
+                        price: fill.price().as_decimal(),
+                        quantity: fill.quantity().value(),
+                        matched,
+                        assessed_tax,
+                    });
+                }
+                Ok(assessed_tax)
+            }
+        }
+    }
+}
+
+fn trading_date(
+    match_time: market_types::MatchTime,
+    timezone_offset_minutes: i32,
+) -> Result<TradingDate, AccountingError> {
+    const MICROS_PER_MINUTE: i64 = 60 * 1_000_000;
+    const MICROS_PER_DAY: i64 = 24 * 60 * MICROS_PER_MINUTE;
+    let offset = i64::from(timezone_offset_minutes)
+        .checked_mul(MICROS_PER_MINUTE)
+        .ok_or(AccountingError::InvalidTradingDate)?;
+    let local = match_time
+        .as_unix_microseconds()
+        .checked_add(offset)
+        .ok_or(AccountingError::InvalidTradingDate)?;
+    let epoch_days = i32::try_from(local.div_euclid(MICROS_PER_DAY))
+        .map_err(|_| AccountingError::InvalidTradingDate)?;
+    Ok(TradingDate::from_epoch_days(epoch_days))
+}
+
+fn split_sell_tax(
+    price: Decimal,
+    quantity: u64,
+    day_trade_quantity: u64,
+    economics: &InstrumentEconomics,
+    model: &DayTradeTaxModel,
+) -> Result<Decimal, AccountingError> {
+    let ordinary_quantity = quantity
+        .checked_sub(day_trade_quantity)
+        .ok_or(AccountingError::Overflow)?;
+    let day_trade_tax = if day_trade_quantity == 0 {
+        Decimal::ZERO
+    } else {
+        let notional = scale_by_quantity(price, u128::from(day_trade_quantity), economics)?;
+        charge(
+            notional,
+            day_trade_quantity,
+            OrderSide::Sell,
+            model.day_trade,
+        )?
+    };
+    let ordinary_tax = if ordinary_quantity == 0 {
+        Decimal::ZERO
+    } else {
+        let notional = scale_by_quantity(price, u128::from(ordinary_quantity), economics)?;
+        charge(notional, ordinary_quantity, OrderSide::Sell, model.ordinary)?
+    };
+    checked_add(day_trade_tax, ordinary_tax)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -374,6 +708,7 @@ fn gcd(mut left: u128, mut right: u128) -> u128 {
 
 fn charge(
     notional: Decimal,
+    quantity: u64,
     side: OrderSide,
     model: ChargeModel,
 ) -> Result<Decimal, AccountingError> {
@@ -386,7 +721,12 @@ fn charge(
     if !applies {
         return Ok(Decimal::ZERO);
     }
-    let mut left = notional.atoms();
+    let mut left = match model.basis {
+        ChargeBasis::NotionalRate => notional.atoms(),
+        ChargeBasis::FixedPerUnit => i128::from(quantity)
+            .checked_mul(Decimal::SCALE_FACTOR)
+            .ok_or(AccountingError::Overflow)?,
+    };
     let mut right = model.rate.atoms();
     let mut denominator = Decimal::SCALE_FACTOR;
     let first = gcd(left.unsigned_abs(), denominator as u128) as i128;
@@ -408,53 +748,88 @@ fn charge(
 
 fn transition_position(
     position: i128,
-    average: Option<Decimal>,
+    cost_basis_atoms: i128,
     delta: i128,
     price: Decimal,
     economics: &InstrumentEconomics,
-) -> Result<(i128, Option<Decimal>, Decimal), AccountingError> {
+) -> Result<(i128, i128, Option<Decimal>, Decimal), AccountingError> {
     let next = position
         .checked_add(delta)
         .ok_or(AccountingError::Overflow)?;
     if position == 0 || position.signum() == delta.signum() {
-        let previous_value = average
-            .unwrap_or(Decimal::ZERO)
-            .atoms()
-            .checked_mul(position.unsigned_abs() as i128)
-            .ok_or(AccountingError::Overflow)?;
         let added_value = price
             .atoms()
             .checked_mul(delta.unsigned_abs() as i128)
             .ok_or(AccountingError::Overflow)?;
-        let total = previous_value
+        let next_cost_basis_atoms = cost_basis_atoms
             .checked_add(added_value)
             .ok_or(AccountingError::Overflow)?;
-        let divisor = i128::try_from(next.unsigned_abs()).map_err(|_| AccountingError::Overflow)?;
-        if total % divisor != 0 {
-            return Err(AccountingError::PrecisionLoss);
-        }
         return Ok((
             next,
-            Some(Decimal::from_atoms(total / divisor)),
+            next_cost_basis_atoms,
+            average_cost(next_cost_basis_atoms, next)?,
             Decimal::ZERO,
         ));
     }
     let closed = position.unsigned_abs().min(delta.unsigned_abs());
-    let average = average.ok_or(AccountingError::MissingCostBasis)?;
-    let difference = if position > 0 {
-        checked_sub(price, average)?
+    let position_size =
+        i128::try_from(position.unsigned_abs()).map_err(|_| AccountingError::Overflow)?;
+    let closed = i128::try_from(closed).map_err(|_| AccountingError::Overflow)?;
+    let allocated_basis = if closed == position_size {
+        cost_basis_atoms
     } else {
-        checked_sub(average, price)?
+        let numerator = cost_basis_atoms
+            .checked_mul(closed)
+            .ok_or(AccountingError::Overflow)?;
+        divide_round(numerator, position_size, RoundingPolicy::HalfUp)?
     };
-    let realized = scale_by_quantity(difference, closed, economics)?;
-    let next_average = if next == 0 {
-        None
+    let closed_value = price
+        .atoms()
+        .checked_mul(closed)
+        .ok_or(AccountingError::Overflow)?;
+    let difference_atoms = if position > 0 {
+        closed_value
+            .checked_sub(allocated_basis)
+            .ok_or(AccountingError::Overflow)?
+    } else {
+        allocated_basis
+            .checked_sub(closed_value)
+            .ok_or(AccountingError::Overflow)?
+    };
+    let realized = scale_by_quantity(Decimal::from_atoms(difference_atoms), 1, economics)?;
+    let next_cost_basis_atoms = if next == 0 {
+        0
     } else if next.signum() != position.signum() {
-        Some(price)
+        price
+            .atoms()
+            .checked_mul(next.unsigned_abs() as i128)
+            .ok_or(AccountingError::Overflow)?
     } else {
-        Some(average)
+        cost_basis_atoms
+            .checked_sub(allocated_basis)
+            .ok_or(AccountingError::Overflow)?
     };
-    Ok((next, next_average, realized))
+    Ok((
+        next,
+        next_cost_basis_atoms,
+        average_cost(next_cost_basis_atoms, next)?,
+        realized,
+    ))
+}
+
+fn average_cost(
+    cost_basis_atoms: i128,
+    position: i128,
+) -> Result<Option<Decimal>, AccountingError> {
+    if position == 0 {
+        return Ok(None);
+    }
+    let divisor = i128::try_from(position.unsigned_abs()).map_err(|_| AccountingError::Overflow)?;
+    Ok(Some(Decimal::from_atoms(divide_round(
+        cost_basis_atoms,
+        divisor,
+        RoundingPolicy::HalfUp,
+    )?)))
 }
 
 fn divide_round(
@@ -611,12 +986,16 @@ impl MultiLedger {
         for config in configs {
             if !model_matches_market(config.instrument(), config.model())
                 || config.quantity_unit() == QuantityUnit::SourceUnit
+                || (config.day_trade_tax().is_some() && config.model() != AccountingModel::EquityV1)
             {
                 return Err(AccountingError::AccountingModelMismatch(
                     config.instrument().clone(),
                 ));
             }
             validate_models(config.economics(), config.fee(), config.tax())?;
+            if let Some(day_trade) = config.day_trade_tax() {
+                validate_models(config.economics(), config.fee(), day_trade.day_trade())?;
+            }
             let instrument = config.instrument().clone();
             let entry = InstrumentLedger {
                 quantity_unit: config.quantity_unit(),
@@ -627,7 +1006,8 @@ impl MultiLedger {
                     config.fee(),
                     config.tax(),
                     config.model(),
-                ),
+                )
+                .with_optional_day_trade_tax(config.day_trade_tax().cloned()),
             };
             if ledgers.insert(instrument.clone(), entry).is_some() {
                 return Err(AccountingError::DuplicateInstrument(instrument));
@@ -744,6 +1124,15 @@ impl MultiLedger {
     }
 
     #[must_use]
+    pub fn accounting_version(&self) -> u16 {
+        self.ledgers
+            .values()
+            .map(|entry| entry.ledger.accounting_version())
+            .max()
+            .unwrap_or(ACCOUNTING_VERSION)
+    }
+
+    #[must_use]
     pub fn ledger(&self, instrument: &InstrumentId) -> Option<&Ledger> {
         self.ledgers.get(instrument).map(|entry| &entry.ledger)
     }
@@ -777,6 +1166,7 @@ pub enum AccountingError {
     },
     AccountingModelMismatch(InstrumentId),
     MissingFinalMark(InstrumentId),
+    InvalidTradingDate,
 }
 
 impl fmt::Display for AccountingError {
@@ -796,6 +1186,7 @@ mod tests {
 
     fn model(sides: ChargeSides) -> ChargeModel {
         ChargeModel {
+            basis: ChargeBasis::NotionalRate,
             rate: Decimal::ZERO,
             sides,
             minimum: Decimal::ZERO,
@@ -822,25 +1213,321 @@ mod tests {
     }
 
     fn fill_in(side: OrderSide, price: &str, quantity: u64, unit: QuantityUnit) -> FillRecord {
-        FillRecord {
-            order_id: OrderId::from_bytes([1; 32]),
-            triggering_ordinal: 1,
-            match_time: MatchTime::from_unix_microseconds(1),
+        fill_at(
             side,
-            price: Price::parse(price).unwrap(),
-            quantity: Quantity::new(quantity, unit).unwrap(),
+            price,
+            quantity,
+            unit,
+            MatchTime::from_unix_microseconds(1),
+        )
+    }
+
+    fn fill_at(
+        side: OrderSide,
+        price: &str,
+        quantity: u64,
+        unit: QuantityUnit,
+        match_time: MatchTime,
+    ) -> FillRecord {
+        FillRecord::from_market_event(
+            OrderId::from_bytes([1; 32]),
+            1,
+            match_time,
+            side,
+            Price::parse(price).unwrap(),
+            Quantity::new(quantity, unit).unwrap(),
+        )
+    }
+
+    fn taiwan_day_trade_ledger(eligible: bool, valid_through: &str) -> Ledger {
+        let tax = |rate: &str| ChargeModel {
+            basis: ChargeBasis::NotionalRate,
+            rate: Decimal::parse(rate).unwrap(),
+            sides: ChargeSides::Sell,
+            minimum: Decimal::ZERO,
+            precision: 0,
+            rounding: RoundingPolicy::Down,
+        };
+        Ledger::new(
+            Decimal::parse("1000000").unwrap(),
+            InstrumentEconomics {
+                units_per_trading_unit: 1000,
+                multiplier: Decimal::parse("1").unwrap(),
+                provenance: "TWSE fixture".into(),
+            },
+            model(ChargeSides::Both),
+            tax("0.003"),
+        )
+        .with_day_trade_tax(
+            DayTradeTaxModel::new(
+                tax("0.003"),
+                tax("0.0015"),
+                480,
+                TradingDate::parse(valid_through).unwrap(),
+                eligible,
+                "MOF:SecuritiesTransactionTaxAct-2025",
+            )
+            .unwrap(),
+        )
+    }
+
+    fn taiwan_day_trade_ledger_for_dates(dates: &[&str]) -> Ledger {
+        let tax = |rate: &str| ChargeModel {
+            basis: ChargeBasis::NotionalRate,
+            rate: Decimal::parse(rate).unwrap(),
+            sides: ChargeSides::Sell,
+            minimum: Decimal::ZERO,
+            precision: 0,
+            rounding: RoundingPolicy::Down,
+        };
+        Ledger::new(
+            Decimal::parse("1000000").unwrap(),
+            InstrumentEconomics {
+                units_per_trading_unit: 1000,
+                multiplier: Decimal::parse("1").unwrap(),
+                provenance: "TWSE fixture".into(),
+            },
+            model(ChargeSides::Both),
+            tax("0.003"),
+        )
+        .with_day_trade_tax(
+            DayTradeTaxModel::new_for_dates(
+                tax("0.003"),
+                tax("0.0015"),
+                480,
+                TradingDate::parse("2027-12-31").unwrap(),
+                dates.iter().map(|date| TradingDate::parse(date).unwrap()),
+                "TWSE:day-trading-eligibility",
+            )
+            .unwrap(),
+        )
+    }
+
+    fn taiwan_time(value: &str) -> MatchTime {
+        MatchTime::parse(value).unwrap()
+    }
+
+    #[test]
+    fn fixed_per_unit_fee_is_charged_for_each_filled_contract() {
+        let mut ledger = Ledger::new(
+            Decimal::parse("1000").unwrap(),
+            InstrumentEconomics {
+                units_per_trading_unit: 1,
+                multiplier: Decimal::parse("2000").unwrap(),
+                provenance: "stock futures fixture".into(),
+            },
+            ChargeModel {
+                basis: ChargeBasis::FixedPerUnit,
+                rate: Decimal::parse("100").unwrap(),
+                sides: ChargeSides::Both,
+                minimum: Decimal::ZERO,
+                precision: 0,
+                rounding: RoundingPolicy::Down,
+            },
+            model(ChargeSides::Sell),
+        );
+
+        ledger
+            .apply_fill(fill_in(OrderSide::Sell, "2500", 3, QuantityUnit::Contract))
+            .unwrap();
+
+        assert_eq!(
+            ledger.performance(None).unwrap().total_fee,
+            Decimal::parse("300").unwrap()
+        );
+    }
+
+    #[test]
+    fn buy_then_sell_same_day_uses_reduced_tax_for_matched_quantity() {
+        let mut ledger = taiwan_day_trade_ledger(true, "2027-12-31");
+        assert_eq!(ledger.accounting_version(), ACCOUNTING_VERSION);
+        let time = taiwan_time("2026-06-23T09:00:00+08:00");
+        ledger
+            .apply_fill(fill_at(
+                OrderSide::Buy,
+                "100",
+                1,
+                QuantityUnit::TradingUnit,
+                time,
+            ))
+            .unwrap();
+        ledger
+            .apply_fill(fill_at(
+                OrderSide::Sell,
+                "100",
+                1,
+                QuantityUnit::TradingUnit,
+                time,
+            ))
+            .unwrap();
+
+        assert_eq!(
+            ledger.performance(None).unwrap().total_tax,
+            Decimal::parse("150").unwrap()
+        );
+        assert_eq!(ledger.cash(), Decimal::parse("999850").unwrap());
+        ledger.reconcile().unwrap();
+    }
+
+    #[test]
+    fn sell_then_buy_same_day_reprices_prior_sell_tax() {
+        let mut ledger = taiwan_day_trade_ledger(true, "2027-12-31");
+        let sell_time = taiwan_time("2026-06-23T09:00:00+08:00");
+        let buy_time = taiwan_time("2026-06-23T09:01:00+08:00");
+        ledger
+            .apply_fill(fill_at(
+                OrderSide::Sell,
+                "100",
+                1,
+                QuantityUnit::TradingUnit,
+                sell_time,
+            ))
+            .unwrap();
+        assert_eq!(
+            ledger
+                .performance(Some(Decimal::parse("100").unwrap()))
+                .unwrap()
+                .total_tax,
+            Decimal::parse("300").unwrap()
+        );
+        ledger
+            .apply_fill(fill_at(
+                OrderSide::Buy,
+                "100",
+                1,
+                QuantityUnit::TradingUnit,
+                buy_time,
+            ))
+            .unwrap();
+
+        assert_eq!(
+            ledger.performance(None).unwrap().total_tax,
+            Decimal::parse("150").unwrap()
+        );
+        assert_eq!(ledger.cash(), Decimal::parse("999850").unwrap());
+        ledger.reconcile().unwrap();
+    }
+
+    #[test]
+    fn unmatched_or_ineligible_quantity_keeps_ordinary_tax() {
+        let time = taiwan_time("2026-06-23T09:00:00+08:00");
+        let mut partial = taiwan_day_trade_ledger(true, "2027-12-31");
+        partial
+            .apply_fill(fill_at(
+                OrderSide::Buy,
+                "100",
+                1,
+                QuantityUnit::TradingUnit,
+                time,
+            ))
+            .unwrap();
+        partial
+            .apply_fill(fill_at(
+                OrderSide::Sell,
+                "100",
+                2,
+                QuantityUnit::TradingUnit,
+                time,
+            ))
+            .unwrap();
+        assert_eq!(
+            partial
+                .performance(Some(Decimal::parse("100").unwrap()))
+                .unwrap()
+                .total_tax,
+            Decimal::parse("450").unwrap()
+        );
+
+        for mut ledger in [
+            taiwan_day_trade_ledger(false, "2027-12-31"),
+            taiwan_day_trade_ledger(true, "2025-12-31"),
+        ] {
+            ledger
+                .apply_fill(fill_at(
+                    OrderSide::Buy,
+                    "100",
+                    1,
+                    QuantityUnit::TradingUnit,
+                    time,
+                ))
+                .unwrap();
+            ledger
+                .apply_fill(fill_at(
+                    OrderSide::Sell,
+                    "100",
+                    1,
+                    QuantityUnit::TradingUnit,
+                    time,
+                ))
+                .unwrap();
+            assert_eq!(
+                ledger.performance(None).unwrap().total_tax,
+                Decimal::parse("300").unwrap()
+            );
         }
+    }
+
+    #[test]
+    fn date_scoped_eligibility_does_not_leak_to_adjacent_date() {
+        let mut ledger = taiwan_day_trade_ledger_for_dates(&["2026-06-23"]);
+        for date in ["2026-06-23", "2026-06-24"] {
+            let time = taiwan_time(&format!("{date}T09:00:00+08:00"));
+            ledger
+                .apply_fill(fill_at(
+                    OrderSide::Buy,
+                    "100",
+                    1,
+                    QuantityUnit::TradingUnit,
+                    time,
+                ))
+                .unwrap();
+            ledger
+                .apply_fill(fill_at(
+                    OrderSide::Sell,
+                    "100",
+                    1,
+                    QuantityUnit::TradingUnit,
+                    time,
+                ))
+                .unwrap();
+        }
+        assert_eq!(
+            ledger.performance(None).unwrap().total_tax,
+            Decimal::parse("450").unwrap()
+        );
+        ledger.reconcile().unwrap();
     }
 
     #[test]
     fn average_cost_realized_pnl_and_reconciliation_are_deterministic() {
         let mut ledger = ledger();
+        assert_eq!(ledger.accounting_version(), ACCOUNTING_VERSION);
         ledger.apply_fill(fill(OrderSide::Buy, "100", 2)).unwrap();
         ledger.apply_fill(fill(OrderSide::Buy, "110", 2)).unwrap();
         ledger.apply_fill(fill(OrderSide::Sell, "120", 3)).unwrap();
         assert_eq!(ledger.position(), 1);
         assert_eq!(ledger.cash(), "940".parse().unwrap());
         assert_eq!(ledger.realized_pnl(), "45".parse().unwrap());
+        ledger.reconcile().unwrap();
+    }
+
+    #[test]
+    fn non_divisible_average_cost_preserves_exact_total_basis() {
+        let mut ledger = ledger();
+        ledger.apply_fill(fill(OrderSide::Buy, "100", 1)).unwrap();
+        ledger.apply_fill(fill(OrderSide::Buy, "101", 2)).unwrap();
+
+        assert_eq!(
+            ledger.average_cost(),
+            Some("100.666666666666666667".parse().unwrap())
+        );
+
+        ledger.apply_fill(fill(OrderSide::Sell, "101", 1)).unwrap();
+        ledger.apply_fill(fill(OrderSide::Sell, "101", 2)).unwrap();
+
+        assert_eq!(ledger.position(), 0);
+        assert_eq!(ledger.cash(), "1001".parse().unwrap());
+        assert_eq!(ledger.realized_pnl(), "1".parse().unwrap());
         ledger.reconcile().unwrap();
     }
 

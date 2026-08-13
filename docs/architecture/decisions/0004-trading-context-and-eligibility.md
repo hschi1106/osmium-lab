@@ -319,6 +319,20 @@ semantics，matching 使用 `Unknown` 並採 no-fill。
 目前 2330 fixture 只有 `limit_flags=0`。緩跌／緩漲的 rule 在加入 non-zero fixture
 前只能視為 specification-backed behavior，不得宣稱已有 local data evidence。
 
+### 7.1 TPEx quote-annotations rule v2
+
+TPEx 的 opening／closing marker 同時可能出現在試撮與正式撮合事件，不能只看到 marker 就
+判定 indicative。v2 固定使用以下 precedence：
+
+- `trial=true` 且有 opening marker：`Indicative(PreOpenTrial)`。
+- `trial=true` 且有 closing marker：`Indicative(PreCloseTrial)`。
+- `trial=false`、`matching_method=auction` 且有 opening／closing marker：
+  `Enabled(CallAuction)`，可供較早 pending order 判定成交。
+- 正式 closing result 仍將新單設為 blocked；這不改寫該事件對既有 order 的 matching state。
+
+此修正只改變 TPEx `TradingContext` 衍生規則，`market_rule_version` 由 1 升為 2；不修改
+source event、MarketState、canonical event bytes 或 replay cache。
+
 ## 8. Generic fill decision
 
 一筆 pending order 對目前 event 只有在下列條件全部成立時才能進入價格／數量模型：

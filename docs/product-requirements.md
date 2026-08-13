@@ -330,6 +330,11 @@ TAIFEX 跨日資料必須依正確的 trading date 回播，不可單純依日�
 - 可選擇以後續成交量或顯示量限制成交數量。
 - 無法確認時不成交，或由使用者選擇更寬鬆的模型。
 
+平台可以提供 opt-in、版本化的排程委託模型，在明確的 execution control time 啟用或到期
+order，並使用該時間以前已可見且未過期的最新完整五檔作為簡化 fill evidence。這類 control
+time 不是市場事件，不得寫入 replay event stream、修改 MarketState 或改變既有預設模型；
+latency、五檔層數、allocation order 與模型假設必須進入執行計畫及結果。
+
 每次結果必須記錄使用的 fill model、slippage、fee、tax 與商品乘數來源。
 
 ### SIM-02 帳務

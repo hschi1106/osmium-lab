@@ -186,9 +186,17 @@ EffectiveRunConfig {
     explicit schema defaults
     resolved strategy declaration
     resolved instrument economics
+    resolved per-instrument fee／tax 與 instrument-date day-trade eligibility
     version bindings
 }
 ```
+
+global fee／tax 是 default；若設定 `instrument_charges`，planner 依 `InstrumentId` 排序並拒絕
+duplicate 或 universe 外的 override。當沖優惠若要求 eligibility，所有 run trading dates 都
+必須出現在該 instrument 的 `eligible_dates`，否則在資料 I/O 前停止。per-instrument rates、
+FIFO matching policy、timezone、eligible dates、有效期限與 provenance 全部進入 effective
+config checksum；沒有 override 的既有 config 保留 v2 canonical bytes，含 override 時使用
+v3。
 
 canonical checksum 不包含：
 
@@ -213,6 +221,13 @@ cargo run -p osmium-cli -- plan --config <file>
 - 檢查 local source/cache catalog。
 - 建立 frozen `ExecutionPlan` 與 deterministic `plan_identity`。
 - 顯示 source、verification、cache actions 及 network requirement。
+
+`simulation.execution_policy` 由 plan freeze。`subsequent_event_v1` 使用既有
+`run_multi_backtest`／`OSORDERS1` artifacts；`scheduled_visible_depth_v1` 使用 control-time
+coordinator、`ScheduledDepthSimulator` 與 scheduled artifact publisher。CLI 不依 strategy ID
+猜 execution mode，兩條路徑也不會互相 fallback。scheduled mode 的
+`market_data_latency_ms` 只控制 observation visibility；strategy 送出的 `activate_at` 已是最終
+時間，不再重複套用 `order_latency_ms`。
 
 至少輸出：
 

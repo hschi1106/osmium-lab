@@ -401,7 +401,7 @@ impl TpexTradingContextEvaluator {
             new_order_entry,
             matching,
             market_rule_name: "tpex.quote-annotations",
-            market_rule_version: 1,
+            market_rule_version: 2,
         })
     }
 }
@@ -421,10 +421,10 @@ fn evaluate_annotated_matching(
     if reserved {
         return MatchingState::Unknown;
     }
-    if status.opening_marker() {
+    if status.trial() && status.opening_marker() {
         return MatchingState::Indicative(IndicativeReason::PreOpenTrial);
     }
-    if status.closing_marker() {
+    if status.trial() && status.closing_marker() {
         return MatchingState::Indicative(IndicativeReason::PreCloseTrial);
     }
     match limits.instant_trend() {
@@ -597,3 +597,99 @@ impl fmt::Display for ContextError {
 }
 
 impl Error for ContextError {}
+
+#[cfg(test)]
+mod tests {
+    use market_types::{
+        BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, InstrumentId, MarketAnnotations,
+        Observation, Price, Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol,
+        TpexQuoteAnnotations,
+    };
+
+    use super::*;
+
+    fn tpex_event(time: &str, status: u8) -> (DomainEvent, TpexQuoteAnnotations) {
+        let quantity = Quantity::new(1, QuantityUnit::TradingUnit).unwrap();
+        let book = CompleteBookSnapshot::new(
+            BookSide::new(
+                BookSideKind::Bid,
+                vec![BookLevel::new(Price::parse("99").unwrap(), quantity)],
+            )
+            .unwrap(),
+            BookSide::new(
+                BookSideKind::Ask,
+                vec![BookLevel::new(Price::parse("101").unwrap(), quantity)],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let annotations = TpexQuoteAnnotations::new(status, 0);
+        let event = DomainEvent::new(
+            InstrumentId::new(MarketId::Tpex, Symbol::new("3374").unwrap()),
+            TradingDate::parse("2026-06-23").unwrap(),
+            SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
+            MatchTime::parse(time).unwrap(),
+            None,
+            EventPayload::QuoteSnapshot(
+                QuoteSnapshot::new(
+                    book,
+                    Observation::NoObservation,
+                    Observation::NoObservation,
+                    MarketAnnotations::TpexQuote(annotations),
+                )
+                .unwrap(),
+            ),
+        );
+        (event, annotations)
+    }
+
+    fn segment() -> SessionSegment {
+        SessionSegment::new(
+            SessionSegmentId::new("regular").unwrap(),
+            SessionKind::Regular,
+            TradingDate::parse("2026-06-23").unwrap(),
+            MatchTime::parse("2026-06-23T09:00:00+08:00").unwrap(),
+            MatchTime::parse("2026-06-23T13:30:00+08:00").unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn tpex_formal_auction_markers_are_enabled_but_trial_markers_are_indicative() {
+        let segment = segment();
+        let cases = [
+            (
+                "2026-06-23T08:59:59+08:00",
+                0x88,
+                SessionPhase::WarmUp,
+                MatchingState::Indicative(IndicativeReason::PreOpenTrial),
+            ),
+            (
+                "2026-06-23T09:00:00.145482+08:00",
+                0x08,
+                SessionPhase::Active,
+                MatchingState::Enabled(MatchingMethod::CallAuction),
+            ),
+            (
+                "2026-06-23T13:29:59+08:00",
+                0x84,
+                SessionPhase::Active,
+                MatchingState::Indicative(IndicativeReason::PreCloseTrial),
+            ),
+            (
+                "2026-06-23T13:30:00+08:00",
+                0x04,
+                SessionPhase::CoolDown,
+                MatchingState::Enabled(MatchingMethod::CallAuction),
+            ),
+        ];
+
+        for (time, status, phase, expected) in cases {
+            let (event, annotations) = tpex_event(time, status);
+            assert_eq!(
+                evaluate_annotated_matching(&event, phase, &segment, annotations),
+                expected
+            );
+        }
+    }
+}

@@ -12,7 +12,7 @@ type、不改寫 replay state、也不取得未來資料的前提下，接收事
 
 ```text
 strategy_api_version    = 1
-strategy_output_version = 1
+strategy_output_version = 1（event-only）| 2（含 control-time output）
 ```
 
 本文件定義 logical contract，不固定 crate、module、trait 名稱、泛型參數或
@@ -164,12 +164,18 @@ validate_params
 -> build
 -> initialize
 -> on_event * N
+-> on_timer * T
 -> on_feedback * M
 -> finalize
 ```
 
 其中 `on_feedback` 只在 simulation stage 產生 feedback 時發生；M1 的
 `M = 0`。
+
+scheduled mode 的 `on_timer` 由 `StrategyTimerRequest { timer_id, fire_at }` 建立；同一
+`timer_id` 的後續 request deterministic replace 尚未觸發的舊 request。timer 是 control
+action，不是 `DomainEvent`，context 只提供 ID 與 `fire_at`；strategy 若需要行情，必須在先前
+可見 observation callback 中保存 owned values，不得從 timer 讀取當下 ReplayCore state。
 
 ### 5.1 `initialize`
 
@@ -196,6 +202,7 @@ StrategyEventContext<'event> {
     market_state: &'event MarketStateView
     trading_context: &'event TradingContext
     session: &'event SessionCallbackContext
+    decision_time: MatchTime
 }
 ```
 
@@ -215,6 +222,12 @@ market_state.match_time == event.match_time
 `UniverseStateView`，所有其他商品的 view 也只能是截至目前 replay occurrence
 已 commit 的版本，且必須透過新的 API version 引入；不得加入 `next`、peek 或
 future iterator。
+
+預設 subsequent-event mode 的 `decision_time == event.match_time`。opt-in scheduled
+visible-depth mode 延後至 observation 的 `visible_at` 才呼叫 strategy；此時 event／
+occurrence identity 不變，但 `decision_time == visible_at`，而所有 `market_states` 是該 event
+commit 後保存的 owned snapshot。runner 不得把目前 replay core 中較新的 state 暴露給延遲
+callback。
 
 ### 5.3 `on_feedback`
 
@@ -281,6 +294,8 @@ pre-open trial、pre-close trial 或緩漲／緩跌等狀態，strategy 仍接�
 StrategyOutputSink {
     emit_indicator(Indicator)
     emit_order_intent(OrderIntent)  // M2 起可用
+    emit_scheduled_order(ScheduledOrderRequest) // opt-in scheduled mode
+    emit_timer(StrategyTimerRequest) // opt-in scheduled mode
 }
 ```
 
@@ -294,6 +309,14 @@ sink 先緩存在目前 callback 的 transaction：
 
 同一 callback 的 output order 就是 `emit_*` 呼叫順序。strategy 若從 map 或 set
 產生多筆 output，必須先按明確 canonical key 排序。
+
+execution mode 必須明確啟用對應 capability。預設 sink、subsequent-event sink 與 scheduled
+sink 不得靜默吞掉其他模式的 request；未啟用時 `emit_*` 立即回傳 capability error。
+
+一般 event callback 的 indicator 綁定 `EventOccurrence`；沒有 market event 的 scheduled
+feedback callback 則產生 `ControlIndicator { control_sequence, control_time, ... }`，不得合成
+假的 occurrence。event-only output 繼續使用 `OSSO` v1 canonical bytes；只有實際包含
+`ControlIndicator` 時才使用 v2。
 
 ### 7.2 `Indicator`
 

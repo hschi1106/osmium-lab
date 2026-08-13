@@ -5,12 +5,14 @@ mod plan;
 mod session;
 
 pub use config::{
-    CACHE_POLICY_VERSION, CONFIG_SCHEMA_VERSION, CachePolicy, ChargeConfig, ChargeSides,
-    ConfigError, Currency, CurrencyAmount, EFFECTIVE_CONFIG_VERSION, EffectiveConfigChecksum,
-    EffectiveRunConfig, FillEvidence, FillModelConfig, InstrumentEconomicsConfig, LatencyConfig,
-    MarkingPolicyConfig, OutputPolicy, PositionAccountingConfig, QuantityAllocationConfig,
-    QuantityEvidence, REPLAY_DATA_POLICY_VERSION, ReplayDataPolicy, RoundingPolicy, RunConfig,
-    SOURCE_POLICY_VERSION, SimulationConfig, SlippageModelConfig, SourcePolicy, StrategyBinding,
+    CACHE_POLICY_VERSION, CONFIG_SCHEMA_VERSION, CachePolicy, ChargeBasis, ChargeConfig,
+    ChargeSides, ConfigError, Currency, CurrencyAmount, DayTradeMatchingConfig, DayTradeTaxConfig,
+    EFFECTIVE_CONFIG_VERSION, EffectiveConfigChecksum, EffectiveRunConfig, ExecutionPolicyConfig,
+    FillEvidence, FillModelConfig, InstrumentChargeConfig, InstrumentEconomicsConfig,
+    LEGACY_EFFECTIVE_CONFIG_VERSION, LatencyConfig, MarkingPolicyConfig, OutputPolicy,
+    PositionAccountingConfig, QuantityAllocationConfig, QuantityEvidence,
+    REPLAY_DATA_POLICY_VERSION, ReplayDataPolicy, RoundingPolicy, RunConfig, SOURCE_POLICY_VERSION,
+    ScheduledExecutionConfig, SimulationConfig, SlippageModelConfig, SourcePolicy, StrategyBinding,
 };
 pub use partition::{
     CacheIdentity, CacheState, CorruptReason, IncompleteReason, SOURCE_PARTITION_KEY_VERSION,

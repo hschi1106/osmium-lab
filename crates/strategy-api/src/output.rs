@@ -1,11 +1,15 @@
 use std::{error::Error, fmt};
 
-use market_types::{CanonicalEncodingError, Decimal, append_bytes};
+use market_types::{CanonicalEncodingError, Decimal, MatchTime, append_bytes};
 use replay_engine::EventOccurrence;
 
-use crate::{CanonicalParamsChecksum, OrderIntent, OrderIntentError, StrategyIdentity};
+use crate::{
+    CanonicalParamsChecksum, OrderIntent, OrderIntentError, ScheduledOrderCapabilityError,
+    ScheduledOrderRequest, StrategyIdentity, StrategyTimerError, StrategyTimerRequest,
+};
 
-pub const CANONICAL_STRATEGY_OUTPUT_VERSION: u16 = 1;
+pub const CANONICAL_STRATEGY_OUTPUT_VERSION: u16 = 2;
+pub const LEGACY_CANONICAL_STRATEGY_OUTPUT_VERSION: u16 = 1;
 const STRATEGY_OUTPUT_MAGIC: &[u8; 4] = b"OSSO";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +64,13 @@ pub enum StrategyOutputRecord {
         indicator_name: Box<str>,
         value: IndicatorValue,
     },
+    ControlIndicator {
+        control_sequence: u64,
+        control_time: MatchTime,
+        output_sequence: u32,
+        indicator_name: Box<str>,
+        value: IndicatorValue,
+    },
 }
 
 impl StrategyOutputRecord {
@@ -91,6 +102,20 @@ impl StrategyOutputRecord {
                 append_bytes(indicator_name.as_bytes(), bytes)?;
                 value.append_canonical(bytes)?;
             }
+            Self::ControlIndicator {
+                control_sequence,
+                control_time,
+                output_sequence,
+                indicator_name,
+                value,
+            } => {
+                bytes.push(3);
+                bytes.extend_from_slice(&control_sequence.to_be_bytes());
+                bytes.extend_from_slice(&control_time.as_unix_microseconds().to_be_bytes());
+                bytes.extend_from_slice(&output_sequence.to_be_bytes());
+                append_bytes(indicator_name.as_bytes(), bytes)?;
+                value.append_canonical(bytes)?;
+            }
         }
         Ok(())
     }
@@ -100,7 +125,10 @@ impl StrategyOutputRecord {
 pub struct StrategyOutputSink {
     pending: Vec<(Box<str>, IndicatorValue)>,
     intents: Vec<OrderIntent>,
+    scheduled_orders: Vec<ScheduledOrderRequest>,
+    timers: Vec<StrategyTimerRequest>,
     order_intents_enabled: bool,
+    scheduled_orders_enabled: bool,
 }
 
 impl StrategyOutputSink {
@@ -109,7 +137,10 @@ impl StrategyOutputSink {
         Self {
             pending: Vec::new(),
             intents: Vec::new(),
+            scheduled_orders: Vec::new(),
+            timers: Vec::new(),
             order_intents_enabled: false,
+            scheduled_orders_enabled: false,
         }
     }
 
@@ -118,7 +149,22 @@ impl StrategyOutputSink {
         Self {
             pending: Vec::new(),
             intents: Vec::new(),
+            scheduled_orders: Vec::new(),
+            timers: Vec::new(),
             order_intents_enabled: true,
+            scheduled_orders_enabled: false,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_scheduled_orders() -> Self {
+        Self {
+            pending: Vec::new(),
+            intents: Vec::new(),
+            scheduled_orders: Vec::new(),
+            timers: Vec::new(),
+            order_intents_enabled: false,
+            scheduled_orders_enabled: true,
         }
     }
 
@@ -137,6 +183,43 @@ impl StrategyOutputSink {
 
     pub fn take_intents(&mut self) -> Vec<OrderIntent> {
         std::mem::take(&mut self.intents)
+    }
+
+    pub fn emit_scheduled_order(
+        &mut self,
+        request: ScheduledOrderRequest,
+    ) -> Result<(), ScheduledOrderCapabilityError> {
+        if !self.scheduled_orders_enabled {
+            return Err(ScheduledOrderCapabilityError);
+        }
+        self.scheduled_orders.push(request);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn scheduled_orders(&self) -> &[ScheduledOrderRequest] {
+        &self.scheduled_orders
+    }
+
+    pub fn take_scheduled_orders(&mut self) -> Vec<ScheduledOrderRequest> {
+        std::mem::take(&mut self.scheduled_orders)
+    }
+
+    pub fn emit_timer(&mut self, request: StrategyTimerRequest) -> Result<(), StrategyTimerError> {
+        if !self.scheduled_orders_enabled {
+            return Err(StrategyTimerError::CapabilityUnavailable);
+        }
+        self.timers.push(request);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn timers(&self) -> &[StrategyTimerRequest] {
+        &self.timers
+    }
+
+    pub fn take_timers(&mut self) -> Vec<StrategyTimerRequest> {
+        std::mem::take(&mut self.timers)
     }
 
     pub fn emit_indicator(
@@ -184,6 +267,28 @@ impl StrategyOutputSink {
                 let output_sequence = u32::try_from(index + 1)
                     .map_err(|_| StrategyOutputEncodingError::OutputSequenceOverflow)?;
                 Ok(StrategyOutputRecord::FinalizeIndicator {
+                    output_sequence,
+                    indicator_name,
+                    value,
+                })
+            })
+            .collect()
+    }
+
+    pub fn into_control_records(
+        self,
+        control_sequence: u64,
+        control_time: MatchTime,
+    ) -> Result<Vec<StrategyOutputRecord>, StrategyOutputEncodingError> {
+        self.pending
+            .into_iter()
+            .enumerate()
+            .map(|(index, (indicator_name, value))| {
+                let output_sequence = u32::try_from(index + 1)
+                    .map_err(|_| StrategyOutputEncodingError::OutputSequenceOverflow)?;
+                Ok(StrategyOutputRecord::ControlIndicator {
+                    control_sequence,
+                    control_time,
                     output_sequence,
                     indicator_name,
                     value,
@@ -240,7 +345,7 @@ impl StrategyOutput {
     pub fn to_canonical_bytes(&self) -> Result<Vec<u8>, StrategyOutputEncodingError> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(STRATEGY_OUTPUT_MAGIC);
-        bytes.extend_from_slice(&CANONICAL_STRATEGY_OUTPUT_VERSION.to_be_bytes());
+        bytes.extend_from_slice(&self.canonical_version().to_be_bytes());
         append_bytes(self.identity.strategy_id().as_bytes(), &mut bytes)?;
         append_bytes(self.identity.strategy_version().as_bytes(), &mut bytes)?;
         append_bytes(
@@ -256,6 +361,19 @@ impl StrategyOutput {
             record.append_canonical(&mut bytes)?;
         }
         Ok(bytes)
+    }
+
+    #[must_use]
+    pub fn canonical_version(&self) -> u16 {
+        if self
+            .records
+            .iter()
+            .any(|record| matches!(record, StrategyOutputRecord::ControlIndicator { .. }))
+        {
+            CANONICAL_STRATEGY_OUTPUT_VERSION
+        } else {
+            LEGACY_CANONICAL_STRATEGY_OUTPUT_VERSION
+        }
     }
 
     pub fn checksum(&self) -> Result<StrategyOutputChecksum, StrategyOutputEncodingError> {
@@ -311,5 +429,60 @@ impl Error for StrategyOutputEncodingError {
 impl From<CanonicalEncodingError> for StrategyOutputEncodingError {
     fn from(error: CanonicalEncodingError) -> Self {
         Self::Canonical(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{BinaryIdentity, StrategyIdentity};
+
+    use super::*;
+
+    fn output() -> StrategyOutput {
+        StrategyOutput::new(
+            StrategyIdentity::new(
+                "output-test",
+                "1",
+                BinaryIdentity::new("test", [1; 32]).unwrap(),
+            )
+            .unwrap(),
+            CanonicalParamsChecksum::for_empty_params(),
+        )
+    }
+
+    #[test]
+    fn event_only_output_keeps_version_one_bytes() {
+        let output = output();
+        assert_eq!(
+            output.canonical_version(),
+            LEGACY_CANONICAL_STRATEGY_OUTPUT_VERSION
+        );
+        assert_eq!(&output.to_canonical_bytes().unwrap()[4..6], &[0, 1]);
+    }
+
+    #[test]
+    fn control_indicator_selects_version_two_without_fake_occurrence() {
+        let mut sink = StrategyOutputSink::with_scheduled_orders();
+        sink.emit_indicator("recovery", IndicatorValue::Bool(true))
+            .unwrap();
+        let mut output = output();
+        output.extend(
+            sink.into_control_records(9, MatchTime::from_unix_microseconds(123))
+                .unwrap(),
+        );
+
+        assert_eq!(
+            output.canonical_version(),
+            CANONICAL_STRATEGY_OUTPUT_VERSION
+        );
+        assert_eq!(&output.to_canonical_bytes().unwrap()[4..6], &[0, 2]);
+        assert!(matches!(
+            output.records(),
+            [StrategyOutputRecord::ControlIndicator {
+                control_sequence: 9,
+                control_time,
+                ..
+            }] if *control_time == MatchTime::from_unix_microseconds(123)
+        ));
     }
 }

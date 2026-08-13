@@ -237,6 +237,11 @@ slippage 設定必須：
 費稅的適用市場、side、時點及 rounding 必須由 model 明確定義；同一 fill 不得因
 iteration order 重複計費或漏計。
 
+臺灣現股當沖優惠若啟用，必須以同 account、instrument、trading date 的相反方向成交量
+FIFO 配對，支援先買後賣及先賣後買。config 必須保存 ordinary／day-trade rates、timezone、
+eligibility、有效期限及 provenance；未配對或不符合資格的數量不得套用優惠稅率。後買才
+完成的配對必須以可重建的 tax adjustment 表達，不得改寫歷史 fill。
+
 ### SIM-01.9 Conservative 與寬鬆模型
 
 default model 必須採 conservative uncertainty：無法確認時不成交或繼續等待。
@@ -295,6 +300,22 @@ trace identity 必須穩定，使相同輸入可產生相同 order／fill sequen
 
 M2 必須以 TWSE 2330 單日資料驗證 market／limit fill、slippage、fee、tax 及基本
 P&L；M3 補 TAIFEX futures multiplier 與 `TradeBatch`／`BookSnapshot` 模型。
+
+### SIM-01.12 Opt-in scheduled visible-depth model
+
+平台可以依
+[ADR-0006](../architecture/decisions/0006-scheduled-visible-depth-execution.md)提供非預設的
+scheduled visible-depth model。此模型必須：
+
+- 由 execution plan 明確選擇並綁定 stable name／version。
+- 將 market-data visibility、order activation 與 order expiry 分開建模。
+- 只使用 activation time 前已可見、未過期的最新完整 snapshot。
+- 最多使用來源提供的五檔，依價格順序產生 level fills。
+- 不把 execution timer 合成 `DomainEvent`，也不修改 MarketState。
+- 不改變未選擇此模型之 run 的既有 order／fill 語意及 canonical artifacts。
+
+除 SIM-01.11 的共用證據外，還必須驗證 control ordering、visibility boundary、staleness、
+expiry、五檔 quantity allocation、partial fill 與 replay checksum isolation。
 
 ## 5. SIM-02：帳務
 
