@@ -1152,6 +1152,43 @@ impl MultiLedger {
     pub fn ledger(&self, instrument: &InstrumentId) -> Option<&Ledger> {
         self.ledgers.get(instrument).map(|entry| &entry.ledger)
     }
+
+    /// Returns the amount added to shared cash to mark one open position to market.
+    pub fn mark_to_market_adjustment(
+        &self,
+        instrument: &InstrumentId,
+        mark: Decimal,
+    ) -> Result<Decimal, AccountingError> {
+        let entry = self
+            .ledgers
+            .get(instrument)
+            .ok_or_else(|| AccountingError::UnknownInstrument(instrument.clone()))?;
+        let position = entry.ledger.position();
+        if position == 0 {
+            return Ok(Decimal::ZERO);
+        }
+        if entry.model == AccountingModel::FuturesV1 {
+            return entry
+                .ledger
+                .performance(Some(mark))?
+                .unrealized_pnl
+                .ok_or_else(|| AccountingError::MissingFinalMark(instrument.clone()));
+        }
+        let marked_atoms = mark
+            .atoms()
+            .checked_mul(position.unsigned_abs() as i128)
+            .ok_or(AccountingError::Overflow)?;
+        let marked_value = scale_by_quantity(
+            Decimal::from_atoms(marked_atoms),
+            1,
+            entry.ledger.economics(),
+        )?;
+        if position > 0 {
+            Ok(marked_value)
+        } else {
+            checked_neg(marked_value)
+        }
+    }
 }
 
 fn model_matches_market(instrument: &InstrumentId, model: AccountingModel) -> bool {
@@ -1791,5 +1828,70 @@ mod tests {
             ledger.performance(&marks),
             Err(AccountingError::MissingFinalMark(actual)) if actual == instrument
         ));
+    }
+
+    #[test]
+    fn mark_to_market_adjustments_reconcile_shared_cash_to_current_equity() {
+        let stock = InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap());
+        let futures = InstrumentId::new(MarketId::Taifex, Symbol::new("CDFH6").unwrap());
+        let zero = model(ChargeSides::Both);
+        let mut ledger = MultiLedger::new(
+            "1000000".parse().unwrap(),
+            [
+                InstrumentLedgerConfig::new(
+                    stock.clone(),
+                    QuantityUnit::TradingUnit,
+                    AccountingModel::EquityV1,
+                    InstrumentEconomics {
+                        units_per_trading_unit: 1000,
+                        multiplier: "1".parse().unwrap(),
+                        provenance: "TWSE fixture".into(),
+                    },
+                    zero,
+                    zero,
+                ),
+                InstrumentLedgerConfig::new(
+                    futures.clone(),
+                    QuantityUnit::Contract,
+                    AccountingModel::FuturesV1,
+                    InstrumentEconomics {
+                        units_per_trading_unit: 1,
+                        multiplier: "200".parse().unwrap(),
+                        provenance: "TAIFEX fixture".into(),
+                    },
+                    zero,
+                    zero,
+                ),
+            ],
+        )
+        .unwrap();
+        ledger
+            .apply_fill(
+                &stock,
+                fill_in(OrderSide::Buy, "100", 1, QuantityUnit::TradingUnit),
+            )
+            .unwrap();
+        ledger
+            .apply_fill(
+                &futures,
+                fill_in(OrderSide::Sell, "100", 1, QuantityUnit::Contract),
+            )
+            .unwrap();
+
+        let stock_adjustment = ledger
+            .mark_to_market_adjustment(&stock, "110".parse().unwrap())
+            .unwrap();
+        let futures_adjustment = ledger
+            .mark_to_market_adjustment(&futures, "95".parse().unwrap())
+            .unwrap();
+        let current_equity = ledger
+            .cash()
+            .checked_add(stock_adjustment)
+            .and_then(|value| value.checked_add(futures_adjustment))
+            .unwrap();
+
+        assert_eq!(stock_adjustment, "110000".parse().unwrap());
+        assert_eq!(futures_adjustment, "1000".parse().unwrap());
+        assert_eq!(current_equity, "1011000".parse().unwrap());
     }
 }

@@ -1,6 +1,6 @@
 use std::{error::Error, fmt};
 
-use market_types::MatchTime;
+use market_types::{Decimal, MatchTime};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct StrategyTimerId(Box<str>);
@@ -50,12 +50,21 @@ impl StrategyTimerRequest {
 pub struct StrategyTimerContext<'a> {
     timer_id: &'a StrategyTimerId,
     fire_at: MatchTime,
+    current_equity: Decimal,
 }
 
 impl<'a> StrategyTimerContext<'a> {
     #[must_use]
-    pub const fn new(timer_id: &'a StrategyTimerId, fire_at: MatchTime) -> Self {
-        Self { timer_id, fire_at }
+    pub const fn new(
+        timer_id: &'a StrategyTimerId,
+        fire_at: MatchTime,
+        current_equity: Decimal,
+    ) -> Self {
+        Self {
+            timer_id,
+            fire_at,
+            current_equity,
+        }
     }
 
     #[must_use]
@@ -66,6 +75,12 @@ impl<'a> StrategyTimerContext<'a> {
     #[must_use]
     pub const fn fire_at(self) -> MatchTime {
         self.fire_at
+    }
+
+    /// Returns mark-to-market portfolio equity from the runner's authoritative ledger.
+    #[must_use]
+    pub const fn current_equity(self) -> Decimal {
+        self.current_equity
     }
 }
 

@@ -1,6 +1,6 @@
 use std::{
     cmp::Reverse,
-    collections::{BTreeMap, BinaryHeap},
+    collections::{BTreeMap, BTreeSet, BinaryHeap},
 };
 
 use execution_sim::{
@@ -69,6 +69,9 @@ struct ScheduledCoordinator<'a, S> {
     controls: ControlTimeQueue<ScheduledBacktestControl>,
     timer_generations: BTreeMap<StrategyTimerId, u64>,
     visible_core: ReplayCore,
+    allow_midpoint_fallback: bool,
+    last_visible_marks: BTreeMap<market_types::InstrumentId, market_types::Decimal>,
+    open_positions: BTreeSet<market_types::InstrumentId>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -146,6 +149,15 @@ pub fn run_scheduled_multi_backtest<S: Strategy, F: ReplayStreamFactory>(
     let visible_core = core
         .fork_unstarted()
         .map_err(|error| MultiBacktestError::Replay(error.to_string()))?;
+    let open_positions = ledger
+        .instruments()
+        .filter(|instrument| {
+            ledger
+                .ledger(instrument)
+                .is_some_and(|instrument_ledger| instrument_ledger.position() != 0)
+        })
+        .cloned()
+        .collect();
     let mut coordinator = ScheduledCoordinator {
         strategy: &mut strategy,
         schedule,
@@ -156,6 +168,9 @@ pub fn run_scheduled_multi_backtest<S: Strategy, F: ReplayStreamFactory>(
         controls: ControlTimeQueue::new(),
         timer_generations: BTreeMap::new(),
         visible_core,
+        allow_midpoint_fallback,
+        last_visible_marks: BTreeMap::new(),
+        open_positions,
     };
 
     let mut pending = BinaryHeap::with_capacity(streams.len());
@@ -369,6 +384,7 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
                         .apply_fill(&instrument, fill)
                         .map_err(|error| MultiBacktestError::Accounting(error.to_string()))?;
                 }
+                self.refresh_open_position(&instrument)?;
                 self.schedule_feedback(
                     at,
                     [activation.feedback().clone()],
@@ -392,6 +408,7 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
                         .apply_fill(&instrument, fill)
                         .map_err(|error| MultiBacktestError::Accounting(error.to_string()))?;
                 }
+                self.refresh_open_position(&instrument)?;
                 for result in results {
                     self.schedule_feedback(
                         at,
@@ -419,6 +436,7 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
                         .apply_fill(&instrument, fill)
                         .map_err(|error| MultiBacktestError::Accounting(error.to_string()))?;
                 }
+                self.refresh_open_position(&instrument)?;
                 for result in results {
                     self.schedule_feedback(
                         feedback_at,
@@ -474,6 +492,10 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
             .copied()
             .find(|state| state.instrument() == event.instrument())
             .ok_or(MultiBacktestError::Declaration)?;
+        if let Some(mark) = final_mark(state, self.allow_midpoint_fallback) {
+            self.last_visible_marks
+                .insert(event.instrument().clone(), mark);
+        }
         let published_book = if matches!(
             event.payload(),
             market_types::EventPayload::BookSnapshot(_)
@@ -569,9 +591,13 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
         control_sequence: u64,
     ) -> Result<(), MultiBacktestError> {
         let at = request.fire_at();
+        let current_equity = self.current_equity()?;
         let mut sink = StrategyOutputSink::with_scheduled_orders();
         self.strategy
-            .on_timer(StrategyTimerContext::new(request.timer_id(), at), &mut sink)
+            .on_timer(
+                StrategyTimerContext::new(request.timer_id(), at, current_equity),
+                &mut sink,
+            )
             .map_err(|error| MultiBacktestError::Strategy(error.to_string()))?;
         let requests = sink.take_scheduled_orders();
         let timers = sink.take_timers();
@@ -586,6 +612,48 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
         let origin_identity = *blake3::hash(&identity).as_bytes();
         self.schedule_timers(at, timers)?;
         self.submit_requests(at, origin_identity, requests, control_sequence)
+    }
+
+    fn current_equity(&self) -> Result<market_types::Decimal, MultiBacktestError> {
+        self.open_positions
+            .iter()
+            .try_fold(self.ledger.cash(), |equity, instrument| {
+                let mark = self
+                    .visible_core
+                    .state(instrument)
+                    .and_then(|state| final_mark(state.view(), self.allow_midpoint_fallback))
+                    .or_else(|| self.last_visible_marks.get(instrument).copied())
+                    .ok_or_else(|| {
+                        MultiBacktestError::Accounting(format!(
+                            "missing current-equity mark for {instrument:?}"
+                        ))
+                    })?;
+                let adjustment = self
+                    .ledger
+                    .mark_to_market_adjustment(instrument, mark)
+                    .map_err(|error| MultiBacktestError::Accounting(error.to_string()))?;
+                equity.checked_add(adjustment).map_err(|_| {
+                    MultiBacktestError::Accounting("current equity overflow".to_owned())
+                })
+            })
+    }
+
+    fn refresh_open_position(
+        &mut self,
+        instrument: &market_types::InstrumentId,
+    ) -> Result<(), MultiBacktestError> {
+        let is_open = self
+            .ledger
+            .ledger(instrument)
+            .ok_or(MultiBacktestError::Declaration)?
+            .position()
+            != 0;
+        if is_open {
+            self.open_positions.insert(instrument.clone());
+        } else {
+            self.open_positions.remove(instrument);
+        }
+        Ok(())
     }
 
     fn schedule_timers(
@@ -928,6 +996,10 @@ mod tests {
             context: StrategyTimerContext<'_>,
             output: &mut StrategyOutputSink,
         ) -> Result<(), StrategyExecutionError> {
+            output.emit_indicator(
+                "current_equity",
+                IndicatorValue::Decimal(context.current_equity()),
+            )?;
             let instrument = self
                 .pending_instrument
                 .take()
@@ -1084,7 +1156,10 @@ mod tests {
             [StrategyOutputRecord::EventIndicator {
                 value: IndicatorValue::Signed(value),
                 ..
-            }] if *value == expected_decision
+            }, StrategyOutputRecord::ControlIndicator {
+                value: IndicatorValue::Decimal(equity),
+                ..
+            }] if *value == expected_decision && *equity == Decimal::parse("1000000").unwrap()
         ));
         assert_eq!(
             completed.simulator.orders()[0].request().activate_at(),
