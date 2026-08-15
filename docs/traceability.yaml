@@ -1,125 +1,168 @@
-schema_version: 2
-source_of_truth:
-  path: docs/product-requirements.md
-  description: 產品範圍、架構邊界、術語與交付優先順序
+schema_version: 3
+source_of_truth: docs/product-requirements.md
 
-repository_scope: release-tree
-distribution: public-release
-delivery: source-repository-and-binary-archive
-crate_api_policy: source-visible-unstable-library-api
-config_policy:
-  current_schema: 2
-  legacy_schema_1: rejected-with-upgrade-error
-  representative_example: examples/config.yaml
+contracts:
+  cli:
+    version: 4
+    implementation: crates/osmium-cli
+    documentation: docs/operations/cli.md
+  run_config:
+    version: 2
+    implementation: crates/osmium-config
+    documentation: docs/config-reference.md
+  run_manifest:
+    version: 2
+    implementation: crates/osmium-runner/src/artifacts.rs
+  event_schema:
+    version: 3
+    implementation: crates/market-types/src/event.rs
+    documentation: docs/architecture/replay-model.md
+  replay_cache:
+    version: 1
+    implementation: crates/data-sync/src/cache.rs
+    documentation: docs/architecture/data-flow.md
+  accounting:
+    version: 6
+    implementation: crates/execution-sim/src/accounting.rs
+    documentation: docs/architecture/execution-model.md
 
-cleanup_status:
-  status: complete
-  preserved:
-    - production crates and tests
-    - examples/config.yaml
-    - fixtures/smoke
-    - repository-owned synthetic fixture matrix
-  removed:
-    - config/
-    - docs/increments/
-    - docs/verification/
-    - tools/acquisition/
-    - milestone-specific acceptance runners and scripts
-  historical_evidence: external-archive-or-git-history
+requirements:
+  DATA-01:
+    implementation:
+      - crates/data-sync/src/query.rs
+      - crates/data-sync/src/cursor.rs
+      - crates/data-sync/src/sync.rs
+      - crates/data-sync/src/transport.rs
+    verification:
+      - crates/data-sync/src/cursor.rs
+      - crates/data-sync/src/sync.rs
+  DATA-02:
+    implementation:
+      - crates/data-sync/src/storage.rs
+      - crates/data-sync/src/partition.rs
+    verification:
+      - crates/data-sync/src/storage.rs
+      - crates/data-sync/src/partition.rs
+  DATA-03:
+    implementation: [crates/data-sync/src/verify.rs]
+    verification: [crates/data-sync/src/verify.rs]
+  DATA-04:
+    implementation: [crates/data-sync/src/cache.rs]
+    verification: [crates/data-sync/src/cache.rs]
+  DATA-05:
+    implementation:
+      - crates/osmium-config/src/lib.rs
+      - crates/run-planner/src/session.rs
+    verification:
+      - crates/run-planner/tests/config.rs
+      - crates/run-planner/tests/partition_plan.rs
 
-milestones:
-  M1:
-    implementation: complete
-    acceptance_evidence: external-historical-archive
-  M2:
-    implementation: complete
-    acceptance_evidence: external-historical-archive
-    compatibility: not-maintained-in-release
-  M3:
-    implementation: complete
-    acceptance_evidence: external-historical-archive
-  M4:
-    implementation: complete
-    acceptance_evidence: external-historical-archive
-  M5:
-    implementation: complete
-    acceptance_evidence: external-historical-archive
-    current_fixture_scopes:
-      - twse-warrant
-      - tpex-warrant
-      - taifex-option
+  REPLAY-01:
+    implementation:
+      - crates/market-types/src/event.rs
+      - crates/normalizer/twse
+      - crates/normalizer/tpex
+      - crates/normalizer/taifex
+    verification:
+      - crates/market-types/tests/domain_events.rs
+      - crates/normalizer/twse/tests
+      - crates/normalizer/tpex/tests
+      - crates/normalizer/taifex/tests
+  REPLAY-02:
+    implementation:
+      - crates/replay-engine/src/ordering.rs
+      - crates/replay-engine/src/stream.rs
+    verification: [crates/replay-engine/tests/replay.rs]
+  REPLAY-03:
+    implementation: [crates/market-state]
+    verification: [crates/market-state/tests/reducer.rs]
+  REPLAY-04:
+    implementation:
+      - crates/replay-engine/src/engine.rs
+      - crates/osmium-runner/src/lib.rs
+    verification:
+      - crates/replay-engine/tests/replay.rs
+      - crates/strategy-api/tests/strategy.rs
+  REPLAY-05:
+    implementation:
+      - crates/run-planner/src/session.rs
+      - crates/replay-engine/src/engine.rs
+    verification:
+      - crates/run-planner/tests/partition_plan.rs
+      - crates/replay-engine/tests/full_fixture.rs
+  REPLAY-06:
+    implementation:
+      - crates/replay-engine
+      - crates/market-state
+      - crates/osmium-cli/src/command.rs
+    verification:
+      - crates/replay-engine/tests
+      - crates/market-state/tests
 
-implementation_paths:
-  config_and_runner:
-    - crates/osmium-config
-    - crates/osmium-runner
-    - crates/osmium-cli
-  data_and_replay:
-    - crates/data-sync
-    - crates/run-planner
-    - crates/replay-engine
-  market_domain:
-    - crates/market-types
-    - crates/market-state
-    - crates/normalizer/twse
-    - crates/normalizer/tpex
-    - crates/normalizer/taifex
-  strategy_and_simulation:
-    - crates/strategy-api
-    - crates/execution-sim
+  STRAT-01:
+    implementation: [crates/strategy-api]
+    verification:
+      - crates/strategy-api/tests/strategy.rs
+      - crates/strategy-api/tests/registry.rs
 
-fixture_policy:
-  smoke:
-    path: fixtures/smoke
-    scope: synthetic-redistributable
-  acceptance:
-    manifest: fixtures/acceptance/manifest.yaml
-    scope: synthetic-redistributable
-    committed_payload: repository-owned-synthetic-scenarios
-    full_day_payload: external-user-owned-data-root
+  SIM-01:
+    implementation:
+      - crates/execution-sim/src/lib.rs
+      - crates/execution-sim/src/depth.rs
+      - crates/execution-sim/src/scheduled.rs
+      - crates/osmium-runner/src/control.rs
+      - crates/osmium-runner/src/visibility.rs
+    verification:
+      - crates/execution-sim/src/lib.rs
+      - crates/execution-sim/src/depth.rs
+      - crates/execution-sim/src/scheduled.rs
+      - crates/osmium-runner/src/scheduled.rs
+  SIM-02:
+    implementation: [crates/execution-sim/src/accounting.rs]
+    verification: [crates/execution-sim/src/accounting.rs]
+
+  OPS-01:
+    implementation: [crates/osmium-cli]
+    verification:
+      - crates/osmium-cli/src/lib.rs
+      - crates/osmium-cli/src/market_replay.rs
+  OPS-02:
+    implementation: [crates/osmium-runner/src/artifacts.rs]
+    verification: [crates/osmium-runner/src/artifacts.rs]
+  NFR-01:
+    implementation:
+      - crates/replay-engine/src/checksum.rs
+      - crates/market-state/src/canonical.rs
+      - crates/osmium-runner/src/artifacts.rs
+    verification:
+      - crates/replay-engine/tests/replay.rs
+      - crates/osmium-runner/src/artifacts.rs
+  NFR-02:
+    implementation:
+      - crates/replay-engine/src/stream.rs
+      - crates/data-sync/src/cache.rs
+    verification: [crates/replay-engine/tests/replay.rs]
+  NFR-03:
+    implementation:
+      - crates/data-sync/src/query.rs
+      - crates/osmium-config/src/lib.rs
+      - crates/osmium-runner/src/artifacts.rs
+    verification:
+      - crates/data-sync/src/query.rs
+      - crates/osmium-config/src/lib.rs
+      - crates/osmium-runner/src/artifacts.rs
+
+fixtures:
+  scope: repository-owned-synthetic
+  complete_day: false
+  manifest: fixtures/acceptance/manifest.yaml
   verifier: tools/acceptance/verify_compact_fixtures.sh
+  matrix:
+    - twse-equity
+    - twse-warrant
+    - tpex-equity
+    - tpex-warrant
+    - taifex-future
+    - taifex-option
 
-fixture_matrix:
-  - id: synthetic-twse-equity
-    path: fixtures/teralion/twse/SYNTH-TWSE-EQ/2026-07-20
-    kind: equity
-    sessions: [regular]
-    complete_day: false
-  - id: synthetic-twse-warrant
-    path: fixtures/teralion/twse/SYNTH-TWSE-W/2026-07-20
-    kind: warrant
-    sessions: [regular]
-    complete_day: false
-  - id: synthetic-tpex-equity
-    path: fixtures/teralion/tpex/SYNTH-TPEX-EQ/2026-07-20
-    kind: equity
-    sessions: [regular]
-    complete_day: false
-  - id: synthetic-tpex-warrant
-    path: fixtures/teralion/tpex/SYNTH-TPEX-W/2026-07-20
-    kind: warrant
-    sessions: [regular]
-    complete_day: false
-  - id: synthetic-taifex-future
-    path: fixtures/teralion/taifex/SYNTH-FUT/2026-07-20
-    kind: future
-    sessions: [regular]
-    complete_day: false
-  - id: synthetic-taifex-option
-    path: fixtures/teralion/taifex/SYNTH-OPT/2026-07-20
-    kind: option
-    sessions: [after_hours, regular]
-    complete_day: false
-
-validation:
-  release_document: docs/release/VALIDATION.md
-  cli_document: docs/operations/cli.md
-  compact_fixture_verifier: tools/acceptance/verify_compact_fixtures.sh
-  bundle_verifier: tools/acceptance/verify_fixture_bundle.sh
-  required_commands:
-    - cargo fmt --check
-    - cargo clippy --workspace --all-targets -- -D warnings
-    - cargo test --workspace
-
-external_follow_up:
-  - full-day formal acceptance with authorized user-owned data when required
+release_validation: docs/operations/validation.md

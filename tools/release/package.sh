@@ -105,16 +105,24 @@ echo "building osmium release binary"
 env CARGO_TARGET_DIR="$root/target" cargo build --locked --release -p osmium-cli
 
 package_dir=$staging/$package_name
-mkdir -p "$package_dir/bin" "$package_dir/examples" "$package_dir/docs"
+mkdir -p \
+    "$package_dir/bin" \
+    "$package_dir/examples" \
+    "$package_dir/docs/architecture" \
+    "$package_dir/docs/operations"
 cp "$root/target/release/osmium" "$package_dir/bin/osmium"
 cp "$root/examples/config.yaml" "$package_dir/examples/config.yaml"
 cp "$root/docs/quickstart.md" "$package_dir/docs/quickstart.md"
 cp "$root/docs/config-reference.md" "$package_dir/docs/config-reference.md"
-cp "$root/docs/data-layout.md" "$package_dir/docs/data-layout.md"
+cp "$root/docs/user-guide.md" "$package_dir/docs/user-guide.md"
+cp "$root/docs/architecture/data-flow.md" "$package_dir/docs/architecture/data-flow.md"
+cp "$root/docs/operations/cli.md" "$package_dir/docs/operations/cli.md"
+cp "$root/docs/operations/local-data.md" "$package_dir/docs/operations/local-data.md"
 cp "$root/fixtures/acceptance/manifest.yaml" "$package_dir/fixture-manifest.yaml"
 cp "$root/LICENSE" "$package_dir/LICENSE"
-cp "$root/docs/release/RELEASE-NOTES.md" "$package_dir/RELEASE-NOTES.md"
-cp "$root/docs/release/SUPPORT.md" "$package_dir/SUPPORT.md"
+cp "$root/docs/operations/release.md" "$package_dir/RELEASE-NOTES.md"
+cp "$root/docs/operations/support.md" "$package_dir/SUPPORT.md"
+cp "$root/docs/operations/validation.md" "$package_dir/validation.md"
 
 cat >"$package_dir/BUILD-METADATA" <<EOF
 product: osmium
