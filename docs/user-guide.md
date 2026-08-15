@@ -1,200 +1,124 @@
-# User guide
+# 使用指南
 
-這份文件是給使用 `osmium` 的使用者與 strategy author。它說明如何準備一份
-`config_version: 2` config、完成資料生命週期，以及如何依目前 Rust `Strategy` API
-撰寫策略。
+本指南說明 `osmium` 的資料生命週期與 Rust strategy 整合方式。命令細節見 [CLI 參考](operations/cli.md)，設定欄位見 [RunConfig 設定參考](config-reference.md)。
 
-先知道一個重要邊界：release CLI 只會執行已編譯進該 binary 且明確加入 registry 的
-Rust strategy。這不是 runtime plugin 系統；只有修改 crate dependency 與 registry entry、
-重新編譯 `osmium` 後，YAML 才能選擇新的 `strategy.id + version`。
+## 1. 安裝與設定
 
-## 1. 準備 `osmium`
-
-使用 release binary archive 時，確認 binary 已在 `PATH`：
-
-```sh
-osmium version
-osmium --help
-```
-
-從 repository 執行或建立 release binary：
+從 repository 建立 binary：
 
 ```sh
 cargo build --release -p osmium-cli
 target/release/osmium version
 ```
 
-資料下載需要在 `.env` 或 process environment 設定 `TERALION_API_KEY`。不要把 key、
-cookie、bearer token 或 signed URL 寫入 YAML、Git 或 run artifact。
-
-## 2. 建立自己的 config
-
-以完整的 release example 為起點，複製到 repository 外的 user-owned path，並修改副本：
+建立設定：
 
 ```sh
-cp examples/config.yaml my-config.yaml
+osmium init --path config.yaml
 ```
 
-`examples/config.yaml` 是保留的 user-facing template；它不是完整日 fixture，也不會
-自動提供 `data_root` 的資料。若只想驗證安裝與 CI flow，使用 `examples/smoke.yaml`
-搭配 `fixtures/smoke/`。
+編輯 `data.data_root`、`universe`、`strategy`、`simulation` 與 `instrument_economics` 後再驗證。`examples/config.yaml` 是完整結構範例；`examples/smoke.yaml` 搭配 `fixtures/smoke/` 用於 repository smoke flow。
 
-### 2.1 必要區塊
+API key 由 process environment 或 `.env` 的 `TERALION_API_KEY` 提供。不要將 key、cookie、bearer token 或 signed URL 寫入 YAML、Git 或 run artifacts。
 
-| 區塊 | 使用者要設定的內容 |
+## 2. 資料準備與離線執行
+
+```sh
+osmium config check --config config.yaml
+osmium plan --config config.yaml
+osmium data sync --config config.yaml
+osmium data verify --config config.yaml
+osmium cache prepare --config config.yaml
+```
+
+`config check` 驗證 schema、strategy registry、parameters、universe 與 economics。`plan` 比較設定與本地 source/cache 狀態，不下載資料。`data sync` 是唯一需要網路與 credential 的命令；後續命令都使用本地 artifact。
+
+執行回播與回測：
+
+```sh
+osmium replay --config config.yaml
+osmium backtest --config config.yaml --output runs/example
+osmium inspect --run runs/example
+```
+
+`replay` 驗證 deterministic event merge 與 MarketState，不執行 simulation strategy。`backtest` 執行 strategy、orders、fills、費稅與帳務。`run` 會依 plan 串接 sync、cache 與 replay/backtest；plan 需要下載時會讀取 `TERALION_API_KEY`，需要完全控制網路副作用時請使用上方的分步命令。
+
+output directory 必須不存在。已發布的 run artifacts 是 immutable evidence，不會被覆寫。
+
+## 3. 本地資料管理
+
+source、cache 與 run output 有不同生命週期：
+
+- verified source revision 可跨回測重用，不因 cache 失效而重新下載。
+- replay cache 綁定 source checksum 與版本，可刪除後由 `cache prepare` 離線重建。
+- run output 綁定 effective config、plan、strategy 與 simulation，不作為下一次回測的輸入。
+
+遇到資料問題時先執行：
+
+```sh
+osmium plan --config config.yaml
+osmium data verify --config config.yaml
+```
+
+不要直接修改 `current.yaml`、published source revision、cache descriptor 或 run manifest。狀態與復原方式見 [本地資料](operations/local-data.md)。
+
+## 4. 行情 TUI
+
+```sh
+osmium display --config config.yaml
+```
+
+`display` 使用和 replay 相同的已驗證 streams 與 `match_time` 時間軸，但不執行 strategy、simulation 或 artifact publication。
+
+| 按鍵 | 行為 |
 | --- | --- |
-| `config_version` | 固定為 `2`；v1 不提供 migration |
-| `data` | `source: teralion`、user-owned `data_root`、source/cache policy |
-| `universe` | `trading_dates`、market、symbol、instrument kind 與 `session_kinds` |
-| `strategy` | strategy id、version 與 versioned parameters |
-| `replay` | source/cache completeness policy |
-| `simulation` | fill、latency、slippage、fee、tax、cash、accounting、marking |
-| `instrument_economics` | quantity unit、unit size、currency、multiplier、provenance |
-| `output` | run output publication policy |
+| ←／→ | 切換標的，不改變共用播放時間 |
+| Space | 暫停或繼續 |
+| +／=、- | 切換固定播放倍率 |
+| R | 從頭播放並恢復 1.0x |
+| Q | 離開 |
 
-最小的使用者修改通常是：
+畫面提供 selected instrument、時間、狀態、倍率、價格、成交量、完整五檔與最近成交；不推導 queue、imbalance 或 trade delta。
 
-```yaml
-data:
-  data_root: /path/to/my-local-data
+## 5. Strategy 整合
 
-universe:
-  trading_dates: ["2026-07-20"]
-  instruments:
-    - market: twse
-      symbol: "2330"
-      session_kinds: [regular]
+### 執行模型
 
-strategy:
-  id: acceptance.multi-market
-  version: "1"
-  parameters: {}
+CLI 只載入已編譯進 binary 且加入 registry 的 Rust strategy。YAML 不會動態載入外部程式碼。新增 strategy 的流程：
 
-simulation:
-  market_data_latency_ms: 12
-  order_latency_ms: 34
-```
+1. 建立獨立 crate，可參考 `crates/example-strategy`。
+2. 實作 `Strategy` 與 `StrategyFactory`，定義固定 identity 與 parameter schema。
+3. 將 crate 加入 CLI dependency，並在 `compiled_strategy_registry()` 註冊 factory。
+4. 重新編譯 binary，在 config 使用精確的 id 與 version。
 
-不要只複製這段而省略其他 required sections；完整欄位請以
-[`examples/config.yaml`](../examples/config.yaml) 為準。
+generic runner 也能直接執行 `S: Strategy` 或 `Box<dyn Strategy>`；replay-only flow 使用 `strategy_api::run_strategy`，simulation flow 使用 `osmium_runner::run_multi_backtest`。
 
-規則：
+### Strategy 邊界
 
-- 日期、symbol、market 與 session 必須能由 source catalog／session planner resolve。
-- monetary、price、multiplier 等 exact numeric values 使用 YAML string；latency 是
-  非負整數 milliseconds。
-- `market_data_latency_ms` 與 `order_latency_ms` 會進入 effective config／plan identity。
-  latency 只影響 order eligibility time，不改變 source event 或 replay ordering。
-- `instrument_economics` 的 quantity unit、multiplier 與 currency 必須和 instrument
-  一致。
-- config 不接受 unknown fields、secret fields、`config_version: 1` 或 negative latency。
+strategy 可以讀取：
 
-完整欄位說明見 [RunConfig reference](config-reference.md)；command 的 side effect 見
-[CLI operations](operations/cli.md)。
+- 目前 `DomainEvent`。
+- event 套用後的 read-only `MarketStateView`。
+- `TradingContext`、session phase 與 decision time。
+- deterministic strategy feedback 與自身狀態。
 
-## 3. 檢查、準備資料與執行
+strategy 不得修改 market state、event、source、cache 或 replay clock，也不能取得 next event、future state、network、wall clock、filesystem 或未記錄 randomness。來源 flags 的語意由 normalizer 與 `TradingContext` 提供，不由 strategy 解碼 raw Teralion JSON。
 
-先做不改資料的 config／plan 檢查：
-
-```sh
-osmium config check --config my-config.yaml
-osmium plan --config my-config.yaml
-```
-
-第一次需要下載 source 時：
-
-```sh
-osmium data sync --config my-config.yaml
-osmium data verify --config my-config.yaml
-osmium cache prepare --config my-config.yaml
-```
-
-只有 `data sync` 需要 network 與 API credential。`data verify`、`cache prepare`、
-`replay`、`backtest` 與 `inspect` 在 source 已準備完成後都應可離線執行。
-
-執行 replay 或 backtest：
-
-```sh
-osmium replay --config my-config.yaml
-osmium backtest --config my-config.yaml --output runs/my-first-run
-osmium inspect --run runs/my-first-run
-```
-
-`--output` 必須是尚不存在的 directory。replay 只驗證 deterministic market replay，
-不執行 simulation strategy；backtest 才會執行內建 strategy、orders、fills、fee/tax
-與 accounting。
-
-若 cache 被刪除，重新執行 `cache prepare` 即可由 verified local source rebuild；不必
-重新下載 immutable source。若 source 不完整、cache 不存在或 config identity 改變，
-請重新執行 `plan` 查看需要的 action。
-
-## 4. 寫自己的 strategy
-
-### 4.1 Strategy 的責任
-
-策略只能使用：
-
-- 目前的 `DomainEvent`。
-- 該 event 套用後的 read-only `MarketStateView`。
-- `TradingContext` 與 session phase。
-- 自己的 mutable state、已驗證參數與過去 callback 結果。
-
-策略不得：
-
-- 修改 market state、event、replay clock、source 或 cache。
-- 取得 next event、future state、final statistics 或 look-ahead data。
-- 在 callback 中開 network、讀 wall clock、filesystem 或未記錄 randomness。
-- 依 raw Teralion JSON、`received_at` 或 status bit 自行推導 market semantics。
-- 在 replay 中動態擴張 universe。
-
-核心 contract 見 [`Strategy` trait](../crates/strategy-api/src/strategy.rs)、
-[Strategy API design](design/strategy-api.md) 與
-[strategy requirements](requirements/strategy.md)。
-
-### 4.2 Strategy skeleton
-
-以下是一個只產生 indicator、不送單的最小 observer。它沿用 repository 的
-`ExampleStrategy` 模式；實際使用時放在自己的 Rust crate／binary 中，並依賴
-workspace 的 `strategy-api`、`market-state` 與 `market-types` path crates。
+### 最小 skeleton
 
 ```rust
-use market_state::StateField;
-use market_types::InstrumentId;
 use strategy_api::{
-    BinaryIdentity, CanonicalParamsChecksum, DeclarationError, IndicatorValue, SessionKind,
-    Strategy, StrategyDeclaration, StrategyEventContext, StrategyExecutionError,
-    StrategyIdentity, StrategyOutputSink,
+    CanonicalParamsChecksum, Strategy, StrategyDeclaration,
+    StrategyEventContext, StrategyExecutionError, StrategyIdentity,
+    StrategyOutputSink,
 };
 
-const STRATEGY_ID: &str = "my-org.state-observer";
-const STRATEGY_VERSION: &str = "1";
-
-pub struct MyStrategy {
+pub struct Observer {
     identity: StrategyIdentity,
     declaration: StrategyDeclaration,
 }
 
-impl MyStrategy {
-    pub fn source_binary_identity() -> Result<BinaryIdentity, DeclarationError> {
-        let digest = blake3::hash(include_bytes!("my_strategy.rs"));
-        BinaryIdentity::new("strategy-source-blake3", *digest.as_bytes())
-    }
-
-    pub fn new(instrument: InstrumentId) -> Result<Self, DeclarationError> {
-        let identity = StrategyIdentity::new(
-            STRATEGY_ID,
-            STRATEGY_VERSION,
-            Self::source_binary_identity()?,
-        )?;
-        let declaration = StrategyDeclaration::new([instrument], [SessionKind::Regular])?;
-        Ok(Self {
-            identity,
-            declaration,
-        })
-    }
-}
-
-impl Strategy for MyStrategy {
+impl Strategy for Observer {
     fn identity(&self) -> &StrategyIdentity {
         &self.identity
     }
@@ -212,125 +136,51 @@ impl Strategy for MyStrategy {
         context: StrategyEventContext<'_>,
         output: &mut StrategyOutputSink,
     ) -> Result<(), StrategyExecutionError> {
-        output.emit_indicator(
-            "state_version",
-            IndicatorValue::Unsigned(context.market_state().state_version()),
-        )?;
-        if let StateField::Known { value, .. } = context.market_state().cumulative_volume() {
-            output.emit_indicator("cum_volume", IndicatorValue::Unsigned(value.value()))?;
-        }
+        let _event = context.event();
+        let _state = context.market_state();
+        let _trading = context.trading();
+        let _ = output;
         Ok(())
     }
 }
 ```
 
-上例的 source digest 是 repository sample 的簡化做法；正式 deployment 應改成
-可回溯的 built artifact digest，並在 strategy version 或 build metadata 改變時更新
-identity。`binary_identity` 是 provenance，不是 secret 或 authorization mechanism。
+strategy identity 應使用可回溯的 built artifact digest。parameter checksum 必須由版本化 deterministic bytes 計算，不可依賴 `Debug`、map insertion order 或 floating-point formatting。
 
-實作有參數時，請將參數驗證、default 與 canonical encoding 放在 strategy definition；
-`canonical_params_checksum()` 必須由 versioned deterministic bytes 計算，不能使用
-Rust `Debug`、map insertion order 或 floating-point formatting。
+### Order intent
 
-### 4.3 產生 order intent
+order intent 需指定 universe 內的 instrument、side、quantity 與 `Market` 或 `Limit` order type。runner 會依 quantity unit、session、`TradingContext` 與 execution policy 驗證；intent 不保證成交。
 
-simulation-enabled runner 才能送出 order intent：
+replay-only sink 不提供 order capability。scheduled order 與 timer 也只在 execution plan 明確啟用相關能力時可用。
 
-```rust
-use market_types::{Price, Quantity, QuantityUnit};
-use strategy_api::{OrderIntent, OrderSide, OrderType};
+### 測試建議
 
-let intent = OrderIntent::new(
-    instrument.clone(),
-    OrderSide::Buy,
-    Quantity::new(1, QuantityUnit::TradingUnit)
-        .map_err(|_| StrategyExecutionError::new("invalid quantity"))?,
-    OrderType::Limit {
-        limit_price: Price::parse("100").map_err(|_| {
-            StrategyExecutionError::new("invalid limit price")
-        })?,
-    },
-);
-output.emit_order_intent(intent)?;
-```
-
-送單前仍應檢查 typed `TradingContext` 與 session phase；不要自行解碼 raw flags。order
-intent 不是成交保證，fill、rejection、fee、tax 與 accounting 由 simulation layer
-決定。replay-only sink 不提供 order capability，呼叫 `emit_order_intent` 會回傳
-capability error。
-
-### 4.4 讓 strategy 被執行
-
-generic Rust runner 接受任意 `S: Strategy`，也可透過 `Box<dyn Strategy>` 執行：
-
-- replay-only strategy flow：`strategy_api::run_strategy`
-- simulation／multi-market flow：`osmium_runner::run_multi_backtest`
-
-若要讓 `osmium backtest`／`osmium run` 執行自訂 strategy：
-
-1. 建立獨立 strategy crate；可參考 `crates/example-strategy`，不要把第三方策略放入
-   `strategy-api` 或 CLI module。
-2. 實作 `StrategyFactory`，提供固定 `StrategyDefinition` 與 versioned
-   `StrategyParameterSchema`。第一版 schema 只接受 flat object 的 bool、signed/unsigned
-   integer、exact decimal string 與 text；unknown field 一律拒絕。
-3. 將 crate 加入 `crates/osmium-cli/Cargo.toml`，並在唯一的
-   `compiled_strategy_registry()` 明確加入 factory。
-4. 重新編譯 `osmium`，再於 config 指定精確 id/version 與參數。
-
-例如 repository 內建示範可直接使用 `examples/smoke-example-strategy.yaml`：
-
-```yaml
-strategy:
-  id: example.price-threshold-buy-once
-  version: "1"
-  parameters:
-    entry_price: "101" # exact decimal 必須是 YAML string
-    # quantity: 1      # schema default 為 1
-```
-
-config load 會先套用 default 並建立 strategy，再核對 factory identity、parameter checksum、
-explicit universe 與 sessions；任何錯誤都早於下載、cache write、stream open 或 output
-staging。成功 run 的 `strategy.json` 會保存 materialized parameters 與實際 binary identity。
-
-### 4.5 Strategy 測試清單
-
-至少為每個 strategy 加入：
-
-- identity、version、binary identity 與 parameter checksum test。
-- declaration 的 universe／session test。
-- 相同 event sequence 的 output determinism test。
-- no-look-ahead test：strategy 看不到 next event 或 future state。
-- state 只讀 boundary test。
-- order quantity unit、price、universe 與 typed eligibility test。
-- callback error／panic 後的 failed run 與 partial output test。
-
-在 repository 內可先執行：
+- identity、parameter canonicalization 與 declaration。
+- 相同 event sequence 的 output determinism。
+- read-only state 與 no-look-ahead compile tests。
+- quantity unit、price、universe 與 eligibility rejection。
+- callback error／panic 與 failed run publication。
+- order、fill 與 feedback 順序。
 
 ```sh
-cargo fmt --check
 cargo test -p strategy-api
 cargo test -p osmium-runner
-cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-## 5. 常見問題
+## 6. 常見問題
 
-### Config 可以用 `config_version: 1` 嗎？
+### 自訂 strategy 顯示 not compiled into this binary
 
-不行。release 只接受 v2，請以 `examples/config.yaml` 重新建立 config。
+確認 crate 已成為 CLI dependency、factory 已加入 `compiled_strategy_registry()`、id/version 完全相符，並使用重新編譯的 binary。
 
-### 為什麼自訂 `strategy.id` 後顯示「not compiled into this binary」？
+### replay 沒有 orders 或 fills
 
-YAML 不會載入任意外部程式碼。請確認 strategy crate 已成為 CLI dependency、factory 已加入
-`compiled_strategy_registry()`，而且目前執行的是重新編譯後的 binary；version 也必須精確
-匹配，不會自動選 latest。
+`replay` 不執行 simulation strategy。請使用 `backtest` 或 `run`。
 
-### 為什麼 replay 沒有 order 或 fill？
+### sync 完成後仍無法 replay
 
-`replay` 是 market replay，不執行 simulation；請使用 simulation-enabled backtest
-runner。已註冊的自訂 strategy 請使用 `backtest` 或 `run`。
+依序執行 `data verify`、`cache prepare` 與 `plan`。錯誤會指出 source、cache 或 identity 不相容的範圍。
 
-### 為什麼資料同步後仍不能 replay？
+### cache 損壞或版本不相容
 
-依序執行 `data verify` 與 `cache prepare`，再重新執行 `plan`。source 是可重用的
-verified artifact，replay cache 是可刪除、可重建的衍生 artifact。
+移除有問題的 derived cache 後執行 `cache prepare`。只要 verified source 完整，就不需要重新下載。

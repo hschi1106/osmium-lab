@@ -1,34 +1,42 @@
-# osmium quickstart
+# 快速開始
 
-`osmium` 是可離線執行的 market replay 與 backtesting tool。先準備一份 v2 config，確認
-`data_root` 指向使用者擁有的資料目錄；repository fixture 不會自動成為 live source。
+`osmium` 需要 Rust 1.97.1 或相容的 release binary。repository 內的 fixture 是可重散布的合成測試資料，不會自動成為使用者設定的 source。
 
 ```sh
-osmium version
-osmium config check --config examples/config.yaml
-osmium plan --config examples/config.yaml
+cargo build --release -p osmium-cli
+target/release/osmium version
 ```
 
-第一次需要下載資料時，只有 `data sync` 會使用 `TERALION_API_KEY`：
+建立設定並依 [設定參考](config-reference.md)填入 universe、strategy 與 instrument economics：
 
 ```sh
-osmium data sync --config examples/config.yaml
-osmium data verify --config examples/config.yaml
-osmium cache prepare --config examples/config.yaml
+osmium init --path config.yaml
+osmium config check --config config.yaml
+osmium plan --config config.yaml
 ```
 
-準備完成後，執行與檢查都不需要網路或 credential：
+需要取得資料時，只有 `data sync` 使用 `TERALION_API_KEY`：
 
 ```sh
-osmium replay --config examples/config.yaml
-osmium backtest --config examples/config.yaml --output runs/example
+osmium data sync --config config.yaml
+osmium data verify --config config.yaml
+osmium cache prepare --config config.yaml
+```
+
+source 與 cache 準備完成後可離線執行：
+
+```sh
+osmium replay --config config.yaml
+osmium backtest --config config.yaml --output runs/example
 osmium inspect --run runs/example
 ```
 
-`backtest` 的 output directory 必須事先不存在。刪除 replay cache 後，可重新執行
-`osmium cache prepare`，不需要重新下載 immutable source。完整資料生命週期見
-[local data contract](operations/local-data.md)。
+`backtest --output` 指向的目錄必須不存在。replay cache 可刪除並由 verified source 重新執行 `cache prepare` 建立，不需要重新下載資料。
 
-`osmium display --config examples/config.yaml` 是只讀的歷史行情 TUI；它需要已驗證的
-source/cache，不寫入 run artifacts。鍵盤操作與顯示邊界見
-[market replay TUI design](design/market-replay-ui.md)。
+只讀行情介面：
+
+```sh
+osmium display --config config.yaml
+```
+
+完整命令與副作用見 [CLI 參考](operations/cli.md)，資料狀態與復原方式見 [本地資料](operations/local-data.md)。

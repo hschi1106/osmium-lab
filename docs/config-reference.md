@@ -1,21 +1,67 @@
-# RunConfig reference
+# RunConfig 設定參考
 
-Release 只接受 YAML `config_version: 2`。`config_version: 1` 是 historical material，
-會被明確拒絕，不提供 migration。
+CLI 接受 YAML `config_version: 2`。所有區塊都會拒絕 unknown fields；credential 不得寫入設定。完整範例見 [`examples/config.yaml`](../examples/config.yaml)。
 
-必要區塊如下：
+## 頂層區塊
 
-| 區塊 | 作用 |
+| 區塊 | 內容 |
 | --- | --- |
-| `data` | Teralion source 與 user-owned `data_root`、source/cache policy |
-| `universe` | trading dates、market、symbol、instrument kind、sessions 與 optional reference |
-| `strategy` | linked strategy id、version 與 parameters |
+| `data` | `source`、`data_root`、source 與 cache policy |
+| `universe` | trading dates、instrument、kind、session 與可選 reference |
+| `strategy` | compiled strategy id、version 與 parameters |
+| `strategy_reference` | 可選的外部 reference artifact identity |
 | `replay` | source/cache completeness policy |
-| `simulation` | fill、latency、slippage、fee、tax、cash、accounting、marking |
-| `instrument_economics` | quantity unit、multiplier、currency 與 provenance |
+| `simulation` | fill、latency、slippage、費稅、cash、accounting 與 marking |
+| `instrument_economics` | quantity unit、trading unit size、currency、multiplier 與 provenance |
 | `output` | run publication policy |
 
-latency 是非負整數毫秒：
+## Universe
+
+```yaml
+universe:
+  trading_dates: ["2026-07-20"]
+  instruments:
+    - market: taifex
+      symbol: "CDFG6"
+      instrument_kind: future
+      session_profile: taifex_stock_futures
+      session_kinds: [regular]
+```
+
+`market` 支援 `twse`、`tpex`、`taifex`。instrument kind 與 session profile 必須相容。可用 profile：
+
+- `twse_regular`
+- `tpex_regular`
+- `taifex_index_futures`
+- `taifex_stock_futures`
+- `taifex_stock_futures_regular_only`
+- `taifex_index_options`
+
+省略 `session_profile` 時由內建 metadata resolver 選擇。profile 是版本化識別，不接受任意開收盤時間。
+
+## Strategy
+
+```yaml
+strategy:
+  id: example.price-threshold-buy-once
+  version: "1"
+  parameters:
+    entry_price: "101"
+```
+
+strategy 必須已編譯進目前 binary 並加入 registry。parameters 由該 strategy 的 schema 驗證與套用 default；unknown parameter 會被拒絕。
+
+## Simulation
+
+預設 execution policy 是 `subsequent_event_v1`。latency 為非負整數毫秒，會進入 effective config 與 plan identity，但不修改 source event 或 replay ordering。
+
+```yaml
+simulation:
+  market_data_latency_ms: 12
+  order_latency_ms: 34
+```
+
+選擇 `scheduled_visible_depth_v1` 時必須提供：
 
 ```yaml
 simulation:
@@ -27,93 +73,29 @@ simulation:
   order_latency_ms: 34
 ```
 
-兩個欄位會進入 effective config／plan identity。它們只影響 order eligible
-`match_time`，不修改 source event 或 replay ordering；缺省值為 `0`。
+`depth_levels` 範圍為 1–5，`max_stale_ms` 必須大於 0。scheduled request 的 `activate_at` 已包含 order latency，runner 不會重複套用。
 
-`execution_policy` 缺省為 `subsequent_event_v1`，此時不得提供 `scheduled_execution`。
-選擇 `scheduled_visible_depth_v1` 時，`depth_levels` 必須為 1–5，`max_stale_ms` 必須大於
-0；`order_latency_ms` 由策略建立最終 `activate_at` 時使用，runner 不會在 scheduled request
-上重複加一次 latency。
+## 費用與稅
 
-若 symbol 無法由內建 fixture 對應到 session，instrument 可明確提供經驗證的
-`session_profile`。例如個股期貨日盤：
+比率、金額、price 與 multiplier 使用 YAML string，避免經過 `f64`。charge model 支援 `configured_rate` 與 `fixed_per_unit`；適用邊、最低金額、precision、rounding 與 provenance 必須明確設定。
 
-```yaml
-universe:
-  instruments:
-    - market: taifex
-      symbol: "CDFG6"
-      instrument_kind: future
-      session_profile: taifex_stock_futures
-      session_kinds: [regular]
+現股當沖優惠稅率是 per-instrument opt-in 設定。`eligibility_required: true` 時，每個 run 的 instrument/date 都必須列在 `eligible_dates`，否則 config validation 失敗。配對方式為同帳戶、同商品、同交易日 FIFO，支援先買後賣與先賣後買。
+
+## 驗證規則
+
+- `data_root` 不得包含 credential。
+- universe 不得為空，instrument identity 不得重複。
+- strategy identity、parameter schema、universe 與 sessions 必須一致。
+- quantity unit、currency、multiplier 與 instrument kind 必須相容。
+- 所有 monetary/exact decimal 欄位使用可精確解析的字串。
+- negative latency、invalid date、unknown field、unsupported enum 或缺少必要 economics 會被拒絕。
+- `output.publication` 使用 `create_new`；既有 output directory 不會被覆寫。
+
+先執行：
+
+```sh
+osmium config check --config config.yaml
+osmium plan --config config.yaml
 ```
 
-profile 必須與 market／`instrument_kind` 相容；省略時維持既有的 metadata resolver。
-可用值為 `twse_regular`、`tpex_regular`、`taifex_index_futures`、
-`taifex_stock_futures`、`taifex_stock_futures_regular_only` 與
-`taifex_index_options`。這個欄位只選擇平台內建且有版本的 profile，不能輸入任意開收盤時間。
-
-現股當沖證交稅是 per-instrument opt-in 設定；法規數值仍使用 exact YAML string：
-
-```yaml
-simulation:
-  instrument_charges:
-    - market: twse
-      symbol: "2330"
-      fee:
-        model: configured_rate
-        rate: "0.001425"
-        applicable_sides: [buy, sell]
-        minimum: "0"
-        precision: 0
-        rounding: down
-        provenance: "broker schedule"
-      tax:
-        model: configured_rate
-        rate: "0.003"
-        applicable_sides: [sell]
-        minimum: "0"
-        precision: 0
-        rounding: down
-        provenance: "MOF ordinary stock tax"
-      day_trade_tax:
-        charge:
-          model: configured_rate
-          rate: "0.0015"
-          applicable_sides: [sell]
-          minimum: "0"
-          precision: 0
-          rounding: down
-          provenance: "MOF reduced day-trade tax"
-        matching: same_account_instrument_trading_date_fifo
-        timezone_offset_minutes: 480
-        eligible_dates: ["2026-06-23", "2026-06-24"]
-        eligibility_required: true
-        valid_through: "2027-12-31"
-        provenance: "TWSE day-trading eligibility"
-```
-
-`eligibility_required: true` 表示每個 run instrument-date 必須列在 `eligible_dates`；
-缺少時 config／plan validation 失敗，不可假設為 eligible。配對同時支援先買後賣與先賣後買，
-只對同日配對 quantity 使用優惠稅率。
-
-股期等按成交單位計價的費用可用 `fixed_per_unit`；以下表示每成交一口收取 TWD 100，若同一
-order 分成多筆 fill，仍依各 fill quantity 加總，不會誤算成每筆 fill 100：
-
-```yaml
-fee:
-  model: fixed_per_unit
-  amount_per_unit: "100"
-  applicable_sides: [buy, sell]
-  precision: 0
-  rounding: down
-  provenance: "broker stock-futures schedule"
-```
-
-所有 exact numeric values 使用 YAML string，避免先轉換成 `f64`。禁止 credential-bearing
-fields、unknown fields、unknown schema version、invalid instrument reference/economics
-組合與 negative values。`osmium init` 產生的 skeleton 需要填入完整 universe 與 economics
-後，才能通過 `config check`。
-
-完整欄位與 validation 規則見 [CLI contract](operations/cli.md)；effective identity
-與 plan boundary 見 [release cleanup](release/release-cleanup.md)。
+欄位的實際解析入口位於 `crates/osmium-config`，命令行行為見 [CLI 參考](operations/cli.md)。
