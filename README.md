@@ -314,4 +314,12 @@ cargo doc --workspace --no-deps --open
 
 ## 授權
 
-本專案採用 [AGPL-3.0-only with Strategy Linking Exception](LICENSE)。
+Osmium core 採用 [GNU Affero General Public License, version 3, only
+(AGPL-3.0-only)](LICENSE)，並附有 [Strategy Linking
+Exception](docs/operations/licensing.md#strategy-linking-exception)。Exception 允許獨立撰寫、
+只透過公開 `strategy-api` 實作的 trading strategy 使用任意 license（包括 proprietary／
+closed-source）；strategy 單純因為 compile、link 或 register 到 Osmium binary，不會因此
+被要求採用 AGPL。Exception 不涵蓋對 Osmium core 的修改、複製或衍生實作。
+
+repository-owned synthetic fixtures 與工具依其檔案聲明適用相同授權；外部 Teralion source
+data、payload、商標與其他第三方內容不因本專案授權而取得重新散布權，仍受其各自條款約束。

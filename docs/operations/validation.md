@@ -9,6 +9,7 @@ tools/acceptance/verify_compact_fixtures.sh
 tools/acceptance/verify_fixture_bundle.sh \
   --bundle . \
   --manifest fixtures/smoke/manifest.yaml
+tools/release/verify_license.sh
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace

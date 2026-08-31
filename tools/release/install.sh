@@ -89,6 +89,15 @@ archive_root=$(find "$staging" -mindepth 1 -maxdepth 1 -type d -print | head -1)
 [ -n "$archive_root" ] || { echo "archive has no package directory" >&2; exit 50; }
 [ -f "$archive_root/bin/osmium" ] || { echo "archive binary is missing" >&2; exit 50; }
 [ -f "$archive_root/SHA256SUMS" ] || { echo "archive SHA256SUMS is missing" >&2; exit 50; }
+[ -f "$archive_root/LICENSE" ] || { echo "archive license is missing" >&2; exit 50; }
+grep -Fq "GNU AFFERO GENERAL PUBLIC LICENSE" "$archive_root/LICENSE" || {
+    echo "archive does not contain AGPL-3.0-only license text" >&2
+    exit 50
+}
+grep -Fiq "Strategy Linking Exception" "$archive_root/LICENSE" || {
+    echo "archive does not contain Strategy Linking Exception" >&2
+    exit 50
+}
 
 (
     cd "$archive_root"

@@ -29,6 +29,7 @@
 - [本地資料](operations/local-data.md)：目錄結構、狀態、檢查與復原。
 - [驗證](operations/validation.md)：repository checks、smoke test 與 release archive 驗證。
 - [發布](operations/release.md)：發布內容與部署前提。
+- [授權](operations/licensing.md)：AGPL-3.0-only、Strategy Linking Exception 與資料邊界。
 - [支援政策](operations/support.md)：支援邊界與問題分級。
 - [追溯矩陣](traceability.yaml)：需求、實作與驗證入口。
 - [詞彙表](glossary.md)

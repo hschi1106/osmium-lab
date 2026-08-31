@@ -104,6 +104,17 @@ strategy 可以讀取：
 
 strategy 不得修改 market state、event、source、cache 或 replay clock，也不能取得 next event、future state、network、wall clock、filesystem 或未記錄 randomness。來源 flags 的語意由 normalizer 與 `TradingContext` 提供，不由 strategy 解碼 raw Teralion JSON。
 
+### Strategy 授權
+
+Osmium core 與 `strategy-api` crate 採用 AGPL-3.0-only。`strategy-api` 的 Strategy Linking
+Exception 只適用於獨立撰寫、透過公開 Strategy API 實作的 strategy 及其必要的獨立
+registration glue。這類 strategy 可以使用任意 license，包括 proprietary／closed-source；
+單純因為 compile、link 或 register 到 Osmium binary，不要求 strategy 遵守 AGPL。
+
+Exception 不涵蓋修改、複製或衍生 Osmium core，也不涵蓋把 core 內部實作搬入 strategy。若
+修改 Osmium core，該修改後的 core work 仍須依 AGPL-3.0-only 發布。完整條文與 scope 定義見
+[授權文件](operations/licensing.md) 與根目錄 [`LICENSE`](../LICENSE)。
+
 ### 最小 skeleton
 
 ```rust

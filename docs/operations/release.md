@@ -9,7 +9,20 @@
 - deterministic `SHA256SUMS`。
 - CycloneDX `SBOM.cdx.json`。
 - `THIRD-PARTY-LICENSES.txt`。
+- 完整的 `AGPL-3.0-only` license 與 Strategy Linking Exception。
 - repository-owned synthetic smoke／acceptance fixtures只存在 source tree；binary archive 不包含 fixture builder 或受限 payload。
+
+## 授權與 archive 邊界
+
+Osmium core 採用 AGPL-3.0-only；根目錄 `LICENSE` 同時包含 Strategy Linking Exception。這個
+exception 允許獨立、只使用公開 Strategy API 的 strategy 以任意 license（包括
+proprietary／closed-source）compile、link、register 到 Osmium binary，但不放寬對 Osmium
+core 的修改、複製或衍生實作的 AGPL 義務。
+
+`SBOM.cdx.json` 與 `THIRD-PARTY-LICENSES.txt` 會將 project license 標為
+`AGPL-3.0-only`，並另列 `Strategy Linking Exception`；dependency 的 license 仍以各自
+package metadata 為準。Teralion raw data、user-owned source、provider payload、商標與其他
+未由 repository 擁有的內容不包含在本專案授權中。
 
 ## 相容性
 

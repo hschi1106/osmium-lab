@@ -11,6 +11,10 @@ import uuid
 from urllib.parse import quote
 
 
+PROJECT_LICENSE = "AGPL-3.0-only"
+PROJECT_LICENSE_EXCEPTION = "Strategy Linking Exception"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", required=True, type=Path)
@@ -70,6 +74,14 @@ def dependency_closure(metadata: dict) -> tuple[dict, set[str], str]:
     return packages, reachable, root_package["id"]
 
 
+def validate_project_license(metadata: dict, root_package_id: str) -> None:
+    root_package = next(package for package in metadata["packages"] if package["id"] == root_package_id)
+    if root_package.get("license") != PROJECT_LICENSE:
+        raise ValueError(
+            f"osmium core must declare {PROJECT_LICENSE}, got {root_package.get('license')!r}"
+        )
+
+
 def licenses_for(package: dict) -> tuple[list[dict], str]:
     expression = package.get("license")
     if expression:
@@ -93,6 +105,13 @@ def component(package: dict, root_package_id: str) -> tuple[dict, str]:
             {"name": "osmium:license-expression", "value": expression},
         ],
     }
+    if package["id"] == root_package_id:
+        result["properties"].extend(
+            [
+                {"name": "osmium:license-exception", "value": PROJECT_LICENSE_EXCEPTION},
+                {"name": "osmium:license-notice", "value": "See LICENSE in the release archive"},
+            ]
+        )
     if package.get("repository"):
         result["externalReferences"] = [{"type": "vcs", "url": package["repository"]}]
     return result, ref
@@ -100,6 +119,7 @@ def component(package: dict, root_package_id: str) -> tuple[dict, str]:
 
 def write_outputs(args: argparse.Namespace, metadata: dict) -> None:
     packages, reachable, root_package_id = dependency_closure(metadata)
+    validate_project_license(metadata, root_package_id)
     selected = sorted(
         (packages[package_id] for package_id in reachable),
         key=lambda package: (package["name"], package["version"], package["id"]),
@@ -137,6 +157,9 @@ def write_outputs(args: argparse.Namespace, metadata: dict) -> None:
             "properties": [
                 {"name": "osmium:dependency-source", "value": "cargo metadata --locked"},
                 {"name": "osmium:package-version", "value": args.version},
+                {"name": "osmium:license-expression", "value": PROJECT_LICENSE},
+                {"name": "osmium:license-exception", "value": PROJECT_LICENSE_EXCEPTION},
+                {"name": "osmium:license-notice", "value": "See LICENSE in the release archive"},
             ],
         },
         "components": components,
@@ -150,6 +173,9 @@ def write_outputs(args: argparse.Namespace, metadata: dict) -> None:
         "osmium third-party dependency license inventory",
         "inventory_version: 1",
         f"product_version: {args.version}",
+        f"project_license: {PROJECT_LICENSE}",
+        f"project_license_exception: {PROJECT_LICENSE_EXCEPTION}",
+        "project_license_notice: see LICENSE in the release archive",
         "source: cargo metadata --locked, transitive closure of osmium-cli",
         "license_text_policy: declared SPDX/license expressions are recorded; NOASSERTION requires review",
         "",

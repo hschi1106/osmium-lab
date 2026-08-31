@@ -48,6 +48,8 @@ done
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$root"
 
+"$root/tools/release/verify_license.sh"
+
 if [ -z "$version" ]; then
     version=$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)
 fi
