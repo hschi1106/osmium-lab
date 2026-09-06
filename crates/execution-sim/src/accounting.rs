@@ -5,11 +5,11 @@ use std::{
 };
 
 use market_types::{Decimal, InstrumentId, MarketId, QuantityUnit, TradingDate};
-use strategy_api::OrderSide;
+use strategy_api::{OrderId, OrderSide};
 
 use crate::FillRecord;
 
-pub const ACCOUNTING_VERSION: u16 = 7;
+pub const ACCOUNTING_VERSION: u16 = 8;
 pub const LEGACY_ACCOUNTING_VERSION: u16 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -261,6 +261,7 @@ pub struct Ledger {
     total_fee: Decimal,
     total_tax: Decimal,
     fills: Vec<FillRecord>,
+    fill_costs: Vec<FillCostRecord>,
     economics: InstrumentEconomics,
     fee: ChargeModel,
     tax: ChargeModel,
@@ -268,6 +269,30 @@ pub struct Ledger {
     day_trade_tax: Option<DayTradeTaxModel>,
     day_trade_buys: VecDeque<DayTradeBuy>,
     day_trade_sells: VecDeque<DayTradeSell>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FillCostRecord {
+    order_id: OrderId,
+    fee: Decimal,
+    tax: Decimal,
+}
+
+impl FillCostRecord {
+    #[must_use]
+    pub const fn order_id(self) -> OrderId {
+        self.order_id
+    }
+
+    #[must_use]
+    pub const fn fee(self) -> Decimal {
+        self.fee
+    }
+
+    #[must_use]
+    pub const fn tax(self) -> Decimal {
+        self.tax
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -314,6 +339,7 @@ impl Ledger {
             total_fee: Decimal::ZERO,
             total_tax: Decimal::ZERO,
             fills: Vec::new(),
+            fill_costs: Vec::new(),
             economics,
             fee,
             tax,
@@ -382,6 +408,11 @@ impl Ledger {
         self.total_tax = next_tax;
         self.day_trade_buys = day_trade_buys;
         self.day_trade_sells = day_trade_sells;
+        self.fill_costs.push(FillCostRecord {
+            order_id: fill.order_id(),
+            fee,
+            tax,
+        });
         self.fills.push(fill);
         Ok(())
     }
@@ -407,6 +438,7 @@ impl Ledger {
             || rebuilt.total_tax != self.total_tax
             || rebuilt.day_trade_buys != self.day_trade_buys
             || rebuilt.day_trade_sells != self.day_trade_sells
+            || rebuilt.fill_costs != self.fill_costs
         {
             return Err(AccountingError::Reconciliation);
         }
@@ -476,6 +508,11 @@ impl Ledger {
     #[must_use]
     pub fn fills(&self) -> &[FillRecord] {
         &self.fills
+    }
+
+    #[must_use]
+    pub fn fill_costs(&self) -> &[FillCostRecord] {
+        &self.fill_costs
     }
 
     #[must_use]
@@ -1550,6 +1587,11 @@ mod tests {
             ))
             .unwrap();
 
+        assert_eq!(ledger.fill_costs().len(), 2);
+        assert_eq!(ledger.fill_costs()[0].fee(), Decimal::ZERO);
+        assert_eq!(ledger.fill_costs()[0].tax(), Decimal::ZERO);
+        assert_eq!(ledger.fill_costs()[1].tax(), Decimal::parse("150").unwrap());
+
         assert_eq!(
             ledger.performance(None).unwrap().total_tax,
             Decimal::parse("150").unwrap()
@@ -1588,6 +1630,13 @@ mod tests {
                 buy_time,
             ))
             .unwrap();
+
+        assert_eq!(ledger.fill_costs().len(), 2);
+        assert_eq!(ledger.fill_costs()[0].tax(), Decimal::parse("300").unwrap());
+        assert_eq!(
+            ledger.fill_costs()[1].tax(),
+            Decimal::parse("-150").unwrap()
+        );
 
         assert_eq!(
             ledger.performance(None).unwrap().total_tax,

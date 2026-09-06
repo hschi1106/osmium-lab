@@ -19,7 +19,7 @@ pub const FILL_MODEL_VERSION: u16 = 2;
 
 pub use accounting::{
     ACCOUNTING_VERSION, AccountingError, AccountingModel, CashChargeIdentity, CashChargeRecord,
-    ChargeBasis, ChargeModel, ChargeSides, DayTradeTaxModel, InstrumentEconomics,
+    ChargeBasis, ChargeModel, ChargeSides, DayTradeTaxModel, FillCostRecord, InstrumentEconomics,
     InstrumentLedgerConfig, InstrumentPerformance, LEGACY_ACCOUNTING_VERSION, Ledger, MultiLedger,
     MultiPerformanceSummary, PerformanceSummary, RoundingPolicy, assess_fill_charge,
 };

@@ -326,6 +326,7 @@ pub fn publish_scheduled_multi_backtest(
     let orders = encode_scheduled_orders(completed)?;
     let fills = encode_scheduled_fills(completed)?;
     let execution_trace = encode_scheduled_execution_trace(completed)?;
+    let fill_costs = encode_scheduled_fill_costs(completed)?;
     let ledger = encode_multi_ledger_parts(&completed.performance, &completed.ledger);
     let ledger_checksum = hash(&ledger);
     let event_checksum = hex(completed.replay.summary().event_checksum().as_bytes());
@@ -376,6 +377,11 @@ pub fn publish_scheduled_multi_backtest(
     files.insert(
         "execution-trace.blake3",
         format!("{}\n", hash(&execution_trace)).into_bytes(),
+    );
+    files.insert("fill-costs.json", fill_costs.clone());
+    files.insert(
+        "fill-costs.blake3",
+        format!("{}\n", hash(&fill_costs)).into_bytes(),
     );
     files.insert("ledger.bin", ledger.clone());
     files.insert("ledger.blake3", format!("{ledger_checksum}\n").into_bytes());
@@ -673,6 +679,40 @@ fn encode_scheduled_execution_trace(
         bytes.extend_from_slice(&canonical);
     }
     Ok(bytes)
+}
+
+fn encode_scheduled_fill_costs(
+    completed: &CompletedScheduledMultiBacktest,
+) -> Result<Vec<u8>, ArtifactError> {
+    let orders = completed
+        .simulator
+        .orders()
+        .iter()
+        .map(|order| (*order.id().as_bytes(), order))
+        .collect::<BTreeMap<_, _>>();
+    let mut records = Vec::new();
+    for instrument in completed.performance.instruments() {
+        let Some(ledger) = completed.ledger.ledger(instrument.instrument()) else {
+            continue;
+        };
+        for cost in ledger.fill_costs() {
+            let order = orders.get(cost.order_id().as_bytes()).ok_or_else(|| {
+                ArtifactError::Encoding("scheduled fill cost has no order".to_owned())
+            })?;
+            records.push(serde_json::json!({
+                "order_id": hex(cost.order_id().as_bytes()),
+                "client_order_id": order.request().client_order_id().as_str(),
+                "instrument": instrument_label(instrument.instrument()),
+                "fee_atoms": cost.fee().atoms().to_string(),
+                "tax_atoms": cost.tax().atoms().to_string(),
+            }));
+        }
+    }
+    serde_json::to_vec_pretty(&serde_json::json!({
+        "schema_version": 1,
+        "records": records,
+    }))
+    .map_err(|error| ArtifactError::Encoding(error.to_string()))
 }
 
 fn encode_multi_fills(completed: &CompletedMultiBacktest) -> Vec<u8> {
