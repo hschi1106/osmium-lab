@@ -4,6 +4,7 @@ use std::{
     fmt, fs,
     path::{Path, PathBuf},
     process::ExitCode,
+    sync::Arc,
 };
 
 use serde_json::{Map, Value, json};
@@ -114,8 +115,9 @@ must not already exist.
 /// crate. External binaries only provide strategy registration and their argument iterator.
 pub fn run_with_registry_provider(
     args: impl IntoIterator<Item = OsString>,
-    provider: &dyn StrategyRegistryProvider,
+    provider: impl StrategyRegistryProvider + 'static,
 ) -> ExitCode {
+    let provider: Arc<dyn StrategyRegistryProvider> = Arc::new(provider);
     match parse_args(args) {
         Ok(ParsedInvocation {
             command: ParsedCommand::Help,
@@ -150,14 +152,14 @@ pub fn run_with_registry_provider(
         Ok(ParsedInvocation {
             command: ParsedCommand::ConfigCheck(path),
             output,
-        }) => match execute_config_check_with_registry_provider(&path, provider) {
+        }) => match execute_config_check_with_registry_provider(&path, provider.as_ref()) {
             Ok(summary) => emit_success("config check", output, &summary),
             Err(error) => emit_error("config check", output, &error.to_string(), error.category()),
         },
         Ok(ParsedInvocation {
             command: ParsedCommand::MarketReplay(command),
             output,
-        }) => match execute_market_replay(&command) {
+        }) => match execute_market_replay_with_registry_provider(&command, Arc::clone(&provider)) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => emit_error("display", output, &error.to_string(), error.category()),
         },
@@ -166,7 +168,7 @@ pub fn run_with_registry_provider(
             output,
         }) => {
             let name = command.kind.name();
-            match execute_with_registry_provider(&command, provider) {
+            match execute_with_registry_provider(&command, provider.as_ref()) {
                 Ok(summary) => emit_success(name, output, &summary),
                 Err(error) => emit_error(name, output, &error.to_string(), error.category()),
             }
@@ -190,7 +192,7 @@ pub fn run_with_registry_provider(
 }
 
 pub fn run(args: impl IntoIterator<Item = OsString>) -> ExitCode {
-    run_with_registry_provider(args, &BuiltInStrategyRegistry)
+    run_with_registry_provider(args, BuiltInStrategyRegistry)
 }
 
 fn emit_success(command: &str, output: OutputOptions, summary: &str) -> ExitCode {
@@ -610,6 +612,14 @@ fn parse_command(
 
 pub fn execute_market_replay(command: &MarketReplayCommand) -> Result<(), CliError> {
     market_replay_ui::run(command.config()).map_err(CliError::MarketReplay)
+}
+
+pub fn execute_market_replay_with_registry_provider(
+    command: &MarketReplayCommand,
+    provider: Arc<dyn StrategyRegistryProvider>,
+) -> Result<(), CliError> {
+    market_replay_ui::run_with_registry_provider(command.config(), provider)
+        .map_err(CliError::MarketReplay)
 }
 
 const INIT_CONFIG: &str = r#"# Edit the placeholders before running `osmium config check`.

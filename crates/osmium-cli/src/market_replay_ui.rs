@@ -1,6 +1,7 @@
 use std::{
     io,
     path::Path,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -23,7 +24,14 @@ use ratatui::{
 use crate::market_replay::{MarketReplay, MarketReplayError, PlaybackStatus};
 
 pub fn run(config: &Path) -> Result<(), MarketReplayError> {
-    let mut replay = MarketReplay::from_config(config)?;
+    run_with_registry_provider(config, Arc::new(crate::command::BuiltInStrategyRegistry))
+}
+
+pub fn run_with_registry_provider(
+    config: &Path,
+    provider: Arc<dyn crate::command::StrategyRegistryProvider>,
+) -> Result<(), MarketReplayError> {
+    let mut replay = MarketReplay::from_config_with_registry_provider(config, provider)?;
     enable_raw_mode().map_err(MarketReplayError::Io)?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen).map_err(MarketReplayError::Io)?;

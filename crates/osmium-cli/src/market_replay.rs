@@ -3,6 +3,7 @@ use std::{
     error::Error,
     fmt,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Instant,
 };
 
@@ -152,7 +153,6 @@ struct PreparedReplay {
 ///
 /// This type owns the frozen cache streams and advances one shared `match_time`
 /// for every selected instrument. The UI only asks it for a read-only view.
-#[derive(Debug)]
 pub struct MarketReplay {
     config_path: PathBuf,
     runtime: ReplayRuntime,
@@ -166,12 +166,23 @@ pub struct MarketReplay {
     speed: PlaybackSpeed,
     last_wall_time: Instant,
     scaled_remainder: u128,
+    registry_provider: Arc<dyn crate::command::StrategyRegistryProvider>,
 }
 
 impl MarketReplay {
     pub fn from_config(path: impl AsRef<Path>) -> Result<Self, MarketReplayError> {
+        Self::from_config_with_registry_provider(
+            path,
+            Arc::new(crate::command::BuiltInStrategyRegistry),
+        )
+    }
+
+    pub fn from_config_with_registry_provider(
+        path: impl AsRef<Path>,
+        provider: Arc<dyn crate::command::StrategyRegistryProvider>,
+    ) -> Result<Self, MarketReplayError> {
         let path = path.as_ref().to_path_buf();
-        let prepared = prepare_replay(&path)?;
+        let prepared = prepare_replay(&path, provider.as_ref())?;
         let histories = prepared
             .instruments
             .iter()
@@ -191,6 +202,7 @@ impl MarketReplay {
             speed: PlaybackSpeed::normal(),
             last_wall_time: Instant::now(),
             scaled_remainder: 0,
+            registry_provider: provider,
         })
     }
 
@@ -286,7 +298,7 @@ impl MarketReplay {
     }
 
     pub fn reset(&mut self, now: Instant) -> Result<(), MarketReplayError> {
-        let prepared = prepare_replay(&self.config_path)?;
+        let prepared = prepare_replay(&self.config_path, self.registry_provider.as_ref())?;
         self.runtime = prepared.runtime;
         self.instruments = prepared.instruments;
         self.histories = self
@@ -481,11 +493,16 @@ fn price_as_f64(price: Price) -> f64 {
     price.atoms() as f64 / market_types::Decimal::SCALE_FACTOR as f64
 }
 
-fn prepare_replay(path: &Path) -> Result<PreparedReplay, MarketReplayError> {
+fn prepare_replay(
+    path: &Path,
+    provider: &dyn crate::command::StrategyRegistryProvider,
+) -> Result<PreparedReplay, MarketReplayError> {
     let config =
-        crate::command::load_config(path).map_err(|error| MarketReplayError::Preparation {
-            message: format!("market replay config failed: {error}").into_boxed_str(),
-            exit_code: 2,
+        crate::command::load_config_with_registry_provider(path, provider).map_err(|error| {
+            MarketReplayError::Preparation {
+                message: format!("market replay config failed: {error}").into_boxed_str(),
+                exit_code: 2,
+            }
         })?;
     if config.effective().trading_dates().len() != 1 {
         return Err(MarketReplayError::Preparation {

@@ -40,7 +40,7 @@ use crate::ExitCategory;
 /// config path (for example through [`osmium_config::strategy_bootstrap`]) before registering
 /// additional factories. Returning an error aborts config loading; it is never treated as an
 /// empty registry.
-pub trait StrategyRegistryProvider {
+pub trait StrategyRegistryProvider: Send + Sync {
     fn register_strategies(
         &self,
         config_path: &Path,
@@ -50,7 +50,7 @@ pub trait StrategyRegistryProvider {
 
 impl<F> StrategyRegistryProvider for F
 where
-    F: Fn(&Path, &mut StrategyRegistry) -> Result<(), CommandError>,
+    F: Fn(&Path, &mut StrategyRegistry) -> Result<(), CommandError> + Send + Sync,
 {
     fn register_strategies(
         &self,
@@ -202,10 +202,6 @@ pub(crate) fn compiled_strategy_registry() -> Result<StrategyRegistry, CommandEr
         .register(example)
         .map_err(osmium_config::ConfigError::Strategy)?;
     Ok(registry)
-}
-
-pub(crate) fn load_config(path: &Path) -> Result<RunConfig, CommandError> {
-    load_config_with_registry_provider(path, &BuiltInStrategyRegistry)
 }
 
 pub fn load_config_with_registry_provider(
