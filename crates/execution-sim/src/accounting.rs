@@ -1,11 +1,15 @@
-use std::{collections::BTreeMap, collections::VecDeque, error::Error, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    error::Error,
+    fmt,
+};
 
 use market_types::{Decimal, InstrumentId, MarketId, QuantityUnit, TradingDate};
 use strategy_api::OrderSide;
 
 use crate::FillRecord;
 
-pub const ACCOUNTING_VERSION: u16 = 6;
+pub const ACCOUNTING_VERSION: u16 = 7;
 pub const LEGACY_ACCOUNTING_VERSION: u16 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -930,6 +934,7 @@ pub struct MultiPerformanceSummary {
     unrealized_pnl: Decimal,
     total_fee: Decimal,
     total_tax: Decimal,
+    total_cash_charges: Decimal,
     fill_count: u64,
     instruments: Box<[InstrumentPerformance]>,
 }
@@ -966,6 +971,11 @@ impl MultiPerformanceSummary {
     }
 
     #[must_use]
+    pub const fn total_cash_charges(&self) -> Decimal {
+        self.total_cash_charges
+    }
+
+    #[must_use]
     pub const fn fill_count(&self) -> u64 {
         self.fill_count
     }
@@ -988,6 +998,80 @@ pub struct MultiLedger {
     initial_cash: Decimal,
     cash: Decimal,
     ledgers: BTreeMap<InstrumentId, InstrumentLedger>,
+    cash_charges: Vec<CashChargeRecord>,
+    cash_charge_identities: BTreeSet<CashChargeIdentity>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CashChargeIdentity([u8; 32]);
+
+impl CashChargeIdentity {
+    #[must_use]
+    pub const fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CashChargeRecord {
+    identity: CashChargeIdentity,
+    at: market_types::MatchTime,
+    amount: Decimal,
+    category: Box<str>,
+    reference: Box<str>,
+}
+
+impl CashChargeRecord {
+    pub fn new(
+        identity: CashChargeIdentity,
+        at: market_types::MatchTime,
+        amount: Decimal,
+        category: impl Into<Box<str>>,
+        reference: impl Into<Box<str>>,
+    ) -> Result<Self, AccountingError> {
+        let category = category.into();
+        let reference = reference.into();
+        if amount < Decimal::ZERO || category.trim().is_empty() || reference.trim().is_empty() {
+            return Err(AccountingError::InvalidCashCharge);
+        }
+        Ok(Self {
+            identity,
+            at,
+            amount,
+            category,
+            reference,
+        })
+    }
+
+    #[must_use]
+    pub const fn identity(&self) -> CashChargeIdentity {
+        self.identity
+    }
+
+    #[must_use]
+    pub const fn at(&self) -> market_types::MatchTime {
+        self.at
+    }
+
+    #[must_use]
+    pub const fn amount(&self) -> Decimal {
+        self.amount
+    }
+
+    #[must_use]
+    pub fn category(&self) -> &str {
+        &self.category
+    }
+
+    #[must_use]
+    pub fn reference(&self) -> &str {
+        &self.reference
+    }
 }
 
 impl MultiLedger {
@@ -1036,7 +1120,35 @@ impl MultiLedger {
             initial_cash,
             cash: initial_cash,
             ledgers,
+            cash_charges: Vec::new(),
+            cash_charge_identities: BTreeSet::new(),
         })
+    }
+
+    /// Applies a callback's cash charges atomically.
+    pub fn apply_cash_charges(
+        &mut self,
+        charges: impl IntoIterator<Item = CashChargeRecord>,
+    ) -> Result<(), AccountingError> {
+        let charges = charges.into_iter().collect::<Vec<_>>();
+        let mut identities = self.cash_charge_identities.clone();
+        let mut next_cash = self.cash;
+        for charge in &charges {
+            if charge.amount < Decimal::ZERO
+                || charge.category.trim().is_empty()
+                || charge.reference.trim().is_empty()
+            {
+                return Err(AccountingError::InvalidCashCharge);
+            }
+            if !identities.insert(charge.identity) {
+                return Err(AccountingError::DuplicateCashCharge(charge.identity));
+            }
+            next_cash = checked_sub(next_cash, charge.amount)?;
+        }
+        self.cash = next_cash;
+        self.cash_charge_identities = identities;
+        self.cash_charges.extend(charges);
+        Ok(())
     }
 
     pub fn apply_fill(
@@ -1072,6 +1184,16 @@ impl MultiLedger {
             entry.ledger.reconcile()?;
             rebuilt_cash = checked_add(rebuilt_cash, entry.ledger.cash())?;
         }
+        let mut identities = BTreeSet::new();
+        for charge in &self.cash_charges {
+            if !identities.insert(charge.identity) {
+                return Err(AccountingError::Reconciliation);
+            }
+            rebuilt_cash = checked_sub(rebuilt_cash, charge.amount)?;
+        }
+        if identities != self.cash_charge_identities {
+            return Err(AccountingError::Reconciliation);
+        }
         if rebuilt_cash != self.cash {
             return Err(AccountingError::Reconciliation);
         }
@@ -1086,6 +1208,12 @@ impl MultiLedger {
         let mut unrealized_pnl = Decimal::ZERO;
         let mut total_fee = Decimal::ZERO;
         let mut total_tax = Decimal::ZERO;
+        let total_cash_charges = self
+            .cash_charges
+            .iter()
+            .try_fold(Decimal::ZERO, |total, charge| {
+                checked_add(total, charge.amount)
+            })?;
         let mut fill_count = 0_u64;
         let mut instruments = Vec::with_capacity(self.ledgers.len());
         for (instrument, entry) in &self.ledgers {
@@ -1120,6 +1248,7 @@ impl MultiLedger {
             unrealized_pnl,
             total_fee,
             total_tax,
+            total_cash_charges,
             fill_count,
             instruments: instruments.into_boxed_slice(),
         })
@@ -1133,6 +1262,11 @@ impl MultiLedger {
     #[must_use]
     pub const fn cash(&self) -> Decimal {
         self.cash
+    }
+
+    #[must_use]
+    pub fn cash_charges(&self) -> &[CashChargeRecord] {
+        &self.cash_charges
     }
 
     pub fn instruments(&self) -> impl Iterator<Item = &InstrumentId> {
@@ -1220,6 +1354,8 @@ pub enum AccountingError {
     AccountingModelMismatch(InstrumentId),
     MissingFinalMark(InstrumentId),
     InvalidTradingDate,
+    InvalidCashCharge,
+    DuplicateCashCharge(CashChargeIdentity),
 }
 
 impl fmt::Display for AccountingError {
@@ -1893,5 +2029,65 @@ mod tests {
         assert_eq!(stock_adjustment, "110000".parse().unwrap());
         assert_eq!(futures_adjustment, "1000".parse().unwrap());
         assert_eq!(current_equity, "1011000".parse().unwrap());
+    }
+
+    #[test]
+    fn cash_charge_batch_is_atomic_reconciled_and_generic() {
+        let instrument = InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap());
+        let zero = model(ChargeSides::Both);
+        let mut ledger = MultiLedger::new(
+            "1500000".parse().unwrap(),
+            [InstrumentLedgerConfig::new(
+                instrument.clone(),
+                QuantityUnit::TradingUnit,
+                AccountingModel::EquityV1,
+                InstrumentEconomics {
+                    units_per_trading_unit: 1000,
+                    multiplier: "1".parse().unwrap(),
+                    provenance: "fixture".into(),
+                },
+                zero,
+                zero,
+            )],
+        )
+        .unwrap();
+        let at = MatchTime::from_unix_microseconds(1);
+        let charge = CashChargeRecord::new(
+            CashChargeIdentity::new([1; 32]),
+            at,
+            "230.5".parse().unwrap(),
+            "borrow_interest",
+            "lot-1",
+        )
+        .unwrap();
+        ledger.apply_cash_charges([charge.clone()]).unwrap();
+        let cash_after_first = ledger.cash();
+
+        let duplicate = CashChargeRecord::new(
+            CashChargeIdentity::new([2; 32]),
+            at,
+            "10".parse().unwrap(),
+            "borrow_fee",
+            "lot-2",
+        )
+        .unwrap();
+        let repeated = CashChargeRecord::new(
+            CashChargeIdentity::new([2; 32]),
+            at,
+            "20".parse().unwrap(),
+            "borrow_fee",
+            "lot-3",
+        )
+        .unwrap();
+        assert!(ledger.apply_cash_charges([duplicate, repeated]).is_err());
+        assert_eq!(ledger.cash(), cash_after_first);
+        assert_eq!(ledger.cash_charges(), [charge]);
+
+        ledger.reconcile().unwrap();
+        let performance = ledger
+            .performance(&BTreeMap::from([(instrument, None)]))
+            .unwrap();
+        assert_eq!(performance.final_cash(), "1499769.5".parse().unwrap());
+        assert_eq!(performance.total_cash_charges(), "230.5".parse().unwrap());
     }
 }

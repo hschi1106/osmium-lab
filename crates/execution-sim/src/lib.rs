@@ -18,10 +18,10 @@ pub const EXECUTION_SIM_VERSION: u16 = 2;
 pub const FILL_MODEL_VERSION: u16 = 2;
 
 pub use accounting::{
-    ACCOUNTING_VERSION, AccountingError, AccountingModel, ChargeBasis, ChargeModel, ChargeSides,
-    DayTradeTaxModel, InstrumentEconomics, InstrumentLedgerConfig, InstrumentPerformance,
-    LEGACY_ACCOUNTING_VERSION, Ledger, MultiLedger, MultiPerformanceSummary, PerformanceSummary,
-    RoundingPolicy, assess_fill_charge,
+    ACCOUNTING_VERSION, AccountingError, AccountingModel, CashChargeIdentity, CashChargeRecord,
+    ChargeBasis, ChargeModel, ChargeSides, DayTradeTaxModel, InstrumentEconomics,
+    InstrumentLedgerConfig, InstrumentPerformance, LEGACY_ACCOUNTING_VERSION, Ledger, MultiLedger,
+    MultiPerformanceSummary, PerformanceSummary, RoundingPolicy, assess_fill_charge,
 };
 pub use depth::{
     AtomicDepthFill, AtomicDepthLeg, ConsumableDepth, DepthSweepError, DepthSweepResult, LevelFill,
