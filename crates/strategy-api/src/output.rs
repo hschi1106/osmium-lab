@@ -334,6 +334,25 @@ impl StrategyOutputSink {
         &self.cash_charges
     }
 
+    pub fn cash_charges_with_output_sequences(
+        &self,
+    ) -> Result<Vec<(u32, CashChargeRequest)>, StrategyOutputEncodingError> {
+        self.cash_charges
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, charge)| {
+                let sequence = self
+                    .pending
+                    .len()
+                    .checked_add(index + 1)
+                    .and_then(|value| u32::try_from(value).ok())
+                    .ok_or(StrategyOutputEncodingError::OutputSequenceOverflow)?;
+                Ok((sequence, charge))
+            })
+            .collect()
+    }
+
     pub fn take_cash_charges(&mut self) -> Vec<CashChargeRequest> {
         std::mem::take(&mut self.cash_charges)
     }

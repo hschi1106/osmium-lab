@@ -327,6 +327,7 @@ pub fn publish_scheduled_multi_backtest(
     let fills = encode_scheduled_fills(completed)?;
     let execution_trace = encode_scheduled_execution_trace(completed)?;
     let fill_costs = encode_scheduled_fill_costs(completed)?;
+    let cash_charges = encode_cash_charges(&completed.ledger)?;
     let ledger = encode_multi_ledger_parts(&completed.performance, &completed.ledger);
     let ledger_checksum = hash(&ledger);
     let event_checksum = hex(completed.replay.summary().event_checksum().as_bytes());
@@ -382,6 +383,11 @@ pub fn publish_scheduled_multi_backtest(
     files.insert(
         "fill-costs.blake3",
         format!("{}\n", hash(&fill_costs)).into_bytes(),
+    );
+    files.insert("cash-charges.json", cash_charges.clone());
+    files.insert(
+        "cash-charges.blake3",
+        format!("{}\n", hash(&cash_charges)).into_bytes(),
     );
     files.insert("ledger.bin", ledger.clone());
     files.insert("ledger.blake3", format!("{ledger_checksum}\n").into_bytes());
@@ -695,7 +701,12 @@ fn encode_scheduled_fill_costs(
         let Some(ledger) = completed.ledger.ledger(instrument.instrument()) else {
             continue;
         };
-        for cost in ledger.fill_costs() {
+        if ledger.fills().len() != ledger.fill_costs().len() {
+            return Err(ArtifactError::Encoding(
+                "scheduled fill and fill-cost counts differ".to_owned(),
+            ));
+        }
+        for (instrument_fill_sequence, cost) in ledger.fill_costs().iter().enumerate() {
             let order = orders.get(cost.order_id().as_bytes()).ok_or_else(|| {
                 ArtifactError::Encoding("scheduled fill cost has no order".to_owned())
             })?;
@@ -703,11 +714,33 @@ fn encode_scheduled_fill_costs(
                 "order_id": hex(cost.order_id().as_bytes()),
                 "client_order_id": order.request().client_order_id().as_str(),
                 "instrument": instrument_label(instrument.instrument()),
+                "instrument_fill_sequence": instrument_fill_sequence,
                 "fee_atoms": cost.fee().atoms().to_string(),
                 "tax_atoms": cost.tax().atoms().to_string(),
             }));
         }
     }
+    serde_json::to_vec_pretty(&serde_json::json!({
+        "schema_version": 1,
+        "records": records,
+    }))
+    .map_err(|error| ArtifactError::Encoding(error.to_string()))
+}
+
+fn encode_cash_charges(ledger: &execution_sim::MultiLedger) -> Result<Vec<u8>, ArtifactError> {
+    let records = ledger
+        .cash_charges()
+        .iter()
+        .map(|charge| {
+            serde_json::json!({
+                "identity": hex(charge.identity().as_bytes()),
+                "match_time_us": charge.at().as_unix_microseconds(),
+                "amount_atoms": charge.amount().atoms().to_string(),
+                "category": charge.category(),
+                "reference": charge.reference(),
+            })
+        })
+        .collect::<Vec<_>>();
     serde_json::to_vec_pretty(&serde_json::json!({
         "schema_version": 1,
         "records": records,
@@ -770,7 +803,9 @@ fn encode_multi_ledger_parts(
         .filter_map(|instrument| ledger.ledger(instrument.instrument()))
         .flat_map(execution_sim::Ledger::fills)
         .any(|fill| fill.control_sequence().is_some());
-    let mut bytes = if control_triggers {
+    let mut bytes = if !ledger.cash_charges().is_empty() {
+        b"OSLEDGR3".to_vec()
+    } else if control_triggers {
         b"OSLEDGR2".to_vec()
     } else {
         b"OSLEDGR1".to_vec()
@@ -801,6 +836,16 @@ fn encode_multi_ledger_parts(
         }
         bytes.extend_from_slice(&(record.len() as u32).to_be_bytes());
         bytes.extend_from_slice(&record);
+    }
+    if !ledger.cash_charges().is_empty() {
+        bytes.extend_from_slice(&(ledger.cash_charges().len() as u64).to_be_bytes());
+        for charge in ledger.cash_charges() {
+            bytes.extend_from_slice(charge.identity().as_bytes());
+            bytes.extend_from_slice(&charge.at().as_unix_microseconds().to_be_bytes());
+            bytes.extend_from_slice(&charge.amount().to_canonical_bytes());
+            append_text(&mut bytes, charge.category());
+            append_text(&mut bytes, charge.reference());
+        }
     }
     bytes
 }
@@ -869,13 +914,14 @@ fn encode_multi_performance_parts(
     ledger_checksum: &str,
 ) -> Vec<u8> {
     let mut output = format!(
-        "schema_version: 1\naccounting_version: {accounting_version}\nledger_checksum: {ledger_checksum}\ninitial_cash_atoms: {}\nfinal_cash_atoms: {}\nrealized_pnl_atoms: {}\nunrealized_pnl_atoms: {}\ntotal_fee_atoms: {}\ntotal_tax_atoms: {}\nfill_count: {}\ninstruments:\n",
+        "schema_version: 2\naccounting_version: {accounting_version}\nledger_checksum: {ledger_checksum}\ninitial_cash_atoms: {}\nfinal_cash_atoms: {}\nrealized_pnl_atoms: {}\nunrealized_pnl_atoms: {}\ntotal_fee_atoms: {}\ntotal_tax_atoms: {}\ntotal_cash_charges_atoms: {}\nfill_count: {}\ninstruments:\n",
         performance.initial_cash().atoms(),
         performance.final_cash().atoms(),
         performance.realized_pnl().atoms(),
         performance.unrealized_pnl().atoms(),
         performance.total_fee().atoms(),
         performance.total_tax().atoms(),
+        performance.total_cash_charges().atoms(),
         performance.fill_count(),
     );
     for instrument in performance.instruments() {

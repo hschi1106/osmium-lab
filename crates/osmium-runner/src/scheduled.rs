@@ -535,11 +535,19 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
             .map_err(|error| MultiBacktestError::Strategy(error.to_string()))?;
         let requests = sink.take_scheduled_orders();
         let timers = sink.take_timers();
+        let cash_charges = sink
+            .cash_charges_with_output_sequences()
+            .map_err(|error| MultiBacktestError::Strategy(error.to_string()))?;
         self.output.extend(
             sink.into_event_records(occurrence)
                 .map_err(|error| MultiBacktestError::Strategy(error.to_string()))?,
         );
         self.schedule_timers(observation.visible_at, timers)?;
+        self.apply_cash_charges(
+            observation.visible_at,
+            *occurrence.event_fingerprint().as_bytes(),
+            cash_charges,
+        )?;
         self.submit_requests(
             observation.visible_at,
             *occurrence.event_fingerprint().as_bytes(),
@@ -577,11 +585,15 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
             .map_err(|error| MultiBacktestError::Strategy(error.to_string()))?;
         let requests = sink.take_scheduled_orders();
         let timers = sink.take_timers();
+        let cash_charges = sink
+            .cash_charges_with_output_sequences()
+            .map_err(|error| MultiBacktestError::Strategy(error.to_string()))?;
         self.output.extend(
             sink.into_control_records(control_sequence, at)
                 .map_err(|error| MultiBacktestError::Strategy(error.to_string()))?,
         );
         self.schedule_timers(at, timers)?;
+        self.apply_cash_charges(at, origin_identity, cash_charges)?;
         self.submit_requests(at, origin_identity, requests, control_sequence)
     }
 
@@ -601,6 +613,9 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
             .map_err(|error| MultiBacktestError::Strategy(error.to_string()))?;
         let requests = sink.take_scheduled_orders();
         let timers = sink.take_timers();
+        let cash_charges = sink
+            .cash_charges_with_output_sequences()
+            .map_err(|error| MultiBacktestError::Strategy(error.to_string()))?;
         self.output.extend(
             sink.into_control_records(control_sequence, at)
                 .map_err(|error| MultiBacktestError::Strategy(error.to_string()))?,
@@ -611,7 +626,38 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
         identity.extend_from_slice(&control_sequence.to_be_bytes());
         let origin_identity = *blake3::hash(&identity).as_bytes();
         self.schedule_timers(at, timers)?;
+        self.apply_cash_charges(at, origin_identity, cash_charges)?;
         self.submit_requests(at, origin_identity, requests, control_sequence)
+    }
+
+    fn apply_cash_charges(
+        &mut self,
+        at: MatchTime,
+        origin_identity: [u8; 32],
+        charges: Vec<(u32, strategy_api::CashChargeRequest)>,
+    ) -> Result<(), MultiBacktestError> {
+        let records = charges
+            .into_iter()
+            .map(|(output_sequence, charge)| {
+                let mut bytes = Vec::with_capacity(40);
+                bytes.extend_from_slice(b"OSCC");
+                bytes.extend_from_slice(&origin_identity);
+                bytes.extend_from_slice(&output_sequence.to_be_bytes());
+                let identity =
+                    execution_sim::CashChargeIdentity::new(*blake3::hash(&bytes).as_bytes());
+                execution_sim::CashChargeRecord::new(
+                    identity,
+                    at,
+                    charge.amount(),
+                    charge.category(),
+                    charge.reference(),
+                )
+                .map_err(|error| MultiBacktestError::Accounting(error.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.ledger
+            .apply_cash_charges(records)
+            .map_err(|error| MultiBacktestError::Accounting(error.to_string()))
     }
 
     fn current_equity(&self) -> Result<market_types::Decimal, MultiBacktestError> {
