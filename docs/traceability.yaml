@@ -11,7 +11,7 @@ contracts:
     implementation: crates/osmium-config
     documentation: docs/config-reference.md
   run_manifest:
-    version: 2
+    version: 3
     implementation: crates/osmium-runner/src/artifacts.rs
   event_schema:
     version: 3
@@ -22,8 +22,12 @@ contracts:
     implementation: crates/data-sync/src/cache.rs
     documentation: docs/architecture/data-flow.md
   accounting:
-    version: 6
+    version: 8
     implementation: crates/execution-sim/src/accounting.rs
+    documentation: docs/architecture/execution-model.md
+  strategy_output:
+    version: 3
+    implementation: crates/strategy-api/src/output.rs
     documentation: docs/architecture/execution-model.md
 
 requirements:

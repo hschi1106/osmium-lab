@@ -13,7 +13,7 @@ use crate::CompletedBacktest;
 use crate::CompletedMultiBacktest;
 use crate::CompletedScheduledMultiBacktest;
 
-pub const RUN_MANIFEST_VERSION: u16 = 2;
+pub const RUN_MANIFEST_VERSION: u16 = 3;
 
 pub fn publish_backtest(
     output: &Path,
@@ -1047,5 +1047,85 @@ impl Error for ArtifactError {}
 impl From<io::Error> for ArtifactError {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use execution_sim::{
+        AccountingModel, CashChargeIdentity, CashChargeRecord, ChargeBasis, ChargeModel,
+        ChargeSides, InstrumentEconomics, InstrumentLedgerConfig, MultiLedger, RoundingPolicy,
+    };
+    use market_types::{Decimal, InstrumentId, MarketId, MatchTime, QuantityUnit, Symbol};
+
+    use super::*;
+
+    fn empty_ledger() -> MultiLedger {
+        let zero = ChargeModel {
+            basis: ChargeBasis::NotionalRate,
+            rate: Decimal::ZERO,
+            sides: ChargeSides::Both,
+            minimum: Decimal::ZERO,
+            precision: 0,
+            rounding: RoundingPolicy::Down,
+        };
+        MultiLedger::new(
+            Decimal::parse("1000").unwrap(),
+            [InstrumentLedgerConfig::new(
+                InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap()),
+                QuantityUnit::TradingUnit,
+                AccountingModel::EquityV1,
+                InstrumentEconomics {
+                    units_per_trading_unit: 1000,
+                    multiplier: Decimal::parse("1").unwrap(),
+                    provenance: "test".into(),
+                },
+                zero,
+                zero,
+            )],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn cash_charge_artifact_preserves_identity_time_and_exact_atoms() {
+        let mut ledger = empty_ledger();
+        ledger
+            .apply_cash_charges([CashChargeRecord::new(
+                CashChargeIdentity::new([7; 32]),
+                MatchTime::from_unix_microseconds(123),
+                Decimal::parse("12.5").unwrap(),
+                "borrow_fee",
+                "lot-1",
+            )
+            .unwrap()])
+            .unwrap();
+
+        let first = encode_cash_charges(&ledger).unwrap();
+        let second = encode_cash_charges(&ledger).unwrap();
+        assert_eq!(first, second);
+        let value: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["records"][0]["match_time_us"], 123);
+        assert_eq!(value["records"][0]["amount_atoms"], "12500000000000000000");
+        assert_eq!(value["records"][0]["category"], "borrow_fee");
+    }
+
+    #[test]
+    fn inspect_rejects_legacy_manifest_version() {
+        let path =
+            std::env::temp_dir().join(format!("osmium-legacy-manifest-{}", std::process::id()));
+        if path.exists() {
+            fs::remove_dir_all(&path).unwrap();
+        }
+        fs::create_dir(&path).unwrap();
+        fs::write(
+            path.join("run-manifest.yaml"),
+            br#"{"run_manifest_version":2,"artifact_checksums":{}}"#,
+        )
+        .unwrap();
+
+        assert!(matches!(inspect_run(&path), Err(ArtifactError::Manifest)));
+        fs::remove_dir_all(path).unwrap();
     }
 }

@@ -140,11 +140,11 @@ select event
 
 ### STRAT-01 策略能力與邊界
 
-- strategy 以 Rust trait 實作，編譯進 binary 並加入 registry。
+- strategy 以 Rust trait 實作，編譯進 binary 並加入 registry；外部 binary 可透過公開的 CLI application API 注入自己的 compiled registry，不需複製 CLI 或 runner source。
 - strategy identity 包含 id、version、binary identity 與 canonical parameter checksum。
 - strategy 宣告 explicit universe 與 session kinds。
 - callback 只能讀取目前 event、更新後的 `MarketStateView`、`TradingContext`、session context 與 deterministic feedback。
-- strategy 可產生 indicator、order intent、scheduled request 與 timer；能力由 runner 明確授予。
+- strategy 可產生 indicator、order intent、scheduled request、timer 與非負 `cash charge`；能力由 runner 明確授予。
 - strategy 不得修改 market state、replay clock 或 historical event，也不得讀取網路、wall clock、未記錄 randomness 或 future data。
 - callback error 或 panic 必須使 run 明確失敗，不能發布成功結果。
 
@@ -163,7 +163,9 @@ select event
 
 ### SIM-02 帳務
 
-- 所有 fill、cash、position、fee、tax、realized／unrealized P&L 與 marking 變化可追溯至 order intent。
+- 所有 fill、cash、position、fee、tax、cash charge、realized／unrealized P&L 與 marking 變化可追溯至 order intent 或 strategy callback output。
+- 同一 callback 的 cash charges 先整批驗證再提交，並在同批新 orders 的資金判定前扣除；任一筆非法時不得留下部分更新。
+- 每筆 fill 保存 `fee_delta` 與 `tax_delta`。當沖稅事後重算可使後續 `tax_delta` 為負，代表調整值而非負稅率。
 - exact 金額與比率不經 binary floating-point。
 - equity、futures 與 options 使用明確的 instrument economics 與 accounting model。
 - 每次執行結束需 reconciliation；失敗不得發布 successful performance。
@@ -178,7 +180,7 @@ select event
 
 ### OPS-02 執行結果
 
-run artifacts 至少保存 effective config checksum、execution plan identity、source/cache checksum、版本集合、strategy identity 與 materialized parameters、warnings、orders、fills、positions、P&L、event checksum 與 final-state checksum。output directory 以 staging 建立並以 atomic publish 完成。
+run artifacts 至少保存 effective config checksum、execution plan identity、source/cache checksum、版本集合、strategy identity 與 materialized parameters、warnings、orders、fills、per-fill costs、cash charges、positions、P&L、event checksum 與 final-state checksum。output directory 以 staging 建立並以 atomic publish 完成。
 
 ### NFR-01 可重現
 

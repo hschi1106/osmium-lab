@@ -51,6 +51,8 @@ strategy:
 
 strategy 必須已編譯進目前 binary 並加入 registry。parameters 由該 strategy 的 schema 驗證與套用 default；unknown parameter 會被拒絕。
 
+外部 Rust binary 可使用 `osmium_cli::run_with_registry_provider` 注入額外 compiled factories；lab 仍負責所有 command、TUI、錯誤分類與執行流程。strategy-specific 商業政策（例如借貸比例、利率或轉換時間）必須是 strategy parameters，不得加入通用 `simulation` schema。策略若需扣除非 fill 成本，應輸出通用 `CashChargeRequest`。
+
 ## Simulation
 
 預設 execution policy 是 `subsequent_event_v1`。latency 為非負整數毫秒，會進入 effective config 與 plan identity，但不修改 source event 或 replay ordering。

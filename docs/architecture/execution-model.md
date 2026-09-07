@@ -60,6 +60,8 @@ release visible observations
 -> feedback
 ```
 
+每次 strategy callback 的 output 先完整驗證，再依版本化順序提交 timer、cash charge 與 order。cash charge 的時間由 runner 使用目前 `match_time` 指派；identity 由 callback origin 與 output sequence 決定。整批 charge 在新 order 資金判定前原子扣除，strategy 不能自行指定時間或直接修改 ledger。
+
 scheduled request 的 `activate_at` 已是最終 activation time；runner 不重複套用 order latency。
 
 ## 4. Order 與 feedback
@@ -90,6 +92,8 @@ charge model 支援：
 
 當沖優惠稅率依同帳戶、同商品、同 trading date FIFO 配對，支援先買後賣與先賣後買；只有列為 eligible 的 quantity 使用優惠率。未通過 eligibility validation 時不自動套用。
 
+每筆 fill 另保存該次造成的 `fee_delta` 與 `tax_delta`，並以 instrument fill sequence 固定順序。當沖資格在後續反向成交才成立時，系統會在該筆 fill 記錄負的 `tax_delta` 返還先前多計稅額；這是 deterministic adjustment，不代表負稅率。
+
 ## 7. Ledger 與績效
 
 ledger 原子更新：
@@ -99,10 +103,13 @@ ledger 原子更新：
 - cash 與 position。
 - average cost、realized P&L 與 unrealized P&L。
 - instrument 與 aggregate performance。
+- 具 stable identity、category 與 reference 的通用 cash charges。
 
 marking 使用 plan 中版本化 policy，預設以最後可觀察 mark；midpoint fallback 只有設定允許時使用。沒有合法 mark 時保留 unknown，不以零替代。
 
 執行結束需驗證 fill sum、position、cash、charges、P&L 與 per-instrument/aggregate ledger checksum。一致性檢查失敗時 run 標記為 failed。
+
+Scheduled backtest 會發布 `fill-costs.json` 與 `cash-charges.json`，兩者皆使用 exact decimal atoms 並附獨立 checksum。`fill-costs.json` 與 fills 必須一對一；cash charge identity 重複、筆數不一致或 checksum 損壞都不能發布 successful run。
 
 ## 8. 可重現與限制揭露
 
