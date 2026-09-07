@@ -33,9 +33,9 @@ pub use orders::{
     StrategyFeedbackContext, TimeInForce,
 };
 pub use output::{
-    CANONICAL_STRATEGY_OUTPUT_VERSION, IndicatorValue, LEGACY_CANONICAL_STRATEGY_OUTPUT_VERSION,
-    StrategyOutput, StrategyOutputChecksum, StrategyOutputEncodingError, StrategyOutputRecord,
-    StrategyOutputSink,
+    CANONICAL_STRATEGY_OUTPUT_VERSION, CashChargeRequest, IndicatorValue,
+    LEGACY_CANONICAL_STRATEGY_OUTPUT_VERSION, StrategyOutput, StrategyOutputChecksum,
+    StrategyOutputEncodingError, StrategyOutputRecord, StrategyOutputSink,
 };
 pub use registry::{
     FactoryContractField, ParameterRange, RangeBound, RawStrategyParameter, RawStrategyParameters,
@@ -54,4 +54,4 @@ pub use strategy::{
 };
 pub use timer::{StrategyTimerContext, StrategyTimerError, StrategyTimerId, StrategyTimerRequest};
 
-pub const STRATEGY_API_VERSION: u16 = 1;
+pub const STRATEGY_API_VERSION: u16 = 2;

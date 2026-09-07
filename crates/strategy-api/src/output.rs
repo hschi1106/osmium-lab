@@ -8,7 +8,48 @@ use crate::{
     ScheduledOrderRequest, StrategyIdentity, StrategyTimerError, StrategyTimerRequest,
 };
 
-pub const CANONICAL_STRATEGY_OUTPUT_VERSION: u16 = 2;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CashChargeRequest {
+    amount: Decimal,
+    category: Box<str>,
+    reference: Box<str>,
+}
+
+impl CashChargeRequest {
+    pub fn new(
+        amount: Decimal,
+        category: impl Into<Box<str>>,
+        reference: impl Into<Box<str>>,
+    ) -> Result<Self, StrategyOutputEncodingError> {
+        let category = category.into();
+        let reference = reference.into();
+        if amount < Decimal::ZERO || category.trim().is_empty() || reference.trim().is_empty() {
+            return Err(StrategyOutputEncodingError::InvalidCashCharge);
+        }
+        Ok(Self {
+            amount,
+            category,
+            reference,
+        })
+    }
+
+    #[must_use]
+    pub const fn amount(&self) -> Decimal {
+        self.amount
+    }
+
+    #[must_use]
+    pub fn category(&self) -> &str {
+        &self.category
+    }
+
+    #[must_use]
+    pub fn reference(&self) -> &str {
+        &self.reference
+    }
+}
+
+pub const CANONICAL_STRATEGY_OUTPUT_VERSION: u16 = 3;
 pub const LEGACY_CANONICAL_STRATEGY_OUTPUT_VERSION: u16 = 1;
 const STRATEGY_OUTPUT_MAGIC: &[u8; 4] = b"OSSO";
 
@@ -71,6 +112,23 @@ pub enum StrategyOutputRecord {
         indicator_name: Box<str>,
         value: IndicatorValue,
     },
+    EventCashCharge {
+        run_event_ordinal: u64,
+        event_fingerprint: [u8; 32],
+        instrument_state_version: u64,
+        output_sequence: u32,
+        amount: Decimal,
+        category: Box<str>,
+        reference: Box<str>,
+    },
+    ControlCashCharge {
+        control_sequence: u64,
+        control_time: MatchTime,
+        output_sequence: u32,
+        amount: Decimal,
+        category: Box<str>,
+        reference: Box<str>,
+    },
 }
 
 impl StrategyOutputRecord {
@@ -116,6 +174,40 @@ impl StrategyOutputRecord {
                 append_bytes(indicator_name.as_bytes(), bytes)?;
                 value.append_canonical(bytes)?;
             }
+            Self::EventCashCharge {
+                run_event_ordinal,
+                event_fingerprint,
+                instrument_state_version,
+                output_sequence,
+                amount,
+                category,
+                reference,
+            } => {
+                bytes.push(4);
+                bytes.extend_from_slice(&run_event_ordinal.to_be_bytes());
+                bytes.extend_from_slice(event_fingerprint);
+                bytes.extend_from_slice(&instrument_state_version.to_be_bytes());
+                bytes.extend_from_slice(&output_sequence.to_be_bytes());
+                bytes.extend_from_slice(&amount.to_canonical_bytes());
+                append_bytes(category.as_bytes(), bytes)?;
+                append_bytes(reference.as_bytes(), bytes)?;
+            }
+            Self::ControlCashCharge {
+                control_sequence,
+                control_time,
+                output_sequence,
+                amount,
+                category,
+                reference,
+            } => {
+                bytes.push(5);
+                bytes.extend_from_slice(&control_sequence.to_be_bytes());
+                bytes.extend_from_slice(&control_time.as_unix_microseconds().to_be_bytes());
+                bytes.extend_from_slice(&output_sequence.to_be_bytes());
+                bytes.extend_from_slice(&amount.to_canonical_bytes());
+                append_bytes(category.as_bytes(), bytes)?;
+                append_bytes(reference.as_bytes(), bytes)?;
+            }
         }
         Ok(())
     }
@@ -127,6 +219,7 @@ pub struct StrategyOutputSink {
     intents: Vec<OrderIntent>,
     scheduled_orders: Vec<ScheduledOrderRequest>,
     timers: Vec<StrategyTimerRequest>,
+    cash_charges: Vec<CashChargeRequest>,
     order_intents_enabled: bool,
     scheduled_orders_enabled: bool,
 }
@@ -139,6 +232,7 @@ impl StrategyOutputSink {
             intents: Vec::new(),
             scheduled_orders: Vec::new(),
             timers: Vec::new(),
+            cash_charges: Vec::new(),
             order_intents_enabled: false,
             scheduled_orders_enabled: false,
         }
@@ -151,6 +245,7 @@ impl StrategyOutputSink {
             intents: Vec::new(),
             scheduled_orders: Vec::new(),
             timers: Vec::new(),
+            cash_charges: Vec::new(),
             order_intents_enabled: true,
             scheduled_orders_enabled: false,
         }
@@ -163,6 +258,7 @@ impl StrategyOutputSink {
             intents: Vec::new(),
             scheduled_orders: Vec::new(),
             timers: Vec::new(),
+            cash_charges: Vec::new(),
             order_intents_enabled: false,
             scheduled_orders_enabled: true,
         }
@@ -222,6 +318,26 @@ impl StrategyOutputSink {
         std::mem::take(&mut self.timers)
     }
 
+    pub fn emit_cash_charge(
+        &mut self,
+        request: CashChargeRequest,
+    ) -> Result<(), StrategyOutputEncodingError> {
+        if !self.scheduled_orders_enabled {
+            return Err(StrategyOutputEncodingError::CashChargeCapabilityUnavailable);
+        }
+        self.cash_charges.push(request);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn cash_charges(&self) -> &[CashChargeRequest] {
+        &self.cash_charges
+    }
+
+    pub fn take_cash_charges(&mut self) -> Vec<CashChargeRequest> {
+        std::mem::take(&mut self.cash_charges)
+    }
+
     pub fn emit_indicator(
         &mut self,
         name: impl Into<Box<str>>,
@@ -239,7 +355,8 @@ impl StrategyOutputSink {
         self,
         occurrence: &EventOccurrence,
     ) -> Result<Vec<StrategyOutputRecord>, StrategyOutputEncodingError> {
-        self.pending
+        let mut records = self
+            .pending
             .into_iter()
             .enumerate()
             .map(|(index, (indicator_name, value))| {
@@ -254,7 +371,21 @@ impl StrategyOutputSink {
                     value,
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>, StrategyOutputEncodingError>>()?;
+        for charge in self.cash_charges {
+            let output_sequence = u32::try_from(records.len() + 1)
+                .map_err(|_| StrategyOutputEncodingError::OutputSequenceOverflow)?;
+            records.push(StrategyOutputRecord::EventCashCharge {
+                run_event_ordinal: occurrence.run_event_ordinal(),
+                event_fingerprint: *occurrence.event_fingerprint().as_bytes(),
+                instrument_state_version: occurrence.instrument_state_version(),
+                output_sequence,
+                amount: charge.amount,
+                category: charge.category,
+                reference: charge.reference,
+            });
+        }
+        Ok(records)
     }
 
     pub fn into_finalize_records(
@@ -280,7 +411,8 @@ impl StrategyOutputSink {
         control_sequence: u64,
         control_time: MatchTime,
     ) -> Result<Vec<StrategyOutputRecord>, StrategyOutputEncodingError> {
-        self.pending
+        let mut records = self
+            .pending
             .into_iter()
             .enumerate()
             .map(|(index, (indicator_name, value))| {
@@ -294,7 +426,20 @@ impl StrategyOutputSink {
                     value,
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>, StrategyOutputEncodingError>>()?;
+        for charge in self.cash_charges {
+            let output_sequence = u32::try_from(records.len() + 1)
+                .map_err(|_| StrategyOutputEncodingError::OutputSequenceOverflow)?;
+            records.push(StrategyOutputRecord::ControlCashCharge {
+                control_sequence,
+                control_time,
+                output_sequence,
+                amount: charge.amount,
+                category: charge.category,
+                reference: charge.reference,
+            });
+        }
+        Ok(records)
     }
 }
 
@@ -365,12 +510,20 @@ impl StrategyOutput {
 
     #[must_use]
     pub fn canonical_version(&self) -> u16 {
-        if self
+        if self.records.iter().any(|record| {
+            matches!(
+                record,
+                StrategyOutputRecord::EventCashCharge { .. }
+                    | StrategyOutputRecord::ControlCashCharge { .. }
+            )
+        }) {
+            CANONICAL_STRATEGY_OUTPUT_VERSION
+        } else if self
             .records
             .iter()
             .any(|record| matches!(record, StrategyOutputRecord::ControlIndicator { .. }))
         {
-            CANONICAL_STRATEGY_OUTPUT_VERSION
+            2
         } else {
             LEGACY_CANONICAL_STRATEGY_OUTPUT_VERSION
         }
@@ -395,6 +548,8 @@ impl StrategyOutputChecksum {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StrategyOutputEncodingError {
     EmptyIndicatorName,
+    InvalidCashCharge,
+    CashChargeCapabilityUnavailable,
     OutputSequenceOverflow,
     RecordCountOverflow,
     Canonical(CanonicalEncodingError),
@@ -404,6 +559,12 @@ impl fmt::Display for StrategyOutputEncodingError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyIndicatorName => formatter.write_str("indicator name must not be empty"),
+            Self::InvalidCashCharge => {
+                formatter.write_str("cash charge must be nonnegative and have nonempty identifiers")
+            }
+            Self::CashChargeCapabilityUnavailable => {
+                formatter.write_str("cash charge capability is unavailable")
+            }
             Self::OutputSequenceOverflow => {
                 formatter.write_str("callback output sequence exceeds u32")
             }
@@ -419,9 +580,11 @@ impl Error for StrategyOutputEncodingError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Canonical(error) => Some(error),
-            Self::EmptyIndicatorName | Self::OutputSequenceOverflow | Self::RecordCountOverflow => {
-                None
-            }
+            Self::EmptyIndicatorName
+            | Self::InvalidCashCharge
+            | Self::CashChargeCapabilityUnavailable
+            | Self::OutputSequenceOverflow
+            | Self::RecordCountOverflow => None,
         }
     }
 }
@@ -471,10 +634,7 @@ mod tests {
                 .unwrap(),
         );
 
-        assert_eq!(
-            output.canonical_version(),
-            CANONICAL_STRATEGY_OUTPUT_VERSION
-        );
+        assert_eq!(output.canonical_version(), 2);
         assert_eq!(&output.to_canonical_bytes().unwrap()[4..6], &[0, 2]);
         assert!(matches!(
             output.records(),
@@ -483,6 +643,46 @@ mod tests {
                 control_time,
                 ..
             }] if *control_time == MatchTime::from_unix_microseconds(123)
+        ));
+    }
+
+    #[test]
+    fn cash_charge_is_capability_gated_validated_and_canonical() {
+        assert!(CashChargeRequest::new(Decimal::ZERO, " ", "lot-1").is_err());
+        let request =
+            CashChargeRequest::new(Decimal::parse("12.5").unwrap(), "borrow_fee", "lot-1").unwrap();
+        assert!(
+            StrategyOutputSink::new()
+                .emit_cash_charge(request.clone())
+                .is_err()
+        );
+
+        let mut sink = StrategyOutputSink::with_scheduled_orders();
+        sink.emit_cash_charge(request).unwrap();
+        let mut output = output();
+        output.extend(
+            sink.into_control_records(7, MatchTime::from_unix_microseconds(456))
+                .unwrap(),
+        );
+
+        assert_eq!(
+            output.canonical_version(),
+            CANONICAL_STRATEGY_OUTPUT_VERSION
+        );
+        assert_eq!(&output.to_canonical_bytes().unwrap()[4..6], &[0, 3]);
+        assert!(matches!(
+            output.records(),
+            [StrategyOutputRecord::ControlCashCharge {
+                control_sequence: 7,
+                control_time,
+                amount,
+                category,
+                reference,
+                ..
+            }] if *control_time == MatchTime::from_unix_microseconds(456)
+                && *amount == Decimal::parse("12.5").unwrap()
+                && category.as_ref() == "borrow_fee"
+                && reference.as_ref() == "lot-1"
         ));
     }
 }
