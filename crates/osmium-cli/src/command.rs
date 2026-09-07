@@ -34,6 +34,46 @@ use twse_normalizer::NormalizerConfig as TwseNormalizerConfig;
 
 use crate::ExitCategory;
 
+/// Adds externally compiled strategies to the registry used for a config file.
+///
+/// The CLI always installs its built-in strategies first. Implementations may inspect the
+/// config path (for example through [`osmium_config::strategy_bootstrap`]) before registering
+/// additional factories. Returning an error aborts config loading; it is never treated as an
+/// empty registry.
+pub trait StrategyRegistryProvider {
+    fn register_strategies(
+        &self,
+        config_path: &Path,
+        registry: &mut StrategyRegistry,
+    ) -> Result<(), CommandError>;
+}
+
+impl<F> StrategyRegistryProvider for F
+where
+    F: Fn(&Path, &mut StrategyRegistry) -> Result<(), CommandError>,
+{
+    fn register_strategies(
+        &self,
+        config_path: &Path,
+        registry: &mut StrategyRegistry,
+    ) -> Result<(), CommandError> {
+        self(config_path, registry)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BuiltInStrategyRegistry;
+
+impl StrategyRegistryProvider for BuiltInStrategyRegistry {
+    fn register_strategies(
+        &self,
+        _config_path: &Path,
+        _registry: &mut StrategyRegistry,
+    ) -> Result<(), CommandError> {
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandKind {
     ConfigCheck,
@@ -70,26 +110,43 @@ pub struct Command {
 }
 
 pub fn execute(command: &Command) -> Result<String, CommandError> {
+    execute_with_registry_provider(command, &BuiltInStrategyRegistry)
+}
+
+pub fn execute_with_registry_provider(
+    command: &Command,
+    provider: &dyn StrategyRegistryProvider,
+) -> Result<String, CommandError> {
     match command.kind {
-        CommandKind::ConfigCheck => execute_config_check(&command.config),
-        CommandKind::Plan => execute_plan(&command.config),
-        CommandKind::DataSync => execute_sync(&command.config),
-        CommandKind::DataVerify => execute_verify(&command.config),
-        CommandKind::CachePrepare => prepare_cache(&command.config),
-        CommandKind::Replay => execute_replay(&command.config),
+        CommandKind::ConfigCheck => {
+            execute_config_check_with_registry_provider(&command.config, provider)
+        }
+        CommandKind::Plan => execute_plan(&command.config, provider),
+        CommandKind::DataSync => execute_sync(&command.config, provider),
+        CommandKind::DataVerify => execute_verify(&command.config, provider),
+        CommandKind::CachePrepare => prepare_cache(&command.config, provider),
+        CommandKind::Replay => execute_replay(&command.config, provider),
         CommandKind::Backtest => execute_backtest(
             &command.config,
             command
                 .output
                 .as_deref()
                 .ok_or(CommandError::OutputRequired)?,
+            provider,
         ),
-        CommandKind::Run => execute_run(&command.config, command.output.as_deref()),
+        CommandKind::Run => execute_run(&command.config, command.output.as_deref(), provider),
     }
 }
 
 pub fn execute_config_check(path: &Path) -> Result<String, CommandError> {
-    let config = load_config(path)?;
+    execute_config_check_with_registry_provider(path, &BuiltInStrategyRegistry)
+}
+
+pub fn execute_config_check_with_registry_provider(
+    path: &Path,
+    provider: &dyn StrategyRegistryProvider,
+) -> Result<String, CommandError> {
+    let config = load_config_with_registry_provider(path, provider)?;
     Ok(format!(
         "config=valid\nconfig_version={}\ntrading_dates={}\ninstruments={}",
         RUN_CONFIG_VERSION,
@@ -106,8 +163,11 @@ pub fn execute_inspect(path: &Path) -> Result<String, CommandError> {
     ))
 }
 
-fn execute_plan(path: &Path) -> Result<String, CommandError> {
-    let config = load_config(path)?;
+fn execute_plan(
+    path: &Path,
+    provider: &dyn StrategyRegistryProvider,
+) -> Result<String, CommandError> {
+    let config = load_config_with_registry_provider(path, provider)?;
     let bundle = plan(&config)?;
     let mut output = format!(
         "plan_identity={}\nnetwork_requirement={:?}\npartitions={}",
@@ -145,7 +205,15 @@ pub(crate) fn compiled_strategy_registry() -> Result<StrategyRegistry, CommandEr
 }
 
 pub(crate) fn load_config(path: &Path) -> Result<RunConfig, CommandError> {
-    let registry = compiled_strategy_registry()?;
+    load_config_with_registry_provider(path, &BuiltInStrategyRegistry)
+}
+
+pub fn load_config_with_registry_provider(
+    path: &Path,
+    provider: &dyn StrategyRegistryProvider,
+) -> Result<RunConfig, CommandError> {
+    let mut registry = compiled_strategy_registry()?;
+    provider.register_strategies(path, &mut registry)?;
     Ok(osmium_config::load(path, &registry)?)
 }
 
@@ -261,8 +329,11 @@ fn load_dotenv() {
     }
 }
 
-fn execute_sync(path: &Path) -> Result<String, CommandError> {
-    let config = load_config(path)?;
+fn execute_sync(
+    path: &Path,
+    provider: &dyn StrategyRegistryProvider,
+) -> Result<String, CommandError> {
+    let config = load_config_with_registry_provider(path, provider)?;
     let bundle = plan(&config)?;
     let needs_network = bundle.execution.partitions().iter().any(|partition| {
         !matches!(
@@ -337,8 +408,11 @@ fn execute_sync(path: &Path) -> Result<String, CommandError> {
     Ok(output.trim_end().to_owned())
 }
 
-fn execute_verify(path: &Path) -> Result<String, CommandError> {
-    let config = load_config(path)?;
+fn execute_verify(
+    path: &Path,
+    provider: &dyn StrategyRegistryProvider,
+) -> Result<String, CommandError> {
+    let config = load_config_with_registry_provider(path, provider)?;
     let mut output = String::from("source=verified\n");
     for key in config.partition_keys()? {
         let repository =
@@ -356,8 +430,11 @@ fn execute_verify(path: &Path) -> Result<String, CommandError> {
     Ok(output.trim_end().to_owned())
 }
 
-fn prepare_cache(path: &Path) -> Result<String, CommandError> {
-    let config = load_config(path)?;
+fn prepare_cache(
+    path: &Path,
+    provider: &dyn StrategyRegistryProvider,
+) -> Result<String, CommandError> {
+    let config = load_config_with_registry_provider(path, provider)?;
     let bundle = plan(&config)?;
     let builder = CacheBuilder::new(config.effective().data_root());
     let mut output = String::from("cache=partitions\n");
@@ -392,8 +469,11 @@ fn prepare_cache(path: &Path) -> Result<String, CommandError> {
     Ok(output.trim_end().to_owned())
 }
 
-fn execute_replay(path: &Path) -> Result<String, CommandError> {
-    let completed = replay(path)?;
+fn execute_replay(
+    path: &Path,
+    provider: &dyn StrategyRegistryProvider,
+) -> Result<String, CommandError> {
+    let completed = replay(path, provider)?;
     Ok(format!(
         "replay=complete\nevents={}\nevent_checksum={}\nfinal_state_checksum={}",
         completed.summary().event_count(),
@@ -402,8 +482,11 @@ fn execute_replay(path: &Path) -> Result<String, CommandError> {
     ))
 }
 
-fn replay(path: &Path) -> Result<replay_engine::CompletedReplay, CommandError> {
-    let config = load_config(path)?;
+fn replay(
+    path: &Path,
+    provider: &dyn StrategyRegistryProvider,
+) -> Result<replay_engine::CompletedReplay, CommandError> {
+    let config = load_config_with_registry_provider(path, provider)?;
     let bundle = plan(&config)?;
     let replay = bundle.replay.as_ref().ok_or(CommandError::CacheMissing)?;
     let mut core = replay_core(&config, &bundle)?;
@@ -498,8 +581,12 @@ fn schedule(config: &RunConfig) -> Result<osmium_runner::MultiSessionSchedule, C
     Ok(osmium_runner::MultiSessionSchedule::new(entries)?)
 }
 
-fn execute_backtest(path: &Path, output: &Path) -> Result<String, CommandError> {
-    let mut config = load_config(path)?;
+fn execute_backtest(
+    path: &Path,
+    output: &Path,
+    provider: &dyn StrategyRegistryProvider,
+) -> Result<String, CommandError> {
+    let mut config = load_config_with_registry_provider(path, provider)?;
     let strategy_metadata = config.strategy_metadata().clone();
     let bundle = plan(&config)?;
     let replay = bundle.replay.as_ref().ok_or(CommandError::CacheMissing)?;
@@ -696,16 +783,20 @@ fn backtest_summary(
     )
 }
 
-fn execute_run(path: &Path, output: Option<&Path>) -> Result<String, CommandError> {
-    let config = load_config(path)?;
+fn execute_run(
+    path: &Path,
+    output: Option<&Path>,
+    provider: &dyn StrategyRegistryProvider,
+) -> Result<String, CommandError> {
+    let config = load_config_with_registry_provider(path, provider)?;
     let bundle = plan(&config)?;
     if bundle.execution.network_requirement() == NetworkRequirement::Required {
-        execute_sync(path)?;
+        execute_sync(path, provider)?;
     }
-    prepare_cache(path)?;
+    prepare_cache(path, provider)?;
     match output {
-        Some(output) => execute_backtest(path, output),
-        None => execute_replay(path),
+        Some(output) => execute_backtest(path, output, provider),
+        None => execute_replay(path, provider),
     }
 }
 
@@ -857,6 +948,7 @@ impl Error for CommandError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     #[test]
     fn command_exit_codes_preserve_stable_failure_categories() {
@@ -885,5 +977,33 @@ mod tests {
         assert!(summary.contains("partitions=1"));
         assert!(summary.contains("2330"));
         assert!(summary.contains("Regular"));
+    }
+
+    #[test]
+    fn external_registry_provider_is_invoked_for_config_loading() {
+        let invoked = AtomicBool::new(false);
+        let provider = |_: &Path, _: &mut StrategyRegistry| {
+            invoked.store(true, Ordering::SeqCst);
+            Ok(())
+        };
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/config.yaml");
+
+        execute_config_check_with_registry_provider(&path, &provider).unwrap();
+
+        assert!(invoked.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn external_registry_provider_failure_is_a_config_failure() {
+        let provider = |_: &Path, _: &mut StrategyRegistry| {
+            Err(CommandError::Config(osmium_config::ConfigError::Invalid(
+                "external strategy registry",
+            )))
+        };
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/config.yaml");
+
+        let error = execute_config_check_with_registry_provider(&path, &provider).unwrap_err();
+
+        assert_eq!(error.category(), ExitCategory::Config);
     }
 }

@@ -3,6 +3,7 @@ use std::{
     ffi::OsString,
     fmt, fs,
     path::{Path, PathBuf},
+    process::ExitCode,
 };
 
 use serde_json::{Map, Value, json};
@@ -75,7 +76,9 @@ mod command;
 mod market_replay;
 mod market_replay_ui;
 pub use command::{
-    Command, CommandError, CommandKind, execute, execute_config_check, execute_inspect,
+    BuiltInStrategyRegistry, Command, CommandError, CommandKind, StrategyRegistryProvider, execute,
+    execute_config_check, execute_config_check_with_registry_provider, execute_inspect,
+    execute_with_registry_provider, load_config_with_registry_provider,
 };
 pub use market_replay::{
     MarketReplay, MarketReplayError, PLAYBACK_SPEEDS_MILLI, PlaybackSpeed, PlaybackStatus,
@@ -104,6 +107,115 @@ Non-interactive output options:
 config_version 2 is required. Legacy config_version 1 is not supported. Output directories
 must not already exist.
 ";
+
+/// Runs the complete Osmium CLI with additional compiled strategy factories.
+///
+/// Parsing, dispatch, output formatting, TUI commands and exit categories remain owned by this
+/// crate. External binaries only provide strategy registration and their argument iterator.
+pub fn run_with_registry_provider(
+    args: impl IntoIterator<Item = OsString>,
+    provider: &dyn StrategyRegistryProvider,
+) -> ExitCode {
+    match parse_args(args) {
+        Ok(ParsedInvocation {
+            command: ParsedCommand::Help,
+            ..
+        }) => {
+            print!("{USAGE}");
+            ExitCode::SUCCESS
+        }
+        Ok(ParsedInvocation {
+            command: ParsedCommand::Version,
+            output,
+        }) => {
+            let summary = format!(
+                "osmium {}\ncli_contract={}\nconfig_schema={}\nrun_manifest={}\nevent_schema={}\ncache_format={}\naccounting={}",
+                env!("CARGO_PKG_VERSION"),
+                CLI_CONTRACT_VERSION,
+                osmium_config::RUN_CONFIG_VERSION,
+                osmium_runner::RUN_MANIFEST_VERSION,
+                market_types::EVENT_SCHEMA_VERSION,
+                data_sync::CACHE_FORMAT_VERSION,
+                execution_sim::ACCOUNTING_VERSION
+            );
+            emit_success("version", output, &summary)
+        }
+        Ok(ParsedInvocation {
+            command: ParsedCommand::Init(path),
+            output,
+        }) => match init_config(&path) {
+            Ok(()) => emit_success("init", output, &format!("config={}", path.display())),
+            Err(error) => emit_error("init", output, &error.to_string(), error.category()),
+        },
+        Ok(ParsedInvocation {
+            command: ParsedCommand::ConfigCheck(path),
+            output,
+        }) => match execute_config_check_with_registry_provider(&path, provider) {
+            Ok(summary) => emit_success("config check", output, &summary),
+            Err(error) => emit_error("config check", output, &error.to_string(), error.category()),
+        },
+        Ok(ParsedInvocation {
+            command: ParsedCommand::MarketReplay(command),
+            output,
+        }) => match execute_market_replay(&command) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => emit_error("display", output, &error.to_string(), error.category()),
+        },
+        Ok(ParsedInvocation {
+            command: ParsedCommand::Command(command),
+            output,
+        }) => {
+            let name = command.kind.name();
+            match execute_with_registry_provider(&command, provider) {
+                Ok(summary) => emit_success(name, output, &summary),
+                Err(error) => emit_error(name, output, &error.to_string(), error.category()),
+            }
+        }
+        Ok(ParsedInvocation {
+            command: ParsedCommand::Inspect(run),
+            output,
+        }) => match execute_inspect(&run) {
+            Ok(summary) => emit_success("inspect", output, &summary),
+            Err(error) => emit_error("inspect", output, &error.to_string(), error.category()),
+        },
+        Err(error) => {
+            eprintln!("error: {error}");
+            if error.is_usage_error() {
+                eprintln!();
+                eprint!("{USAGE}");
+            }
+            ExitCode::from(error.exit_code())
+        }
+    }
+}
+
+pub fn run(args: impl IntoIterator<Item = OsString>) -> ExitCode {
+    run_with_registry_provider(args, &BuiltInStrategyRegistry)
+}
+
+fn emit_success(command: &str, output: OutputOptions, summary: &str) -> ExitCode {
+    if output.quiet {
+        return ExitCode::SUCCESS;
+    }
+    match output.format {
+        OutputFormat::Human => println!("{summary}"),
+        OutputFormat::Json => println!("{}", format_success_json(command, summary)),
+    }
+    ExitCode::SUCCESS
+}
+
+fn emit_error(
+    command: &str,
+    output: OutputOptions,
+    message: &str,
+    category: ExitCategory,
+) -> ExitCode {
+    match output.format {
+        OutputFormat::Human => eprintln!("error: {message}"),
+        OutputFormat::Json => eprintln!("{}", format_error_json(command, category, message)),
+    }
+    ExitCode::from(category.exit_code())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParsedCommand {
