@@ -573,7 +573,11 @@ impl TwseNormalizer {
         match (opening, closing) {
             (true, false) => Ok(Some(AuctionPhase::Opening)),
             (false, true) => Ok(Some(AuctionPhase::Closing)),
-            (false, false) | (true, true) => Err(NormalizationError::new(
+            // TWSE can carry an in-session volatility trial without an
+            // opening/closing marker. Preserve it as an annotated quote; a
+            // consumer can correlate it with the explicit instant-trend pulse.
+            (false, false) => Ok(None),
+            (true, true) => Err(NormalizationError::new(
                 record.record_number,
                 record.context.clone(),
                 NormalizationErrorKind::InvalidPayload(

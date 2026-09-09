@@ -40,7 +40,7 @@ QuoteSnapshot(
 
 realtime intermediate/final group 分別產生 `TradeBatch` 與 `QuoteSnapshot`，並驗證 final cumulative volume。group 不完整時 strict reject，不從 book 差分、page order 或 `received_at` 推定成交。
 
-trial record 只有在 marker 與 session window 能唯一分類時才產生 `IndicativeOpeningAuction`／`IndicativeClosingAuction`。無法唯一分類的 in-session trial 保持普通 quote observation，不猜測 auction phase。
+trial record 只有在 marker 與 session window 能唯一分類時才產生 `IndicativeOpeningAuction`／`IndicativeClosingAuction`。無法唯一分類的 in-session trial 保持普通 quote observation，不猜測 auction phase。`EquityIndicativeObservation` 對兩種 payload 提供一致的只讀試算價、量與五檔 view，且不延續或改寫來源的 instant-trend bits。
 
 ## 4. Reject／skip policy
 

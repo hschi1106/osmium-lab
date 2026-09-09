@@ -122,6 +122,29 @@ fn trial_quotes_become_opening_and_closing_auction_events() {
 }
 
 #[test]
+fn intraday_unmarked_trial_is_preserved_as_an_annotated_quote() {
+    let (bids, asks) = complete_book();
+    let trial = quote(
+        "STOCK_SNAPSHOT",
+        "2026-07-27T09:04:43+08:00",
+        false,
+        (bids, asks),
+        r#"{"price":100,"quantity":2}"#,
+        10,
+        (128, 0),
+    );
+    let report = normalizer().normalize_json_lines([trial]).unwrap();
+    let EventPayload::QuoteSnapshot(snapshot) = report.events()[0].payload() else {
+        panic!("expected an unclassified trial quote")
+    };
+    let market_types::MarketAnnotations::TwseQuote(annotations) = snapshot.annotations() else {
+        panic!("expected TWSE annotations")
+    };
+    assert!(annotations.status().trial());
+    assert_eq!(snapshot.trade().as_set().unwrap().quantity().value(), 2);
+}
+
+#[test]
 fn realtime_pair_is_grouped_by_match_time_and_emits_trade_then_quote() {
     let (bids, asks) = complete_book();
     let match_time = "2026-07-27T09:28:49.274622+08:00";

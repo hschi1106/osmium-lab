@@ -14,9 +14,10 @@ pub use acceptance::{
     AcceptanceStrategyFactory,
 };
 pub use context::{
-    ContextError, IndicativeReason, MarketTradingContextEvaluator, MatchingState, NewOrderEntry,
-    OrderBlockReason, OrderRestrictionReason, SessionCallbackContext, SessionKind, SessionPhase,
-    SessionSegment, TpexTradingContextEvaluator, TradingContext, TwseTradingContextEvaluator,
+    ContextError, EquityIndicativeObservation, IndicativeReason, MarketTradingContextEvaluator,
+    MatchingState, NewOrderEntry, OrderBlockReason, OrderRestrictionReason, SessionCallbackContext,
+    SessionKind, SessionPhase, SessionSegment, TpexTradingContextEvaluator, TradingContext,
+    TwseTradingContextEvaluator,
 };
 pub use example::{EXAMPLE_STRATEGY_ID, EXAMPLE_STRATEGY_VERSION, ExampleStrategy};
 pub use identity::{

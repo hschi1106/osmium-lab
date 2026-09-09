@@ -45,7 +45,7 @@ QuoteSnapshot(
 
 `deal` 缺少或使用來源定義的 zero sentinel 時保留為 `NoObservation`，不建立零數量成交。status／limit flags 以 typed TWSE annotations 保存；normalizer 不產生獨立 status event。
 
-來源明確標示的 opening／closing trial record 產生 `IndicativeOpeningAuction` 或 `IndicativeClosingAuction`。它們可以更新試算 state 與觸發 callback，但不是 actual trade 或 fill evidence。
+來源明確標示的 opening／closing trial record 產生 `IndicativeOpeningAuction` 或 `IndicativeClosingAuction`。它們可以更新試算 state 與觸發 callback，但不是 actual trade 或 fill evidence。盤中沒有 opening／closing marker 的 trial 保留為帶 annotations 的 `QuoteSnapshot`，不依時間猜測 auction phase；strategy 可透過 `EquityIndicativeObservation` 取得其試算價、量與完整五檔，並自行把來源明確提供的 `VolatilityInterruptionUp/Down` 啟動訊號與後續 trial 串成策略狀態。
 
 ## 4. Intermediate／final group
 

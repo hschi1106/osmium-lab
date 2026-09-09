@@ -2,8 +2,9 @@ use std::{error::Error, fmt};
 
 use market_state::{MarketStateView, SessionSegmentId, StateField};
 use market_types::{
-    DomainEvent, EventPayload, InstantTrend, LimitPosition, MarketAnnotations, MarketId, MatchTime,
-    MatchingMethod, TpexQuoteAnnotations, TradingDate,
+    CompleteBookSnapshot, DomainEvent, EventPayload, IndicativeAuction, InstantTrend,
+    LimitPosition, MarketAnnotations, MarketId, MatchTime, MatchingMethod, Price, Quantity,
+    QuoteSnapshot, TpexQuoteAnnotations, TradingDate,
 };
 use replay_engine::EventOccurrence;
 
@@ -171,6 +172,78 @@ pub enum MatchingState {
     Unknown,
 }
 
+/// A normalized borrowed view over an equity call-auction observation.
+///
+/// Some feeds carry an in-session trial as a quote snapshot instead of an
+/// opening/closing auction payload. This view lets strategies consume the
+/// observable price, quantity, and book without guessing an opening or closing
+/// phase from the event payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EquityIndicativeObservation<'a> {
+    Opening(&'a IndicativeAuction),
+    Closing(&'a IndicativeAuction),
+    Unclassified(&'a QuoteSnapshot),
+}
+
+impl<'a> EquityIndicativeObservation<'a> {
+    #[must_use]
+    pub fn from_event(event: &'a DomainEvent) -> Option<Self> {
+        if !matches!(event.instrument().market(), MarketId::Twse | MarketId::Tpex) {
+            return None;
+        }
+        match event.payload() {
+            EventPayload::IndicativeOpeningAuction(auction) => Some(Self::Opening(auction)),
+            EventPayload::IndicativeClosingAuction(auction) => Some(Self::Closing(auction)),
+            EventPayload::QuoteSnapshot(snapshot)
+                if annotations_are_trial(snapshot.annotations()) =>
+            {
+                Some(Self::Unclassified(snapshot))
+            }
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn price(self) -> Option<Price> {
+        match self {
+            Self::Opening(auction) | Self::Closing(auction) => auction.price().as_set().copied(),
+            Self::Unclassified(snapshot) => snapshot.trade().as_set().map(|trade| trade.price()),
+        }
+    }
+
+    #[must_use]
+    pub fn quantity(self) -> Option<Quantity> {
+        match self {
+            Self::Opening(auction) | Self::Closing(auction) => auction.quantity().as_set().copied(),
+            Self::Unclassified(snapshot) => snapshot.trade().as_set().map(|trade| trade.quantity()),
+        }
+    }
+
+    #[must_use]
+    pub fn book(self) -> Option<&'a CompleteBookSnapshot> {
+        match self {
+            Self::Opening(auction) | Self::Closing(auction) => auction.book().as_set(),
+            Self::Unclassified(snapshot) => Some(snapshot.book()),
+        }
+    }
+
+    #[must_use]
+    pub const fn annotations(self) -> &'a MarketAnnotations {
+        match self {
+            Self::Opening(auction) | Self::Closing(auction) => auction.annotations(),
+            Self::Unclassified(snapshot) => snapshot.annotations(),
+        }
+    }
+}
+
+fn annotations_are_trial(annotations: &MarketAnnotations) -> bool {
+    match annotations {
+        MarketAnnotations::TwseQuote(value) => value.status().trial(),
+        MarketAnnotations::TpexQuote(value) => value.status().trial(),
+        MarketAnnotations::None => false,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TradingContext {
     event_fingerprint: [u8; 32],
@@ -299,8 +372,7 @@ impl TwseTradingContextEvaluator {
                         IndicativeReason::DelayedClose
                     } else if phase == SessionPhase::WarmUp {
                         IndicativeReason::PreOpenTrial
-                    } else if phase == SessionPhase::Active && event.match_time() < segment.close()
-                    {
+                    } else if in_closing_trial_window(event.match_time(), phase, segment) {
                         IndicativeReason::PreCloseTrial
                     } else {
                         IndicativeReason::UnclassifiedTrial
@@ -441,7 +513,7 @@ fn evaluate_annotated_matching(
                 IndicativeReason::DelayedClose
             } else if phase == SessionPhase::WarmUp {
                 IndicativeReason::PreOpenTrial
-            } else if phase == SessionPhase::Active && event.match_time() < segment.close() {
+            } else if in_closing_trial_window(event.match_time(), phase, segment) {
                 IndicativeReason::PreCloseTrial
             } else {
                 IndicativeReason::UnclassifiedTrial
@@ -451,6 +523,21 @@ fn evaluate_annotated_matching(
         InstantTrend::Normal => MatchingState::Enabled(status.matching_method()),
         InstantTrend::Reserved => unreachable!("reserved trend handled above"),
     }
+}
+
+fn in_closing_trial_window(
+    match_time: MatchTime,
+    phase: SessionPhase,
+    segment: &SessionSegment,
+) -> bool {
+    let start = segment
+        .close()
+        .as_unix_microseconds()
+        .checked_sub(WARM_UP_MICROSECONDS)
+        .expect("validated session close supports the five-minute trial window");
+    phase == SessionPhase::Active
+        && match_time.as_unix_microseconds() >= start
+        && match_time < segment.close()
 }
 
 /// Evaluates the market-specific trading rules used by a multi-market run.
@@ -603,7 +690,7 @@ mod tests {
     use market_types::{
         BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, InstrumentId, MarketAnnotations,
         Observation, Price, Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol,
-        TpexQuoteAnnotations,
+        TpexQuoteAnnotations, TradePrint, TradePrintKind,
     };
 
     use super::*;
@@ -633,7 +720,11 @@ mod tests {
             EventPayload::QuoteSnapshot(
                 QuoteSnapshot::new(
                     book,
-                    Observation::NoObservation,
+                    Observation::Set(TradePrint::new(
+                        Price::parse("100").unwrap(),
+                        quantity,
+                        TradePrintKind::Regular,
+                    )),
                     Observation::NoObservation,
                     MarketAnnotations::TpexQuote(annotations),
                 )
@@ -691,5 +782,26 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[test]
+    fn intraday_trial_is_unclassified_and_exposed_as_an_indicative_observation() {
+        let segment = segment();
+        let (event, annotations) = tpex_event("2026-06-23T09:04:43+08:00", 0x80);
+        assert_eq!(
+            evaluate_annotated_matching(&event, SessionPhase::Active, &segment, annotations),
+            MatchingState::Indicative(IndicativeReason::UnclassifiedTrial)
+        );
+        let observation = EquityIndicativeObservation::from_event(&event).unwrap();
+        assert!(matches!(
+            observation,
+            EquityIndicativeObservation::Unclassified(_)
+        ));
+        assert_eq!(
+            observation.price().unwrap().atoms(),
+            100_000_000_000_000_000_000
+        );
+        assert_eq!(observation.quantity().unwrap().value(), 1);
+        assert!(observation.book().is_some());
     }
 }
