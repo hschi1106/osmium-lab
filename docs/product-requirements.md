@@ -2,7 +2,7 @@
 
 ## 1. 產品定位
 
-`osmium-lab` 是以 Rust 建立、使用 Teralion 歷史行情的台灣市場回播與回測平台。系統依 `match_time` 重播可觀察的成交與行情快照，讓策略在沒有未來資料的前提下執行，並以明確、可版本化的模型估算成交與帳務結果。
+`osmium-lab` 是以 Rust 建立、可接入不同歷史行情供應商的台灣市場回播與回測平台。目前內建 Teralion Feed Archive adapter，但 planner、domain event、cache codec、replay、strategy、simulation 與通用驗收契約不得依賴 Teralion wire schema。系統依 `match_time` 重播可觀察的成交與行情快照，讓策略在沒有未來資料的前提下執行，並以明確、可版本化的模型估算成交與帳務結果。
 
 產品原則依序為：
 
@@ -32,16 +32,17 @@
 
 ## 3. 資料能力與限制
 
-Teralion tick 是回播能力的上限：
+每個 source adapter 能證明的原始資料是該次回播能力的上限。目前 Teralion adapter 的能力為：
 
 - TWSE／TPEx quote 可提供完整最佳五檔、可選成交、累計量與來源 flags。
 - TAIFEX tick 可提供成交批次、完整五檔與非時間軸的 close／stats 記錄。
 - 同一商品可能有多種 `format`，每種格式由明確的 normalizer 處理。
 - 商品 metadata 可能缺少 multiplier、underlying 或其他欄位；缺值不得自行推定。
+- 每個執行 universe 的 instrument class 必須由設定明確指定；TAIFEX futures 另須明確指定 contract shape 與 session profile，不依 symbol 推定。contract identity 必須進入 effective config checksum。
 - `received_at` 是擷取時間，只用於 archive query 與診斷；`match_time` 是唯一回播時間。
 - 沒有有效 `match_time` 的記錄不得插入事件時間軸。
 
-Teralion wire payload 與 domain event 必須分離。未知或不支援的格式需明確拒絕或以設定允許的 degraded 模式略過，並保留可追溯警告。
+任何 provider wire payload 與 domain event 都必須分離。未知或不支援的格式需明確拒絕或以設定允許的 degraded 模式略過，並保留可追溯警告。Provider-specific flags、format 名稱與 credential 不得洩漏到 strategy 或通用 replay contract。
 
 ## 4. 使用流程
 
@@ -62,7 +63,8 @@ RunConfig
 
 ### DATA-01 資料取得
 
-- 支援 Teralion coverage、symbol range、ticks、daily instrument 與 opaque cursor pagination。
+- source 由設定中的 stable source identity 選擇 adapter；planner、partition identity 與本地目錄不得自行假設特定供應商。
+- 目前內建 Teralion adapter 支援 coverage、symbol range、ticks、daily instrument 與 opaque cursor pagination；這些 endpoint 與 credential 行為只屬於該 adapter。
 - 所有 cursor pages 必須完整取得；HTTP、schema、cursor 或儲存錯誤不得被視為合法空頁。
 - 只有已結束交易日可發布為可重用 source partition。
 - credential 只存在於 online sync context，不得寫入 source、cache、log 或 run artifacts。
@@ -100,7 +102,9 @@ domain event 集合為：
 - `QuoteSnapshot`：完整五檔，以及同一 source observation 的成交、累計量與 annotations。
 - `BookSnapshot`：完整五檔與 annotations。
 - `TradeBatch`：同一 source observation 的一筆或多筆成交與可用累計量。
-- `IndicativeOpeningAuction`、`IndicativeClosingAuction`：試算資訊，不是實際成交。
+- `MarketStatus`：只有累計量與 typed annotations 的狀態 observation；不宣稱提供正式成交或完整 firm book。
+- `IndicativeAuction`：以 `Opening`、`Closing`、`IntradayStability(direction)` 或
+  `IntradayUnclassified` 分類的試算資訊，不是實際成交。
 
 每個 event 包含 instrument、trading date、source format、`match_time`、可選 source sequence 與 payload。同一 source observation 的不可分割內容以單一 event 原子處理。
 
@@ -110,7 +114,9 @@ domain event 集合為：
 
 ### REPLAY-03 市場狀態
 
-每個商品的 `MarketState` 保存目前完整五檔、最近成交、累計量、annotations、最後 `match_time` 與 state version。新的完整 snapshot 取代舊 snapshot；系統不重建逐筆委託或 queue。
+每個商品的 `MarketState` 分開保存 firm 完整五檔、最近成交、累計量，以及最新
+indicative auction observation、annotations、最後 `match_time` 與 state version。新的完整
+firm snapshot 取代舊 firm snapshot；`MarketStatus` 只更新其實際攜帶的狀態與累計量，不清空既有 firm book／trade；indicative observation 不得覆寫 firm state。系統不重建逐筆委託或 queue。
 
 ### REPLAY-04 處理順序
 
@@ -199,7 +205,8 @@ credential 不得進入設定、資料 artifact、log 或版本控制。source i
 | 需求面 | 主要證據 |
 | --- | --- |
 | 資料同步 | cursor、resume、atomic publish、checksum 與 second-run reuse tests |
-| 來源正規化 | TWSE／TPEx／TAIFEX fixture tests 與 unknown-format negative tests |
+| 通用來源契約 | provider-neutral partition integrity、cache lineage／schema 與 lifecycle contract tests |
+| Adapter conformance | 各 provider 自有 wire fixtures／真實外部 partitions、mapping 與 unknown-format negative tests；不得取代通用 gate |
 | 回播 | shuffled-input ordering、multi-stream merge、state reducer 與 checksum tests |
 | 策略 | read-only compile tests、no-look-ahead、callback transaction 與 registry tests |
 | 模擬帳務 | market／limit、scheduled depth、latency、fee／tax、P&L 與 reconciliation tests |

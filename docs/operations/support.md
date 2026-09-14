@@ -3,7 +3,7 @@
 ## 支援範圍
 
 - target-specific binary archive 與 installer。
-- `config_version: 2` RunConfig。
+- `config_version: 3` RunConfig。
 - 文件列出的 Teralion source sync、verify、cache、offline replay/backtest、TUI 與 inspect workflow。
 - repository-owned synthetic fixtures 與另行授權的外部資料驗證流程。
 

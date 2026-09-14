@@ -1,12 +1,16 @@
 # 本地資料
 
 `data.data_root` 是使用者管理的資料目錄。repository fixture 不會自動複製到這個位置。
+partition layout version 2 以可逆的 UTF-8 byte percent encoding 映射 symbol path；非
+ASCII alphanumeric、`-`、`_` 的 bytes 轉成 `%hh`，長 component 會拆成固定長度的巢狀目錄。
+manifest 保存原始 symbol，path encoding 不參與 instrument identity。含 `/` 的 calendar-spread
+symbol 因此可以安全存取。
 
 ## 1. 目錄結構
 
 ```text
 <data_root>/
-  source/teralion/<market>/<date>/<symbol>/
+  source/<source>/<market>/<date>/<symbol>/
     partition.yaml
     current.yaml
     revisions/<revision-id>/
@@ -16,12 +20,14 @@
       instrument/daily.yaml
     staging/<attempt-id>/
       checkpoint.json
-  cache/replay/teralion/<market>/<date>/<symbol>/<cache-id>/
+  cache/replay/<source>/<market>/<date>/<symbol>/<cache-id>/
     descriptor.yaml
     events.bin
 ```
 
-實際 identity 同時包含 source、session plan 與版本；上圖只顯示可讀路徑層級。run output 由 `--output` 指定，不一定位於 `data_root`。
+`<source>` 是 adapter 提供的 stable storage namespace；目前內建 Teralion adapter 使用
+`teralion`。實際 identity 同時包含 source、session plan 與版本；上圖只顯示可讀路徑層級。
+run output 由 `--output` 指定，不一定位於 `data_root`。
 
 ## 2. Artifact 生命週期
 
@@ -45,11 +51,20 @@
 
 `data verify` 只讀 current revision。`Complete` 不只代表 terminal cursor，也要求 identity、manifest、payload、instrument metadata 與 checksums 一致。
 
+若要人工稽核 stability 欄位而不把真實行情複製進 repository，可先用 `data verify` 驗證相關
+current revisions，再執行 maintainer tool `tools/acceptance/verify_teralion_stability.py`。Generic
+partition integrity 與 lifecycle validation 分別位於 `source_partition.py`、
+`stability_lifecycle.py`；Teralion tool 只負責 wire-field mapping。它讀取
+user-owned partition 的 current revision，重驗 tick pages 的 compressed／uncompressed hash 與
+count，並只輸出 trigger／trial／formal result／resume 的時間、筆數和選取 records digest。此工具
+不取代 cache prepare 或 backtest，也不寫入 source/cache；完整指令見
+[acceptance tooling](../../tools/acceptance/README.md)。
+
 ## 4. Compression 與 checksum
 
 source pages 使用 per-page zstd artifact，並保存 compressed 與 raw content identity。checksum 以實際 bytes 與版本化 canonical metadata 計算，不包含 credential 或不穩定的操作文字。
 
-cache descriptor 另保存 source revision、normalizer mapping、event schema、ordering rule、session identity、event count 與 payload checksum。任何不相容都使 cache 不可讀，但不改變 source 完整性。
+cache descriptor 另保存 source revision、normalizer mapping、event schema、ordering rule、session identity、event count 與 payload checksum。Planner 以本次 source adapter 提供的 mapping identity 判定 reuse；cache codec 本身不維護 provider mapping 白名單。任何不相容都使 cache 重建或拒絕讀取，但不改變 source 完整性。
 
 ## 5. 安全操作
 

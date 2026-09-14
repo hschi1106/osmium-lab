@@ -1,4 +1,4 @@
-schema_version: 3
+schema_version: 4
 source_of_truth: docs/product-requirements.md
 
 contracts:
@@ -14,7 +14,7 @@ contracts:
     version: 3
     implementation: crates/osmium-runner/src/artifacts.rs
   event_schema:
-    version: 3
+    version: 4
     implementation: crates/market-types/src/event.rs
     documentation: docs/architecture/replay-model.md
   replay_cache:

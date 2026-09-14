@@ -18,6 +18,9 @@ execution simulation 只根據 strategy intent、已提交的市場事件、更�
 - quantity 可由 observed volume 或 visible quantity 限制，支援 deterministic partial fill。
 - slippage 只向不利方向套用。
 - 沒有合法 evidence、matching disabled、不同 instrument 或 origin event 時不成交。
+- TWSE／TPEx context 若指出盤中暫緩撮合（瞬間趨漲／趨跌），不以該 event 嘗試成交；既有未完成 market ROD 依交易所規則取消，limit ROD 保留。scheduled market order 在 activation 時遇到 restricted indicative state 會失敗；已 active 的 market ROD 在 stability trigger 時取消，未 activation 的 strategy request 不視為已送到交易所。試算價量本身不作一般 fill evidence。
+
+scheduled simulator 將最新可見交易資格與 firm depth 分開保存。`MarketStatus`／`IndicativeAuction` 也更新 matching／order-entry 限制，但不刷新 book timestamp 或補回已消耗 depth；activation 與後續撮合都使用最新可見資格。slippage 後的價格仍須符合商品 `PricePolicy`，整批 depth fills 驗證通過後才修改 simulator。
 
 同一 event 的 order 依 acceptance sequence 等版本化 allocation 規則處理，避免重複消耗有限 evidence。
 

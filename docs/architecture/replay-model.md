@@ -13,13 +13,16 @@ source_sequence?
 payload
 ```
 
-payload 支援 `QuoteSnapshot`、`BookSnapshot`、`TradeBatch`、`IndicativeOpeningAuction` 與 `IndicativeClosingAuction`。價量使用 checked exact decimal 與具單位的 quantity；unknown 與 no-observation 不以零值代替。
+payload 支援 `QuoteSnapshot`、`BookSnapshot`、`TradeBatch`、`MarketStatus` 與單一 `IndicativeAuction`。
+`IndicativeAuctionKind` 將 observation 分成 `Opening`、`Closing`、帶方向的
+`IntradayStability` 與 `IntradayUnclassified`。價量使用 checked exact decimal 與具單位的
+quantity；unknown 與 no-observation 不以零值代替。
 
 同一 source record 的不可分割成交、book 與 annotations 形成單一 atomic event。auction event 是試算觀察，不是實際成交。
 
 ## 2. 排序與時間
 
-`match_time` 是 replay clock 與第一排序鍵。ordering rule version 3 的內容鍵依序為：
+`match_time` 是 replay clock 與第一排序鍵。ordering rule version 4 的內容鍵依序為：
 
 ```text
 match_time
@@ -68,8 +71,13 @@ TAIFEX after-hours segment 可以跨日，但仍歸屬 planner 指定的 trading
 - 完整 book snapshot。
 - 最近 trade／batch observation。
 - cumulative volume。
+- 最新 indicative auction observation；與 firm book／trade／volume 分開保存。
 - market-specific annotations。
 - `last_match_time`、state version 與 applied event reference。
+
+每側 book 將最多五筆 displayed entries 分成可定價的 `BookLevel` 與可選的
+`market_order_quantity`。後者保存交易所用零 wire price 表達的市價委託聚合量，不是價格；
+best bid／ask、mark、slippage 與 execution depth 只讀取 priced levels。
 
 `Observation` 的更新規則：
 
@@ -77,7 +85,15 @@ TAIFEX after-hours segment 可以跨日，但仍歸屬 planner 指定的 trading
 - `Set(value)`：以目前 event 與 value 取代。
 - 明確 unknown：保存 unknown reason，不推定 value。
 
-`QuoteSnapshot` 更新完整 book，並依 observation 更新 trade、volume 與 annotations。`BookSnapshot` 取代完整 book。`TradeBatch` 更新最近成交與可用 cumulative volume，不修改 book。indicative auction 更新可觀察試算資訊，但不建立實際成交。
+`QuoteSnapshot` 更新完整 firm book，並依 observation 更新 firm trade、volume 與 annotations。
+`BookSnapshot` 取代 firm book。`TradeBatch` 更新最近正式成交與可用 cumulative volume，
+不修改 book。`MarketStatus` 更新可用 cumulative volume 與 annotations，但不宣稱帶有完整
+book 或正式成交，因此保留既有 firm book／trade。`IndicativeAuction` 只更新獨立的試算欄位與 annotations，不建立實際成交，
+也不覆寫 firm book／trade／volume。
+
+indicative state 在可確認 matching 已恢復的 firm event 上清除：TWSE／TPEx event 必須非 trial、非 volatility-interruption、且沒有 reserved status/limit bits；TAIFEX 的無 annotation firm event 則視為正式市場 observation。採 `Carry` 的 session boundary 也清除 indicative state；`ResetObservableFields` 會重設所有 observable fields。清除只改 indicative 欄位並保留 `cleared_at` event reference，不會清除或改寫 firm book／trade／volume。試算期間的 pause/trial/reserved event 不會被誤認為恢復 matching。
+
+TWSE／TPEx 的 trial annotations 必須由 `IndicativeAuction` 承載；reducer 拒絕帶 trial 的 firm／status payload，不保留舊 trial `QuoteSnapshot` 相容路徑。TradingContext 對 auction kind 與 delayed flags 的矛盾配對回報 `Unknown`。
 
 reducer 先驗證整個 transition，再一次提交。非法價格、數量單位、時間倒退或 cumulative-volume policy 違反時，state 不變。strategy 取得的 `MarketStateView` 沒有 mutation API。
 
@@ -105,7 +121,7 @@ resolve factory and parameters
   -> finalize
 ```
 
-`StrategyEventContext` 提供目前 occurrence、event、selected state、所有 universe states、TradingContext、session context 與 decision time。所有 state 都是 post-event read-only view；API 不提供 next-event 或 future-state access。
+`StrategyEventContext` 提供目前 occurrence、event、selected state、所有 universe states、TradingContext、session context 與 decision time。所有 state 都是 post-event read-only view；universe states 由 `ReplayStateViews` 直接唯讀遍歷 replay core 的 deterministic state map，不在每個 callback 建立暫存 `Vec`。API 不提供 next-event 或 future-state access。
 
 `StrategyOutputSink` 的 indicator、order intent、scheduled request 與 timer 依 runner capability 開放。callback 成功才提交 output；error 或 panic 使 run failed。strategy parameter 與 output 使用 canonical encoding，以固定 identity 參與重現性檢查。
 
@@ -115,12 +131,14 @@ resolve factory and parameters
 
 ```text
 cli_contract=4
-config_schema=2
-run_manifest=2
-event_schema=3
-cache_format=1
-accounting=6
+config_schema=3
+run_manifest=4
+event_schema=6
+cache_format=3
+accounting=8
 ```
+
+run manifest v4 的 `versions` 保存 event／canonical event、MarketState／reducer、ordering、replay、strategy API 與 execution／fill model 的實際版本，讓撮合語意變更可追溯。
 
 其他直接影響 replay 的 identity 包含 normalizer mapping、ordering rule、session calendar/profile/window、replay plan、MarketState reducer 與 canonical checksum version。任何不相容內容都需拒絕；cache 可由 compatible verified source 重建。
 

@@ -6,7 +6,7 @@
 
 - [快速開始](quickstart.md)：從設定檢查到離線回測的最短流程。
 - [使用指南](user-guide.md)：資料生命週期、策略整合與常見問題。
-- [設定參考](config-reference.md)：`config_version: 2` 的欄位與驗證規則。
+- [設定參考](config-reference.md)：`config_version: 3` 的欄位與驗證規則。
 - [CLI 參考](operations/cli.md)：命令、副作用、輸出格式與 exit status。
 
 ## 產品與架構

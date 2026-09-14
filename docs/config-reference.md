@@ -1,6 +1,6 @@
 # RunConfig 設定參考
 
-CLI 接受 YAML `config_version: 2`。所有區塊都會拒絕 unknown fields；credential 不得寫入設定。完整範例見 [`examples/config.yaml`](../examples/config.yaml)。
+CLI 接受 YAML `config_version: 3`。所有區塊都會拒絕 unknown fields；credential 不得寫入設定。每個 `universe.instruments[]` 必須明確提供 `instrument_class`，不再依 market 猜測商品類別。完整範例見 [`examples/config.yaml`](../examples/config.yaml)。
 
 ## 頂層區塊
 
@@ -23,21 +23,38 @@ universe:
   instruments:
     - market: taifex
       symbol: "CDFG6"
-      instrument_kind: future
+      instrument_class: future
+      contract_shape: outright
       session_profile: taifex_stock_futures
       session_kinds: [regular]
 ```
 
-`market` 支援 `twse`、`tpex`、`taifex`。instrument kind 與 session profile 必須相容。可用 profile：
+`market` 支援 `twse`、`tpex`、`taifex`。每個 instrument 必須明確指定 `instrument_class`；TAIFEX future 另須指定 `contract_shape` 與 `session_profile`。`calendar_spread` 使用只允許 regular session 的 profile，並會進入 effective config identity。可用 profile：
+
+Option／warrant 必須提供 `reference`（underlying、expiry、strike、option side、currency、multiplier、quantity unit、trading-unit size 與 provenance）。reference 會進入 versioned effective instrument contract identity；修改任一欄位會改變 run checksum，且 reference economics 必須與 `instrument_economics` 相符。
+
+```yaml
+      reference:
+        underlying: TXO
+        expiry: "2026-12-16"
+        strike: "24000"
+        option_side: call
+        currency: TWD
+        multiplier: "50"
+        quantity_unit: contract
+        units_per_trading_unit: 1
+        provenance: "verified instrument reference"
+```
 
 - `twse_regular`
 - `tpex_regular`
 - `taifex_index_futures`
 - `taifex_stock_futures`
 - `taifex_stock_futures_regular_only`
+- `taifex_calendar_spread_regular_only`
 - `taifex_index_options`
 
-省略 `session_profile` 時由內建 metadata resolver 選擇。profile 是版本化識別，不接受任意開收盤時間。
+TWSE／TPEx 與 TAIFEX options 使用內建 class profile；TAIFEX futures 不做 symbol 推定。profile 是版本化識別，不接受任意開收盤時間。
 
 ## Strategy
 

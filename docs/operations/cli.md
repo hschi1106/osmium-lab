@@ -1,6 +1,6 @@
 # CLI 參考
 
-目前 binary 為 `osmium 0.1.0`，CLI contract version `4`，要求 `config_version: 2`。
+目前 binary 為 `osmium 0.1.0`，CLI contract version `4`，要求 `config_version: 3`。
 
 ## 1. 命令總覽
 

@@ -2,10 +2,11 @@
 
 適用 normalizer：
 
-- futures：`TeralionTaifex`，mapping version `2`，wire market `taifex_fut`。
-- index options：`TeralionTaifexOptions`，mapping version `1`，wire market `taifex_opt`。
+- outright futures：`TeralionTaifexFutures`，mapping version `3`，wire market `taifex_fut`。
+- calendar spreads：`TeralionTaifexCalendarSpreads`，mapping version `1`，wire market `taifex_fut`。
+- index options：`TeralionTaifexOptions`，mapping version `2`，wire market `taifex_opt`。
 
-兩者在 domain 中使用 `MarketId::Taifex`，但 archive market、instrument profile、mapping identity 與 economics 分開。
+上述 profiles 在 domain 中都使用 `MarketId::Taifex`；archive market、mapping identity 與 economics 依明確 instrument contract 選擇，不由 symbol 推定。
 
 ## 1. Session 與時間
 
@@ -18,7 +19,7 @@ regular session 為 08:45–13:45。index futures／options 的 after-hours sess
 | Type / format | 處理方式 |
 | --- | --- |
 | `trade / I020` | `TradeBatch` |
-| `trade / I022` | `IndicativeOpeningAuction` |
+| `trade / I022` | `IndicativeAuction(Opening)` |
 | `book / I080` | `BookSnapshot` |
 | `book / I082` | WarmUp reference `BookSnapshot` |
 | `trade / I021` | `KnownSkipped(IntradayHighLow)` |
@@ -30,12 +31,12 @@ known-skipped record 保留 raw payload、count 與 reason，不產生 event。w
 
 ## 3. I020 成交批次
 
-`trades` 至少一筆，保留 array order；price 為 positive exact decimal，quantity 為 positive `Contract`。`aggregate.match_total_qty` 是來源 aggregate observation，不等於當筆 `trades` 總和，也不由 normalizer 重算。
+`trades` 至少一筆，保留 array order；outright futures／options price 為 positive exact decimal，calendar spread price 可為負、零或正；quantity 為 positive `Contract`。`aggregate.match_total_qty` 保留在 source payload，目前不映射為 domain cumulative volume，也不由 normalizer 加總當筆 `trades` 推定累計量。
 
 ```text
 TradeBatch(
   trades = source-ordered regular prints,
-  cumulative_volume = aggregate.match_total_qty,
+  cumulative_volume = NoObservation,
   quantity_unit = Contract
 )
 ```
@@ -50,14 +51,17 @@ I080 的 `derived` side 是來源提供的衍生 observation，不是第六檔�
 
 ## 5. I022 開盤試算
 
-I022 產生 `IndicativeOpeningAuction`，不是 `TradeBatch`。來源 `0/0` 映射為 price／quantity `NoObservation`，同為正值時映射為 typed observation。I022 不更新實際成交或成交量，也不產生 fill evidence。
+I022 產生 `IndicativeAuction(Opening)`，不是 `TradeBatch`。來源 `0/0` 映射為
+price／quantity `NoObservation`，同為正值時映射為 typed observation。I022 不更新實際成交
+或成交量，也不產生 fill evidence。Calendar spread profile 拒絕 I022，因其不參與開盤集合競價。
 
 I070／I072 的 settlement、open interest、close price 與 statistics 不進 replay timeline 或 MarketState；如需作為帳務輸入，必須另建具時間與版本的正式 domain contract。
 
 ## 6. Numeric 與錯誤規則
 
 - JSON numeric lexeme 直接轉 exact decimal，不先經 binary floating-point。
-- populated price／quantity 必須為正；zero 只在明確的 sentinel pair 使用。
+- quantity 必須為正；outright futures／options 的 populated price 必須為正。Calendar spread 的 I020 trade 與 I080 book 保留 signed／zero price，不把零價當缺值。
+- I022 的 `0/0` 只屬該 format 的缺值 sentinel，不延伸至其他 formats。
 - counter 為 non-negative integer；order count 不等於 contract quantity。
 - null、zero 與 unknown 保持不同語意。
 - identity、trading-date/session ownership、book ordering、packet shape 或 numeric validation 失敗時 strict reject。
@@ -67,6 +71,8 @@ I070／I072 的 settlement、open interest、close price 與 statistics 不進 r
 option profile 使用獨立 `taifex_opt` query identity。underlying、expiry、strike、option side、currency、multiplier 與 quantity unit 由 reference／economics 明確提供。
 
 options 使用 options accounting model處理 premium cash 與 average-cost P&L；futures 使用 futures model。兩者共用 event mapping 原則，但 positions、multiplier 與 reconciliation 不混用。
+
+Calendar spread 設定必須明確指定 `contract_shape: calendar_spread` 與適用 session profile。含 `/` 的 symbol 保持 byte-exact identity；storage path 另做 reversible encoding。其限價比較與 slippage 保留 signed price，notional-rate fee basis 使用絕對名目金額，fixed-per-unit fee 依 contract quantity 計算。
 
 repository fixture 位於 [`fixtures/teralion/taifex`](../../fixtures/teralion/taifex)，只固定合成 futures/options contract，不代表完整交易日。
 

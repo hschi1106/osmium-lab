@@ -10,12 +10,17 @@ tools/acceptance/verify_fixture_bundle.sh \
   --bundle . \
   --manifest fixtures/smoke/manifest.yaml
 tools/release/verify_license.sh
+python3 -m unittest discover -s tools/acceptance -p 'test_*.py'
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
 compact fixture verifier 檢查 synthetic provenance、market/instrument matrix、JSONL shape、時間欄位、檔案大小、manifest path 與 checksum。所有 committed scenarios 都標示 `complete_day: false`，不作為完整市場資料代表。
+
+## Stability 驗證邊界
+
+`source_partition.py` 驗證通用 partition integrity，`stability_lifecycle.py` 驗證 provider-neutral observations 的生命週期；兩者的 unit tests 包含合法序列與拒絕案例。各 adapter 的 wire conformance 另外驗證，例如 `verify_teralion_stability.py`。Adapter certification 不取代 domain isolation、execution eligibility 或 Alpha 新舊策略語意差異驗證。執行方式見 [acceptance tooling](../../tools/acceptance/README.md)。
 
 ## Smoke flow
 

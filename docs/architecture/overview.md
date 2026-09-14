@@ -6,7 +6,7 @@
 
 ```text
 online
-Teralion -> sync -> staging -> verified source
+provider adapter -> sync -> staging -> verified source
 
 offline
 verified source -> normalizer -> replay cache -> replay engine
@@ -19,7 +19,7 @@ verified source -> normalizer -> replay cache -> replay engine
 架構遵守下列不變條件：
 
 - verified source 是可重用事實；replay cache 是可刪除、可重建的衍生 artifact。
-- Teralion wire type 只存在於 adapter／normalizer 邊界，domain 與 strategy 不依賴 wire schema。
+- provider wire type 只存在於各自的 adapter／normalizer 邊界，domain 與 strategy 不依賴 wire schema。
 - `match_time` 是唯一 replay clock；相同時間使用版本化 deterministic tie-break。
 - `MarketState` 只表達成交與完整 snapshot 能支持的狀態，不重建逐筆委託或 queue。
 - strategy 只能取得 read-only state，不能修改 event、clock 或 source。
@@ -32,8 +32,8 @@ verified source -> normalizer -> replay cache -> replay engine
 | --- | --- |
 | `market-types` | exact domain primitive、event schema 與 canonical encoding |
 | `market-state` | snapshot reducer、read-only view 與 state checksum |
-| `normalizer/{twse,tpex,taifex}` | market／format wire mapping 與驗證 |
-| `data-sync` | Teralion query、cursor、source repository、verify 與 replay cache |
+| `normalizer/{twse,tpex,taifex}` | 目前內建 adapter 的 market／format wire mapping 與驗證 |
+| `data-sync` | source adapter dispatch、目前的 Teralion transport、source repository、verify 與 replay cache |
 | `run-planner` | effective config、partition、session plan 與 execution plan |
 | `replay-engine` | stream validation、deterministic merge、clock 與 event occurrence |
 | `strategy-api` | strategy lifecycle、context、output、orders、timers 與 registry |
@@ -51,13 +51,13 @@ replay-engine -> market-state -> market-types
 normalizers -> market-types
 ```
 
-domain crates 不反向依賴 CLI、filesystem layout、Teralion transport 或 run artifact serializer。
+domain crates 不反向依賴 CLI、filesystem layout、任何 provider transport 或 run artifact serializer。
 
 ## 3. 元件責任
 
 ### Configuration 與 Planner
 
-- 解析 `config_version: 2` 並拒絕 unknown／secret fields。
+- 解析 `config_version: 3` 並拒絕 unknown／secret fields；每個 universe instrument 必須明確指定 `instrument_class`。
 - 解析 compiled strategy、parameters、universe、instrument economics 與 simulation policy。
 - 以 calendar、instrument profile 與 session kinds 建立 `SessionPlan`。
 - 比較 source/cache state，產生固定的 `ExecutionPlan` 與 identity。
@@ -66,11 +66,13 @@ Planner 不下載 payload、不正規化事件，也不執行 strategy。
 
 ### Source Adapter 與 Repository
 
-- 以 Teralion coverage、range、ticks、instrument 與 opaque cursor 取得資料。
+- 依 stable `SourceId` 選擇 adapter；目前內建 Teralion coverage、range、ticks、instrument 與 opaque cursor 實作。
 - 使用 frozen query、staging、checksums 與 atomic publish 建立 source revision。
 - 提供本地 verify 與 immutable read。
 
-Repository 不解讀 domain event，也不維護 market state。
+Repository 不解讀 provider wire semantics 或 domain event，也不維護 market state。通用 partition
+integrity、cache codec 與 lifecycle validation 不列舉 provider formats；wire conformance 由各 adapter
+自己的測試與外部資料 certification 負責。
 
 ### Normalizer 與 Cache
 
@@ -87,7 +89,7 @@ Repository 不解讀 domain event，也不維護 market state。
 - 推進 `ReplayClock`，原子套用 state transition，再產生 strategy context。
 - 每個 instrument 維護獨立 state；完整 book snapshot 直接替換舊 book。
 
-Replay Engine 不呼叫 Teralion、不解讀 wire payload，也不決定 fill。
+Replay Engine 不呼叫任何 source provider、不解讀 wire payload，也不決定 fill。
 
 ### Strategy Runtime
 

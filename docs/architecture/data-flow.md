@@ -6,7 +6,7 @@
 | --- | --- | --- | --- |
 | RunConfig | 使用者 | 是 | plan 建立後固定 |
 | ExecutionPlan | effective config + 本地狀態 | 是 | 否 |
-| Source staging | Teralion pages | 可重新下載或 resume | 只由 sync owner 修改 |
+| Source staging | provider adapter pages | 可重新下載或 resume | 只由 sync owner 修改 |
 | Verified source revision | 已驗證 staging | 只能重新取得 | 否 |
 | Replay cache | verified source + versions | 是 | 只在 prepare 階段建立 |
 | MarketState | ordered events | 是 | 只由 reducer 更新 |
@@ -37,7 +37,9 @@ frozen query
   -> atomic publish revision
 ```
 
-source query 使用 planner 產生的 download window，以 `received_at` 篩選 Teralion archive。每頁保留 wire payload；cursor 只作 pagination，不參與 replay ordering。API key、authorization header 與 signed URL 不得進入 query identity 或持久化資料。
+CLI 先依 planner action 拒絕不完整／損壞來源，再以 `SourceId` 建立 `SourceAdapterRuntime`。Runtime 接收 partition key、instrument contract 與 session plan；query、credential、transport 與 staging orchestration 由 adapter 擁有，CLI 只接收同步結果。
+
+source adapter 使用 planner 產生的 download window 查詢供應商 archive。每頁保留 wire payload；provider cursor 只作 pagination，不參與 replay ordering。API key、authorization header 與 signed URL 不得進入 query identity 或持久化資料。目前 Teralion adapter 使用 `received_at` 作 archive selection；此欄位不是通用 replay contract。
 
 中斷時只有 frozen query identity 相容的 staging 可以 resume。HTTP error、parse error、重複 cursor、checksum mismatch 或未完成 cursor chain 都保持 `Building`／`Incomplete`，不會發布為 `Complete`。
 
@@ -55,7 +57,7 @@ coverage 或 range 只能作 discovery，不能單獨證明 partition 完整。`
 
 ## 5. Normalization 與 cache
 
-cache builder 只接受 verified source。每筆 wire record 依 market interface分類：
+cache builder 只接受 verified source。每筆 wire record 由所選 source adapter 的 market mapping 分類：
 
 ```text
 supported timeline format -> validated DomainEvent
@@ -68,7 +70,7 @@ normalizer 不使用 page order、line number、`received_at` 或 worker complet
 
 - cache format 與 event schema。
 - source revision checksum。
-- normalizer mapping identity。
+- normalizer mapping name 與 version；兩者都參與 cache identity。
 - ordering、session 與 canonical encoding identity。
 - event count、warning／skip summary 與 payload checksum。
 
@@ -105,13 +107,16 @@ output 必須是尚不存在的目錄。writer 先建立 staging，依執行狀�
 
 ```text
 <data_root>/
-  source/teralion/<market>/<date>/<symbol>/
+  source/<source>/<market>/<date>/<symbol>/
     partition.yaml
     current.yaml
     revisions/<source-revision>/
     staging/<attempt>/
-  cache/replay/teralion/<market>/<date>/<symbol>/<cache-identity>/
+  cache/replay/<source>/<market>/<date>/<symbol>/<cache-identity>/
 ```
+
+`<source>` 是 stable source storage namespace；目前內建 adapter 使用 `teralion`。通用 layout、
+partition integrity 與 cache codec 不解讀該 provider 的 wire fields。
 
 run output 由 `--output` 或設定指定，可放在 `data_root` 外。實際檔案與復原方式見 [本地資料](../operations/local-data.md)。
 

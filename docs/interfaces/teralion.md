@@ -59,9 +59,15 @@ cache prepare 讀取 tick 時，normalizer 至少驗證：
 
 sync 會保存 raw page 並驗證 page envelope、JSON、record count 與 checksums；market-specific identity、欄位及語意在 cache prepare 階段驗證。unknown field 不由 generic adapter 改名、補值或刪除。
 
+## 5. 試算資料與 endpoint 範圍
+
+Teralion Feed Archive 文件指出，`/ticks` 回傳原始 client-document ticks，包含標示為試算的訊息，並保留 `status_flags` 與來源 `format`；文件舉例 TWSE／TPEx 以 `status_flags & 0x80` 辨識試算，TAIFEX 則以獨立的 `I022`／`I082`／`I064` format 辨識。相對地，文件所述 `/trades`、`/bars`、`/quotes` 為 firm data，不包含其描述的 indicative pre-auction prices。Normalizer 必須使用 `/ticks`，不可用衍生 endpoint 替代原始行情或用來找回被排除的試算。
+
+該頁對 TWSE／TPEx indicative pre-auction 的說明範圍是開盤與收盤試算；它沒有說明盤中 stability trigger／試算期間的 Teralion JSON 欄位映射，也沒有定義該期間 `deal`、`bids`／`asks`、零數量或 `cum_volume` 的語意。故 `status_flags & 0x80` 的公開文件說明可作為 trial 標記依據，但不能單獨證明每筆 stability-period observation 的價量與 book 是模擬競價資料。2026-08-10 以 authenticated、read-only `/ticks` 查詢各觀察到一組 TWSE 3026 與 TPEx 2948 序列：trigger 為非 trial、非零 instant-trend、zero-quantity deal 與空簿；期間 observation 帶 `status_flags=128`、有 deal／book，累計量不變；約兩分鐘後出現非 trial 且累計量增加的正式撮合，接著恢復一般逐筆狀態。這提供 Teralion JSON 的實例證據，但因 raw records 未納入 repository，仍需 checked-in sanitized golden 或外部 user-owned source 驗證程序，不能稱為已完成可重播 fixture。
+
 daily instrument response 保存 symbol、market、kind、underlying、option side、strike、expiry、multiplier、currency、trading date 與 session reference 等可用欄位。`null`、空字串與 `0` 是不同值；缺少 metadata 不得自行推定。
 
-## 5. Cursor 與發布
+## 6. Cursor 與發布
 
 ```text
 Start(frozen query)
@@ -83,7 +89,7 @@ Start(frozen query)
 
 published manifest 記錄 interface version、endpoint、安全 query identity、page/item counts、observed type/format、checksums 與 terminal evidence。
 
-## 6. 時間與完整性
+## 7. 時間與完整性
 
 | Clock | 用途 |
 | --- | --- |
@@ -94,7 +100,7 @@ published manifest 記錄 interface version、endpoint、安全 query identity�
 
 coverage、range、非空第一頁、bars、terminal cursor 或觀察到 close 都不能單獨證明 partition 完整。完整性需同時通過 frozen query、closed trading date、cursor chain、instrument metadata、payload、manifest 與 checksum 驗證。
 
-## 7. Source schema 變更
+## 8. Source schema 變更
 
 API 未提供可直接替代 normalizer mapping version 的 schema identity。遇到新的 required field、wire type、type/format pair 或 payload shape 時，adapter 保存 raw evidence，normalizer strict reject，直到介面文件、fixture、mapping version 與測試同步更新。
 
