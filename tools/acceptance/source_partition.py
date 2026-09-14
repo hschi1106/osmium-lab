@@ -15,7 +15,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Iterator
-from typing import Any, Callable
+from typing import Any
 
 
 MANIFEST_VERSION = 1
@@ -95,7 +95,6 @@ def _validate_object_metadata(value: Any) -> dict[str, Any]:
 def _read_object(
     revision_root: Path,
     metadata: dict[str, Any],
-    parse_float: Callable[[str], Any] | None = None,
 ) -> Any:
     relative = Path(metadata["relative_path"])
     if relative.is_absolute() or ".." in relative.parts:
@@ -117,9 +116,7 @@ def _read_object(
     if _sha256(uncompressed) != metadata["uncompressed_sha256"]:
         raise PartitionVerificationError("uncompressed source object checksum mismatch")
     try:
-        if parse_float is None:
-            return json.loads(uncompressed)
-        return json.loads(uncompressed, parse_float=parse_float)
+        return json.loads(uncompressed)
     except json.JSONDecodeError as error:
         raise PartitionVerificationError("source object is not valid JSON") from error
 
@@ -197,15 +194,12 @@ def open_published_partition(partition_root: Path) -> PublishedSourcePartition:
 
 def iter_published_records(
     partition: PublishedSourcePartition,
-    *,
-    parse_float: Callable[[str], Any] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Verify and yield records, retaining at most one decompressed page."""
     for page in partition.pages:
         envelope = _read_object(
             partition.revision_root,
             page,
-            parse_float=parse_float,
         )
         items = envelope.get("items") if isinstance(envelope, dict) else None
         if not isinstance(items, list) or len(items) != page["record_count"]:

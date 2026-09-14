@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 完成 market-types／stability migration 與 Alpha 正式 dependency pin。移除一次性計畫與
+  semantic fixture exporter；完整 migration 材料保留於 Git revision `4ec928f`，驗收摘要見
+  [驗證文件](docs/operations/validation.md)。
 - CLI 透過 `SourceAdapterRuntime` 依 SourceId 同步資料；provider queries、credential 與 staging
   orchestration 移至 adapter boundary。TAIFEX normalizer 保留各 session 的離散時間窗。
 - `data verify`／`cache prepare` 共同檢查 partition descriptor，錯誤帶出商品、日期與 reference mismatch。
@@ -21,7 +24,7 @@
 - MarketState 於確認 matching 恢復的 firm event 或 carry session boundary 清除過期 indicative state；
   清除保留 event provenance、不改動 firm observations，market-state/reducer versions 升為 5/4。
 - `MatchTime` formatting 與 canonical event timestamp、`TradingDate` epoch constructor及 canonical vector decoding新增邊界驗證；
-  `market-types` 先升為 v5，使舊 cache identity 失效；`Decimal` 提供不經浮點數的 exact text formatting。
+  `Decimal` 提供不經浮點數的 exact text formatting。
 - TWSE 真實 stability-day partition 揭露第一檔零價的市價委託聚合量；`BookSide` 新增獨立
   `market_order_quantity`，不再將它誤當零價 `BookLevel` 或 execution price evidence。event schema、
   canonical event、market-types 現升為 v6/v6/v7，TWSE equity/warrant mapping 升為 v9/v6、
@@ -30,8 +33,8 @@
   observation；TWSE／TPEx 暫緩撮合的空簿 sentinel 不再以空 `QuoteSnapshot` 清除最後 firm book／trade。
 - 移除 `InstrumentClass::Unknown` 與依 market／symbol 推定商品類型或 TAIFEX futures session 的 fallback；
   RunConfig 升為 v3，明確要求 `instrument_class`，TAIFEX future 明確要求 `contract_shape` 與
-  `session_profile`；option/warrant reference 欄位納入 EffectiveRunConfig v6 canonical identity；source identity
-  隨後納入 v7 identity，partition/cache 路徑與 cache factory 不再自行假設 Teralion；
+  `session_profile`；option/warrant reference 與 source identity 納入 EffectiveRunConfig v7 canonical
+  identity，partition/cache 路徑與 cache factory 不再自行假設 Teralion；
   signed／zero spread price policy 傳入撮合與帳務驗證。
 - `TradePrint`／`TradePrintKind`／`TradeOrder` 改名為 `ObservedTrade`／`TradeObservationKind`／
   `TradeBatchOrdering`；canonical discriminants 保持不變，舊 Rust API 不保留相容別名。
@@ -39,11 +42,11 @@
   加入固定 synthetic event／ReplayCore microbenchmark，以及 verified-source/cache/replay pipeline benchmark；
   驗證 event 與 final-state checksum 不變。Pipeline 基準使用合成行情，不代表完整策略回測速度或真實行情表現。
 - `ReplayStateViews` 改為借用 replay core 的 deterministic state map，移除一般與 scheduled strategy callback
-  每筆 event 配置 market-state view 向量；此為 strategy API v3 的破壞性 API migration，不保留 slice adapter。
+  每筆 event 配置 market-state view 向量；這是破壞性 API migration，不保留 slice adapter。
   新增 full multi-backtest benchmark，確認 strategy output、fills 與 replay checksums 可重現。
 - TWSE／TPEx stability 暫緩撮合期間限制新委託為 limit ROD，並取消既有已送出的未完成 market ROD；一般與 scheduled execution 均驗證此規則。新增 `VolatilityInterruption` cancellation reason，strategy API 升為 v4、execution simulator 升為 v3。此修改只落實已觀察到的 order-entry 規則，不推算 stability lifecycle。
-- TWSE／TPEx 盤中 `trial` 統一輸出 `IntradayUnclassified`，保留方向 annotations 供 Alpha 關聯明確 trigger。真實 `/ticks` stability samples 確認兩市場 zero-quantity／empty-book trigger 形狀；normalizer 將這類 status-only observation 映射為 `MarketStatus`，其他 zero-quantity shape 拒絕。TWSE 同一 `match_time` 多筆 intermediate trades + final trigger 會合併成保序 `TradeBatch` 加 final `MarketStatus`。原始 source rows 未納入 fixtures；Teralion adapter certification 已以外部 immutable partitions 完成，Alpha differential 仍待完成。
-- Derived cache 升為 format v2，單筆 canonical event record 限制 16 MiB；reader 在配置 record buffer 前拒絕超限長度，writer 同步拒絕產生無法讀回的 cache。
+- TWSE／TPEx 盤中 `trial` 統一輸出 `IntradayUnclassified`，保留方向 annotations 供 Alpha 關聯明確 trigger。真實 `/ticks` stability samples 確認兩市場 zero-quantity／empty-book trigger 形狀；normalizer 將這類 status-only observation 映射為 `MarketStatus`，其他 zero-quantity shape 拒絕。TWSE 同一 `match_time` 多筆 intermediate trades + final trigger 會合併成保序 `TradeBatch` 加 final `MarketStatus`。原始 source rows 未納入 fixtures；Teralion adapter certification 與 Alpha production differential 均已完成。
+- Derived cache 單筆 canonical event record 限制 16 MiB；reader 在配置 record buffer 前拒絕超限長度，writer 同步拒絕產生無法讀回的 cache。
 - cache codec 不再列舉內建 provider normalizer；source adapter 提供預期 mapping identity，catalog 將舊 schema／mapping cache 標為 stale 並由 verified source 重建。通用 partition integrity／stability lifecycle 驗證與 Teralion wire conformance 已拆開。
 
 ## 0.1.0 — public release preparation

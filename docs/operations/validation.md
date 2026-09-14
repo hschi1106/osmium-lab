@@ -22,6 +22,26 @@ compact fixture verifier 檢查 synthetic provenance、market/instrument matrix�
 
 `source_partition.py` 驗證通用 partition integrity，`stability_lifecycle.py` 驗證 provider-neutral observations 的生命週期；兩者的 unit tests 包含合法序列與拒絕案例。各 adapter 的 wire conformance 另外驗證，例如 `verify_teralion_stability.py`。Adapter certification 不取代 domain isolation、execution eligibility 或 Alpha 新舊策略語意差異驗證。執行方式見 [acceptance tooling](../../tools/acceptance/README.md)。
 
+## 2026-09-14 migration 驗收記錄
+
+核心 revision `964831b2dfc2baab0a6eafa801e1cbffd1bb274d` 通過 320 項 workspace tests、
+fmt、Clippy、四個 benchmarks 的 checksum assertions 與 clean-machine smoke。
+TWSE 3026／TPEx 2948 的 2026-08-10 verified partitions 分別為：
+
+- `44a8468b3056485a0e5009bb11cb04cf63cd7d47d76770344cc9d02277beee67`
+- `d55cba9ce2e2d833f5227993bfd5b0dfdb7ad324d7d584bdefd3e6e120ad649d`
+
+相同 source 完成 cache v3 rebuild／reuse、3,403 events replay、4 orders／4 fills backtest 與 inspect。
+Event checksum 為 `6ef7cd0bf7bcfb6b7cb976d5cf458308d7cf19416ab1ca65b8337faa576a63ed`；
+final-state checksum 為 `b16d7f36ded1dd6bc191a78bc510f7f5632be4cd9cebf6f1021b8123a65407d0`。
+Source revisions 未變；raw payload 與 run artifacts 由使用者於 repository 外保存。
+
+Alpha 正式 git pin 的 53 tests、fmt、Clippy 通過。TWSE Up、TPEx Up 與 synthetic Down
+完成 production strategy／runner differential；僅 firm isolation、市價委託量表示與版本化 checksums
+屬預期差異。完整 runner 財務比較使用明確的 synthetic clean-fill overlay，不代表真實完整日績效；
+每版本重跑 trace 相同。一次性 harness 保留於 Alpha revision `7e51dce`，Lab 匯出工具與歷史
+計畫保留於 `4ec928f`；日常回歸由目前 workspace tests 與 adapter verifier 負責。
+
 ## Smoke flow
 
 CI 使用 `examples/smoke.yaml` 與 `fixtures/smoke/` 準備 source/cache，再於無 credential 環境執行：
