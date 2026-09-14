@@ -10,8 +10,8 @@ use crate::{
     UnavailableReason,
 };
 
-pub const CANONICAL_MARKET_STATE_VERSION: u16 = 3;
-pub const CANONICAL_FINAL_STATE_SET_VERSION: u16 = 3;
+pub const CANONICAL_MARKET_STATE_VERSION: u16 = 5;
+pub const CANONICAL_FINAL_STATE_SET_VERSION: u16 = 5;
 
 impl MarketState {
     pub fn to_canonical_bytes(&self) -> Result<Vec<u8>, CanonicalEncodingError> {
@@ -32,6 +32,7 @@ impl MarketState {
         append_state_field(self.book(), &mut bytes)?;
         append_state_field(self.recent_trade(), &mut bytes)?;
         append_state_field(self.cumulative_volume(), &mut bytes)?;
+        append_state_field(self.indicative_auction(), &mut bytes)?;
         append_state_field(self.last_annotations(), &mut bytes)?;
         match self.last_event() {
             None => bytes.push(0),

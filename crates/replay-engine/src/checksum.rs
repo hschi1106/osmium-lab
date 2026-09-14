@@ -1,6 +1,4 @@
-use market_types::{
-    CANONICAL_EVENT_VERSION, CanonicalEncodingError, DomainEvent, EVENT_SCHEMA_VERSION,
-};
+use market_types::{CANONICAL_EVENT_VERSION, CanonicalEncodingError, EVENT_SCHEMA_VERSION};
 
 use crate::ORDERING_RULE_VERSION;
 
@@ -26,11 +24,10 @@ impl ReplayEventStreamHasher {
         }
     }
 
-    pub(crate) fn prepare_event(
+    pub(crate) fn prepare_canonical(
         &self,
-        event: &DomainEvent,
+        canonical: Vec<u8>,
     ) -> Result<PreparedChecksumRecord, CanonicalEncodingError> {
-        let canonical = event.to_canonical_bytes()?;
         let length =
             u32::try_from(canonical.len()).map_err(|_| CanonicalEncodingError::LengthOverflow)?;
         Ok(PreparedChecksumRecord { canonical, length })

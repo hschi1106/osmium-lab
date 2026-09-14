@@ -155,7 +155,7 @@ impl StrategyFactory for PriceThresholdBuyOnceFactory {
             identity,
             params_checksum: parameters.checksum(),
             declaration,
-            entry_price: Price::new(entry_price)
+            entry_price: Price::positive(entry_price)
                 .map_err(|error| StrategyFactoryError::new(error.to_string()))?,
             quantity,
             submitted: false,
@@ -172,8 +172,9 @@ mod tests {
     };
     use market_types::{
         BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventPayload,
-        MarketAnnotations, MarketId, MatchTime, Observation, QuoteSnapshot, SourceFormatId, Symbol,
-        TradingDate, TwseQuoteAnnotations, Volume,
+        IndicativeAuction, IndicativeAuctionKind, MarketAnnotations, MarketId, MatchTime,
+        Observation, QuoteSnapshot, SourceFormatId, Symbol, TradingDate, TwseQuoteAnnotations,
+        Volume,
     };
     use replay_engine::ReplayCore;
     use strategy_api::{
@@ -278,21 +279,37 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
+        let annotations = TwseQuoteAnnotations::new(status, 0);
+        let payload = if annotations.status().trial() {
+            EventPayload::IndicativeAuction(
+                IndicativeAuction::new(
+                    IndicativeAuctionKind::Opening,
+                    Observation::NoObservation,
+                    Observation::NoObservation,
+                    Observation::Set(book),
+                    Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
+                    MarketAnnotations::TwseQuote(annotations),
+                )
+                .unwrap(),
+            )
+        } else {
+            EventPayload::QuoteSnapshot(
+                QuoteSnapshot::new(
+                    book,
+                    Observation::NoObservation,
+                    Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
+                    MarketAnnotations::TwseQuote(annotations),
+                )
+                .unwrap(),
+            )
+        };
         DomainEvent::new(
             instrument(MarketId::Twse),
             TradingDate::parse("2026-07-20").unwrap(),
             SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
             MatchTime::parse(time).unwrap(),
             None,
-            EventPayload::QuoteSnapshot(
-                QuoteSnapshot::new(
-                    book,
-                    Observation::NoObservation,
-                    Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
-                    MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(status, 0)),
-                )
-                .unwrap(),
-            ),
+            payload,
         )
     }
 
@@ -350,7 +367,13 @@ mod tests {
             let mut sink = StrategyOutputSink::with_order_intents();
             strategy
                 .on_event(
-                    StrategyEventContext::new(commit.occurrence(), event, state, &trading),
+                    StrategyEventContext::new_with_states(
+                        commit.occurrence(),
+                        event,
+                        state,
+                        core.state_views(),
+                        &trading,
+                    ),
                     &mut sink,
                 )
                 .unwrap();

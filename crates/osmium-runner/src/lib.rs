@@ -278,14 +278,10 @@ fn process_multi_event<S: Strategy>(
         .ok_or_else(|| {
             MultiBacktestError::Schedule("event is outside session schedule".to_owned())
         })?;
-    let views = core.states().map(|state| state.view()).collect::<Vec<_>>();
-    let state = views
-        .iter()
-        .copied()
-        .find(|state| state.instrument() == event.instrument())
-        .ok_or_else(|| {
-            MultiBacktestError::Schedule("event state is absent from replay core".to_owned())
-        })?;
+    let views = core.state_views();
+    let state = views.get(event.instrument()).ok_or_else(|| {
+        MultiBacktestError::Schedule("event state is absent from replay core".to_owned())
+    })?;
     let trading = MarketTradingContextEvaluator
         .evaluate(event, commit.occurrence(), state, segment)
         .map_err(|error| MultiBacktestError::Context(error.to_string()))?;
@@ -312,7 +308,7 @@ fn process_multi_event<S: Strategy>(
                 commit.occurrence(),
                 event,
                 state,
-                &views,
+                views,
                 &trading,
             ),
             &mut sink,
@@ -513,7 +509,13 @@ fn run_backtest_with_next<S: Strategy>(
         let mut sink = StrategyOutputSink::with_order_intents();
         strategy
             .on_event(
-                StrategyEventContext::new(commit.occurrence(), &event, state, &trading),
+                StrategyEventContext::new_with_states(
+                    commit.occurrence(),
+                    &event,
+                    state,
+                    core.state_views(),
+                    &trading,
+                ),
                 &mut sink,
             )
             .map_err(|error| BacktestError::Strategy(error.to_string()))?;
@@ -798,6 +800,22 @@ mod tests {
             manifest["run_manifest_version"],
             serde_json::json!(RUN_MANIFEST_VERSION)
         );
+        assert_eq!(
+            manifest["accounting_version"],
+            completed.ledger.accounting_version()
+        );
+        assert_eq!(
+            manifest["versions"]["event_schema"],
+            market_types::EVENT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            manifest["versions"]["execution_sim"],
+            execution_sim::EXECUTION_SIM_VERSION
+        );
+        assert_eq!(
+            manifest["versions"]["strategy_api"],
+            strategy_api::STRATEGY_API_VERSION
+        );
         assert!(manifest["artifact_checksums"]["strategy.json"].is_string());
 
         std::fs::write(output.join("ledger.bin"), b"corrupt").unwrap();
@@ -925,6 +943,7 @@ mod tests {
                 market_data_latency_ms: 500,
                 order_latency_ms: 1_500,
             },
+            market_types::PricePolicy::PositiveOnly,
         )])
         .unwrap();
         let ledger = MultiLedger::new(
@@ -1004,5 +1023,24 @@ mod tests {
             execution_sim::ACCOUNTING_VERSION
         )));
         assert!(performance.contains("Taifex:TXFH6"));
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(output.join("run-manifest.yaml")).unwrap())
+                .unwrap();
+        assert_eq!(
+            manifest["versions"]["canonical_final_state_set"],
+            market_state::CANONICAL_FINAL_STATE_SET_VERSION
+        );
+        assert_eq!(
+            manifest["versions"]["state_reducer"],
+            market_state::STATE_REDUCER_VERSION
+        );
+        assert_eq!(
+            manifest["versions"]["ordering_rule"],
+            replay_engine::ORDERING_RULE_VERSION
+        );
+        assert_eq!(
+            manifest["versions"]["fill_model"],
+            execution_sim::FILL_MODEL_VERSION
+        );
     }
 }

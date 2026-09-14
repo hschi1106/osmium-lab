@@ -7,8 +7,7 @@ use std::{
 };
 
 use market_types::{
-    CANONICAL_EVENT_VERSION, DomainEvent, EVENT_SCHEMA_VERSION, MARKET_TYPES_VERSION, MarketId,
-    MatchTime,
+    CANONICAL_EVENT_VERSION, DomainEvent, EVENT_SCHEMA_VERSION, MARKET_TYPES_VERSION, MatchTime,
 };
 use replay_engine::{
     EventStream, ORDERING_RULE_VERSION, OrderingKey, ReplayStreamBinding, ReplayStreamFactory,
@@ -16,35 +15,20 @@ use replay_engine::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use taifex_normalizer::{
-    MAPPING_NAME as TAIFEX_MAPPING_NAME, MAPPING_VERSION as TAIFEX_MAPPING_VERSION,
-    NormalizerConfig as TaifexNormalizerConfig, OPTION_MAPPING_NAME as TAIFEX_OPTION_MAPPING_NAME,
-    OPTION_MAPPING_VERSION as TAIFEX_OPTION_MAPPING_VERSION, TaifexNormalizer,
-};
-use tpex_normalizer::{
-    MAPPING_NAME as TPEX_MAPPING_NAME, MAPPING_VERSION as TPEX_MAPPING_VERSION,
-    NormalizerConfig as TpexNormalizerConfig, TpexNormalizer,
-    WARRANT_MAPPING_NAME as TPEX_WARRANT_MAPPING_NAME,
-    WARRANT_MAPPING_VERSION as TPEX_WARRANT_MAPPING_VERSION,
-};
-use twse_normalizer::{
-    MAPPING_NAME as TWSE_MAPPING_NAME, MAPPING_VERSION as TWSE_MAPPING_VERSION,
-    NormalizerConfig as TwseNormalizerConfig, TwseNormalizer,
-    WARRANT_MAPPING_NAME as TWSE_WARRANT_MAPPING_NAME,
-    WARRANT_MAPPING_VERSION as TWSE_WARRANT_MAPPING_VERSION,
-};
+use taifex_normalizer::{NormalizerConfig as TaifexNormalizerConfig, TaifexNormalizer};
+use tpex_normalizer::{NormalizerConfig as TpexNormalizerConfig, TpexNormalizer};
+use twse_normalizer::{NormalizerConfig as TwseNormalizerConfig, TwseNormalizer};
 
 use crate::{
-    LocalSourceRepository, ObjectKind, PartitionRepositoryError, VerificationReport,
-    cache_instrument_root, cache_partition_root,
+    LocalSourceRepository, NormalizerMappingIdentity, ObjectKind, PartitionRepositoryError,
+    VerificationReport, cache_instrument_root, cache_partition_root,
 };
 use run_planner::SourcePartitionKey;
 
 const CACHE_MAGIC: &[u8; 9] = b"OSMCACHE1";
-pub const CACHE_FORMAT_VERSION: u16 = 1;
-pub const EXTERNAL_DOMAIN_MAPPING_NAME: &str = "external-domain-events-v1";
-pub const EXTERNAL_DOMAIN_MAPPING_VERSION: u16 = 1;
-
+pub const CACHE_FORMAT_VERSION: u16 = 3;
+/// Bounds allocations made while reading any one derived event record.
+const MAX_CACHE_EVENT_RECORD_BYTES: u32 = 16 * 1024 * 1024;
 #[derive(Debug, Clone)]
 pub enum PartitionNormalizerConfig {
     Twse(TwseNormalizerConfig),
@@ -52,7 +36,44 @@ pub enum PartitionNormalizerConfig {
     Tpex(TpexNormalizerConfig),
     TpexWarrant(TpexNormalizerConfig),
     Taifex(TaifexNormalizerConfig),
+    TaifexCalendarSpread(TaifexNormalizerConfig),
     TaifexOption(TaifexNormalizerConfig),
+}
+
+impl PartitionNormalizerConfig {
+    #[must_use]
+    pub fn mapping_identity(&self) -> NormalizerMappingIdentity {
+        match self {
+            Self::Twse(_) => NormalizerMappingIdentity::from_static(
+                twse_normalizer::MAPPING_NAME,
+                twse_normalizer::MAPPING_VERSION,
+            ),
+            Self::Warrant(_) => NormalizerMappingIdentity::from_static(
+                twse_normalizer::WARRANT_MAPPING_NAME,
+                twse_normalizer::WARRANT_MAPPING_VERSION,
+            ),
+            Self::Tpex(_) => NormalizerMappingIdentity::from_static(
+                tpex_normalizer::MAPPING_NAME,
+                tpex_normalizer::MAPPING_VERSION,
+            ),
+            Self::TpexWarrant(_) => NormalizerMappingIdentity::from_static(
+                tpex_normalizer::WARRANT_MAPPING_NAME,
+                tpex_normalizer::WARRANT_MAPPING_VERSION,
+            ),
+            Self::Taifex(_) => NormalizerMappingIdentity::from_static(
+                taifex_normalizer::MAPPING_NAME,
+                taifex_normalizer::MAPPING_VERSION,
+            ),
+            Self::TaifexCalendarSpread(_) => NormalizerMappingIdentity::from_static(
+                taifex_normalizer::SPREAD_MAPPING_NAME,
+                taifex_normalizer::SPREAD_MAPPING_VERSION,
+            ),
+            Self::TaifexOption(_) => NormalizerMappingIdentity::from_static(
+                taifex_normalizer::OPTION_MAPPING_NAME,
+                taifex_normalizer::OPTION_MAPPING_VERSION,
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,6 +172,7 @@ impl CacheBuilder {
     pub fn build_external_partition(
         &self,
         key: &SourcePartitionKey,
+        mapping: &NormalizerMappingIdentity,
         events: Vec<DomainEvent>,
     ) -> Result<PublishedCache, CacheBuildError> {
         let repository = crate::PartitionedSourceRepository::new(&self.data_root, key.clone())
@@ -172,8 +194,7 @@ impl CacheBuilder {
             key.instrument(),
             key.trading_date(),
             Some(hex(key.identity().as_bytes())),
-            EXTERNAL_DOMAIN_MAPPING_NAME,
-            EXTERNAL_DOMAIN_MAPPING_VERSION,
+            mapping,
             events,
         )
     }
@@ -213,7 +234,8 @@ impl CacheBuilder {
                 );
             }
         }
-        let (instrument, trading_date, mapping_name, mapping_version, events) = match config {
+        let mapping = config.mapping_identity();
+        let (instrument, trading_date, events) = match config {
             PartitionNormalizerConfig::Twse(config) => {
                 let instrument = config.instrument().clone();
                 let trading_date = config.trading_date();
@@ -221,13 +243,7 @@ impl CacheBuilder {
                     .normalize_json_lines(&lines)
                     .map_err(|error| CacheBuildError::Normalization(error.to_string()))?
                     .into_events();
-                (
-                    instrument,
-                    trading_date,
-                    TWSE_MAPPING_NAME.to_owned(),
-                    TWSE_MAPPING_VERSION,
-                    events,
-                )
+                (instrument, trading_date, events)
             }
             PartitionNormalizerConfig::Warrant(config) => {
                 let instrument = config.instrument().clone();
@@ -236,13 +252,7 @@ impl CacheBuilder {
                     .normalize_json_lines(&lines)
                     .map_err(|error| CacheBuildError::Normalization(error.to_string()))?
                     .into_events();
-                (
-                    instrument,
-                    trading_date,
-                    TWSE_WARRANT_MAPPING_NAME.to_owned(),
-                    TWSE_WARRANT_MAPPING_VERSION,
-                    events,
-                )
+                (instrument, trading_date, events)
             }
             PartitionNormalizerConfig::Taifex(config) => {
                 let instrument = config.instrument().clone();
@@ -251,13 +261,7 @@ impl CacheBuilder {
                     .normalize_json_lines(&lines)
                     .map_err(|error| CacheBuildError::Normalization(error.to_string()))?
                     .into_events();
-                (
-                    instrument,
-                    trading_date,
-                    TAIFEX_MAPPING_NAME.to_owned(),
-                    TAIFEX_MAPPING_VERSION,
-                    events,
-                )
+                (instrument, trading_date, events)
             }
             PartitionNormalizerConfig::TaifexOption(config) => {
                 let instrument = config.instrument().clone();
@@ -266,13 +270,16 @@ impl CacheBuilder {
                     .normalize_json_lines(&lines)
                     .map_err(|error| CacheBuildError::Normalization(error.to_string()))?
                     .into_events();
-                (
-                    instrument,
-                    trading_date,
-                    TAIFEX_OPTION_MAPPING_NAME.to_owned(),
-                    TAIFEX_OPTION_MAPPING_VERSION,
-                    events,
-                )
+                (instrument, trading_date, events)
+            }
+            PartitionNormalizerConfig::TaifexCalendarSpread(config) => {
+                let instrument = config.instrument().clone();
+                let trading_date = config.trading_date();
+                let events = TaifexNormalizer::new(config)
+                    .normalize_json_lines(&lines)
+                    .map_err(|error| CacheBuildError::Normalization(error.to_string()))?
+                    .into_events();
+                (instrument, trading_date, events)
             }
             PartitionNormalizerConfig::Tpex(config) => {
                 let instrument = config.instrument().clone();
@@ -281,13 +288,7 @@ impl CacheBuilder {
                     .normalize_json_lines(&lines)
                     .map_err(|error| CacheBuildError::Normalization(error.to_string()))?
                     .into_events();
-                (
-                    instrument,
-                    trading_date,
-                    TPEX_MAPPING_NAME.to_owned(),
-                    TPEX_MAPPING_VERSION,
-                    events,
-                )
+                (instrument, trading_date, events)
             }
             PartitionNormalizerConfig::TpexWarrant(config) => {
                 let instrument = config.instrument().clone();
@@ -296,13 +297,7 @@ impl CacheBuilder {
                     .normalize_json_lines(&lines)
                     .map_err(|error| CacheBuildError::Normalization(error.to_string()))?
                     .into_events();
-                (
-                    instrument,
-                    trading_date,
-                    TPEX_WARRANT_MAPPING_NAME.to_owned(),
-                    TPEX_WARRANT_MAPPING_VERSION,
-                    events,
-                )
+                (instrument, trading_date, events)
             }
         };
         let events =
@@ -315,8 +310,7 @@ impl CacheBuilder {
             &instrument,
             trading_date,
             partition_identity,
-            &mapping_name,
-            mapping_version,
+            &mapping,
             events,
         )
     }
@@ -330,8 +324,7 @@ impl CacheBuilder {
         instrument: &market_types::InstrumentId,
         trading_date: market_types::TradingDate,
         partition_identity: Option<String>,
-        mapping_name: &str,
-        mapping_version: u16,
+        mapping: &NormalizerMappingIdentity,
         events: Vec<DomainEvent>,
     ) -> Result<PublishedCache, CacheBuildError> {
         let attempt = staging_root.join("cache-build");
@@ -357,6 +350,9 @@ impl CacheBuilder {
                 .to_canonical_bytes()
                 .map_err(|error| CacheBuildError::Canonical(error.to_string()))?;
             let length = u32::try_from(bytes.len()).map_err(|_| CacheBuildError::EventTooLarge)?;
+            if length > MAX_CACHE_EVENT_RECORD_BYTES {
+                return Err(CacheBuildError::EventTooLarge);
+            }
             writer.write_all(&length.to_be_bytes())?;
             writer.write_all(&bytes)?;
             payload_hasher.update(length.to_be_bytes());
@@ -373,7 +369,7 @@ impl CacheBuilder {
             source,
             instrument,
             trading_date,
-            mapping_version,
+            mapping,
             partition_identity.as_deref(),
             &payload_sha256,
             events.len() as u64,
@@ -394,8 +390,8 @@ impl CacheBuilder {
             canonical_event_version: CANONICAL_EVENT_VERSION,
             ordering_rule_version: ORDERING_RULE_VERSION,
             partition_identity,
-            normalizer_mapping_name: mapping_name.to_owned(),
-            normalizer_mapping_version: mapping_version,
+            normalizer_mapping_name: mapping.name().to_owned(),
+            normalizer_mapping_version: mapping.version(),
         };
         let descriptor_bytes = serde_json::to_vec_pretty(&descriptor)
             .map_err(|error| CacheBuildError::Descriptor(error.to_string()))?;
@@ -433,14 +429,15 @@ impl PartitionCacheCatalog {
         cache_partition_root(&self.data_root, key).map_err(CacheCatalogError::Layout)
     }
 
-    pub fn find(
+    pub fn inspect(
         &self,
         key: &SourcePartitionKey,
         source_revision_identity: &str,
-    ) -> Result<Option<PartitionCacheEntry>, CacheCatalogError> {
+        expected_mapping: &NormalizerMappingIdentity,
+    ) -> Result<PartitionCacheInspection, CacheCatalogError> {
         let root = self.root_for(key)?;
         if !root.is_dir() {
-            return Ok(None);
+            return Ok(PartitionCacheInspection::Missing);
         }
         let mut paths = fs::read_dir(&root)?
             .filter_map(Result::ok)
@@ -448,6 +445,8 @@ impl PartitionCacheCatalog {
             .collect::<Vec<_>>();
         paths.sort();
         let partition_identity = hex(key.identity().as_bytes());
+        let mut saw_stale = false;
+        let mut current = None;
         for path in paths {
             let descriptor_path = path.join("descriptor.yaml");
             if !descriptor_path.is_file() {
@@ -459,11 +458,46 @@ impl PartitionCacheCatalog {
             if descriptor.source_revision_identity == source_revision_identity
                 && descriptor.partition_identity.as_deref() == Some(partition_identity.as_str())
             {
-                return Ok(Some(PartitionCacheEntry { path, descriptor }));
+                if validate_descriptor(&descriptor).is_err()
+                    || descriptor.normalizer_mapping_name != expected_mapping.name()
+                    || descriptor.normalizer_mapping_version != expected_mapping.version()
+                {
+                    saw_stale = true;
+                    continue;
+                }
+                if descriptor.instrument_market != key.instrument().market().discriminant()
+                    || descriptor.instrument_symbol != key.instrument().symbol().as_str()
+                    || descriptor.trading_date_epoch_days != key.trading_date().as_epoch_days()
+                    || path.file_name().and_then(|name| name.to_str())
+                        != Some(descriptor.cache_identity.as_str())
+                {
+                    return Err(CacheCatalogError::Descriptor(
+                        "cache descriptor does not match its partition binding".to_owned(),
+                    ));
+                }
+                let entry = Box::new(PartitionCacheEntry { path, descriptor });
+                if current.replace(entry).is_some() {
+                    return Err(CacheCatalogError::Descriptor(
+                        "multiple current cache artifacts exist for one source revision".to_owned(),
+                    ));
+                }
             }
         }
-        Ok(None)
+        if let Some(entry) = current {
+            Ok(PartitionCacheInspection::Current(entry))
+        } else if saw_stale {
+            Ok(PartitionCacheInspection::Stale)
+        } else {
+            Ok(PartitionCacheInspection::Missing)
+        }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PartitionCacheInspection {
+    Missing,
+    Current(Box<PartitionCacheEntry>),
+    Stale,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -488,7 +522,7 @@ fn cache_identity(
     source: &VerificationReport,
     instrument: &market_types::InstrumentId,
     trading_date: market_types::TradingDate,
-    mapping_version: u16,
+    mapping: &NormalizerMappingIdentity,
     partition_identity: Option<&str>,
     payload_sha256: &str,
     event_count: u64,
@@ -500,7 +534,9 @@ fn cache_identity(
     bytes.push(instrument.market().discriminant());
     bytes.extend_from_slice(instrument.symbol().as_bytes());
     bytes.extend_from_slice(&trading_date.to_canonical_bytes());
-    bytes.extend_from_slice(&mapping_version.to_be_bytes());
+    bytes.extend_from_slice(&(mapping.name().len() as u32).to_be_bytes());
+    bytes.extend_from_slice(mapping.name().as_bytes());
+    bytes.extend_from_slice(&mapping.version().to_be_bytes());
     bytes.extend_from_slice(&MARKET_TYPES_VERSION.to_be_bytes());
     bytes.extend_from_slice(&EVENT_SCHEMA_VERSION.to_be_bytes());
     bytes.extend_from_slice(&CANONICAL_EVENT_VERSION.to_be_bytes());
@@ -610,10 +646,11 @@ impl CacheReader {
             self.finished = true;
             return Ok(None);
         }
-        let length = read_u32(&mut self.reader)?;
-        let mut bytes = vec![0_u8; length as usize];
+        let record_length = read_u32(&mut self.reader)?;
+        let buffer_length = validate_event_record_length(record_length)?;
+        let mut bytes = vec![0_u8; buffer_length];
         self.reader.read_exact(&mut bytes)?;
-        self.hasher.update(length.to_be_bytes());
+        self.hasher.update(record_length.to_be_bytes());
         self.hasher.update(&bytes);
         let event = DomainEvent::from_canonical_bytes(&bytes)
             .map_err(|error| CacheReadError::Canonical(error.to_string()))?;
@@ -641,6 +678,13 @@ impl CacheReader {
     }
 }
 
+fn validate_event_record_length(length: u32) -> Result<usize, CacheReadError> {
+    if length > MAX_CACHE_EVENT_RECORD_BYTES {
+        return Err(CacheReadError::EventTooLarge);
+    }
+    Ok(length as usize)
+}
+
 impl EventStream for CacheReader {
     type Error = CacheReadError;
 
@@ -653,7 +697,7 @@ impl EventStream for CacheReader {
 #[derive(Debug, Clone)]
 pub struct LocalCacheFactory {
     data_root: PathBuf,
-    partitioned: bool,
+    partitioned_source: Option<run_planner::SourceId>,
     opened: Vec<ReplayStreamBinding>,
 }
 
@@ -662,16 +706,16 @@ impl LocalCacheFactory {
     pub fn new(data_root: impl Into<PathBuf>) -> Self {
         Self {
             data_root: data_root.into(),
-            partitioned: false,
+            partitioned_source: None,
             opened: Vec::new(),
         }
     }
 
     #[must_use]
-    pub fn new_partitioned(data_root: impl Into<PathBuf>) -> Self {
+    pub fn new_partitioned(data_root: impl Into<PathBuf>, source: run_planner::SourceId) -> Self {
         Self {
             data_root: data_root.into(),
-            partitioned: true,
+            partitioned_source: Some(source),
             opened: Vec::new(),
         }
     }
@@ -689,9 +733,10 @@ impl ReplayStreamFactory for LocalCacheFactory {
     fn open(&mut self, binding: &ReplayStreamBinding) -> Result<Self::Stream, Self::Error> {
         let cache_identity = hex(binding.cache_identity());
         let source_revision = hex(binding.source_revision_identity());
-        let cache_root = if self.partitioned {
+        let cache_root = if let Some(source) = self.partitioned_source {
             cache_instrument_root(
                 &self.data_root,
+                source,
                 binding.instrument(),
                 binding.trading_date(),
             )
@@ -748,46 +793,11 @@ impl CacheRecord {
 }
 
 fn validate_descriptor(descriptor: &CacheDescriptor) -> Result<(), CacheReadError> {
-    let mapping_compatible = (descriptor.normalizer_mapping_name == TWSE_MAPPING_NAME
-        && descriptor.normalizer_mapping_version == TWSE_MAPPING_VERSION)
-        || (descriptor.normalizer_mapping_name == TWSE_WARRANT_MAPPING_NAME
-            && descriptor.normalizer_mapping_version == TWSE_WARRANT_MAPPING_VERSION)
-        || (descriptor.normalizer_mapping_name == TPEX_MAPPING_NAME
-            && descriptor.normalizer_mapping_version == TPEX_MAPPING_VERSION)
-        || (descriptor.normalizer_mapping_name == TPEX_WARRANT_MAPPING_NAME
-            && descriptor.normalizer_mapping_version == TPEX_WARRANT_MAPPING_VERSION)
-        || (descriptor.normalizer_mapping_name == TAIFEX_MAPPING_NAME
-            && descriptor.normalizer_mapping_version == TAIFEX_MAPPING_VERSION)
-        || (descriptor.normalizer_mapping_name == TAIFEX_OPTION_MAPPING_NAME
-            && descriptor.normalizer_mapping_version == TAIFEX_OPTION_MAPPING_VERSION)
-        || (descriptor.normalizer_mapping_name == EXTERNAL_DOMAIN_MAPPING_NAME
-            && descriptor.normalizer_mapping_version == EXTERNAL_DOMAIN_MAPPING_VERSION);
-    let mapping_market_compatible = match MarketId::from_discriminant(descriptor.instrument_market)
-    {
-        Ok(MarketId::Twse) => {
-            descriptor.normalizer_mapping_name == TWSE_MAPPING_NAME
-                || descriptor.normalizer_mapping_name == TWSE_WARRANT_MAPPING_NAME
-                || descriptor.normalizer_mapping_name == EXTERNAL_DOMAIN_MAPPING_NAME
-        }
-        Ok(MarketId::Tpex) => {
-            descriptor.normalizer_mapping_name == TPEX_MAPPING_NAME
-                || descriptor.normalizer_mapping_name == TPEX_WARRANT_MAPPING_NAME
-                || descriptor.normalizer_mapping_name == EXTERNAL_DOMAIN_MAPPING_NAME
-        }
-        Ok(MarketId::Taifex) => {
-            descriptor.normalizer_mapping_name == TAIFEX_MAPPING_NAME
-                || descriptor.normalizer_mapping_name == TAIFEX_OPTION_MAPPING_NAME
-                || descriptor.normalizer_mapping_name == EXTERNAL_DOMAIN_MAPPING_NAME
-        }
-        Err(_) => false,
-    };
     if descriptor.cache_format_version != CACHE_FORMAT_VERSION
         || descriptor.market_types_version != MARKET_TYPES_VERSION
         || descriptor.event_schema_version != EVENT_SCHEMA_VERSION
         || descriptor.canonical_event_version != CANONICAL_EVENT_VERSION
         || descriptor.ordering_rule_version != ORDERING_RULE_VERSION
-        || !mapping_compatible
-        || !mapping_market_compatible
     {
         return Err(CacheReadError::IncompatibleDescriptor);
     }
@@ -909,6 +919,7 @@ pub enum CacheReadError {
     BindingMismatch,
     PayloadChecksum,
     BoundsMismatch,
+    EventTooLarge,
     TrailingBytes,
 }
 
@@ -928,6 +939,8 @@ impl From<io::Error> for CacheReadError {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Seek, SeekFrom};
+
     use market_types::{InstrumentId, MarketId, Symbol, TradingDate};
 
     use super::*;
@@ -936,6 +949,18 @@ mod tests {
     };
     use run_planner::{SessionPlan, SourceId, SourcePartitionKey};
     use strategy_api::SessionKind;
+
+    #[test]
+    fn cache_event_record_length_is_bounded_before_allocation() {
+        assert!(matches!(
+            validate_event_record_length(MAX_CACHE_EVENT_RECORD_BYTES),
+            Ok(length) if length == MAX_CACHE_EVENT_RECORD_BYTES as usize
+        ));
+        assert!(matches!(
+            validate_event_record_length(MAX_CACHE_EVENT_RECORD_BYTES + 1),
+            Err(CacheReadError::EventTooLarge)
+        ));
+    }
 
     fn source(root: &Path) -> TwseNormalizerConfig {
         let instrument = InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap());
@@ -1006,6 +1031,29 @@ mod tests {
     }
 
     #[test]
+    fn cache_reader_rejects_oversized_record_before_reading_its_body() {
+        let root = tempfile::tempdir().unwrap();
+        let published = CacheBuilder::new(root.path())
+            .build_current(source(root.path()))
+            .unwrap();
+        let mut events = OpenOptions::new()
+            .write(true)
+            .open(published.path().join("events.bin"))
+            .unwrap();
+        events.seek(SeekFrom::Start(19)).unwrap(); // magic + version + record count
+        events
+            .write_all(&(MAX_CACHE_EVENT_RECORD_BYTES + 1).to_be_bytes())
+            .unwrap();
+        drop(events);
+
+        let mut reader = CacheReader::open(published.path()).unwrap();
+        assert!(matches!(
+            reader.next_record(),
+            Err(CacheReadError::EventTooLarge)
+        ));
+    }
+
+    #[test]
     fn mapping_version_is_part_of_descriptor() {
         let root = tempfile::tempdir().unwrap();
         let config = source(root.path());
@@ -1014,7 +1062,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             published.descriptor().normalizer_mapping_version,
-            TWSE_MAPPING_VERSION
+            twse_normalizer::MAPPING_VERSION
         );
         assert_eq!(
             published.descriptor().ordering_rule_version,
@@ -1027,34 +1075,68 @@ mod tests {
     }
 
     #[test]
-    fn tpex_warrant_mapping_is_accepted_only_for_tpex_descriptors() {
-        let descriptor = CacheDescriptor {
-            cache_format_version: CACHE_FORMAT_VERSION,
-            cache_identity: "cache".to_owned(),
-            source_revision_identity: "source".to_owned(),
-            instrument_market: MarketId::Tpex.discriminant(),
-            instrument_symbol: "warrant".to_owned(),
-            trading_date_epoch_days: 0,
-            event_count: 0,
-            first_match_time_micros: None,
-            last_match_time_micros: None,
-            payload_sha256: "0".to_owned(),
-            market_types_version: MARKET_TYPES_VERSION,
-            event_schema_version: EVENT_SCHEMA_VERSION,
-            canonical_event_version: CANONICAL_EVENT_VERSION,
-            ordering_rule_version: ORDERING_RULE_VERSION,
-            partition_identity: None,
-            normalizer_mapping_name: TPEX_WARRANT_MAPPING_NAME.to_owned(),
-            normalizer_mapping_version: TPEX_WARRANT_MAPPING_VERSION,
+    fn cache_identity_binds_the_mapping_name_as_well_as_its_version() {
+        let root = tempfile::tempdir().unwrap();
+        let config = source(root.path());
+        let report = LocalSourceRepository::new(root.path())
+            .verify_current()
+            .unwrap();
+        let common = |mapping_name| {
+            let mapping = NormalizerMappingIdentity::new(mapping_name, 1).unwrap();
+            cache_identity(
+                &report,
+                config.instrument(),
+                config.trading_date(),
+                &mapping,
+                None,
+                "same-payload",
+                1,
+            )
         };
-        assert!(validate_descriptor(&descriptor).is_ok());
 
-        let mut wrong_market = descriptor;
-        wrong_market.instrument_market = MarketId::Twse.discriminant();
-        assert!(matches!(
-            validate_descriptor(&wrong_market),
-            Err(CacheReadError::IncompatibleDescriptor)
-        ));
+        assert_ne!(common("provider-a"), common("provider-b"));
+    }
+
+    #[test]
+    fn cache_reader_rejects_every_stale_canonical_schema_version() {
+        let root = tempfile::tempdir().unwrap();
+        let published = CacheBuilder::new(root.path())
+            .build_current(source(root.path()))
+            .unwrap();
+        let descriptor_path = published.path().join("descriptor.yaml");
+
+        for version_field in 0..5 {
+            let mut descriptor = published.descriptor().clone();
+            match version_field {
+                0 => descriptor.cache_format_version -= 1,
+                1 => descriptor.market_types_version -= 1,
+                2 => descriptor.event_schema_version -= 1,
+                3 => descriptor.canonical_event_version -= 1,
+                4 => descriptor.ordering_rule_version -= 1,
+                _ => unreachable!(),
+            }
+            fs::write(&descriptor_path, serde_json::to_vec(&descriptor).unwrap()).unwrap();
+
+            assert!(matches!(
+                CacheReader::open(published.path()),
+                Err(CacheReadError::IncompatibleDescriptor)
+            ));
+        }
+    }
+
+    #[test]
+    fn cache_reader_does_not_require_a_provider_mapping_registry() {
+        let root = tempfile::tempdir().unwrap();
+        let published = CacheBuilder::new(root.path())
+            .build_current(source(root.path()))
+            .unwrap();
+        let descriptor_path = published.path().join("descriptor.yaml");
+        let mut descriptor = published.descriptor().clone();
+        descriptor.normalizer_mapping_name = "another-provider-mapping".to_owned();
+        descriptor.normalizer_mapping_version = 42;
+        fs::write(&descriptor_path, serde_json::to_vec(&descriptor).unwrap()).unwrap();
+
+        assert!(CacheReader::open(published.path()).is_ok());
     }
 
     #[test]
@@ -1098,6 +1180,7 @@ mod tests {
             MatchTime::parse("2026-07-27T13:35:00+08:00").unwrap(),
         )
         .unwrap();
+        let expected_mapping = PartitionNormalizerConfig::Twse(config.clone()).mapping_identity();
         let cache = CacheBuilder::new(root.path())
             .build_partition(&key, PartitionNormalizerConfig::Twse(config))
             .unwrap();
@@ -1114,9 +1197,54 @@ mod tests {
         );
         let catalog = PartitionCacheCatalog::new(root.path());
         let found = catalog
-            .find(&key, &source.manifest().revision_identity)
-            .unwrap()
-            .expect("partition cache");
-        assert_eq!(found.descriptor(), cache.descriptor());
+            .inspect(
+                &key,
+                &source.manifest().revision_identity,
+                &expected_mapping,
+            )
+            .unwrap();
+        assert!(matches!(
+            found,
+            PartitionCacheInspection::Current(ref entry)
+                if entry.descriptor() == cache.descriptor()
+        ));
+
+        let mut reader = CacheReader::open(cache.path()).unwrap();
+        let mut events = Vec::new();
+        while let Some(record) = reader.next_record().unwrap() {
+            events.push(record.into_event());
+        }
+        let same_version_different_name = NormalizerMappingIdentity::new(
+            "another-provider-twse-mapping",
+            expected_mapping.version(),
+        )
+        .unwrap();
+        let other_cache = CacheBuilder::new(root.path())
+            .build_external_partition(&key, &same_version_different_name, events)
+            .unwrap();
+        assert_ne!(
+            cache.descriptor().cache_identity,
+            other_cache.descriptor().cache_identity
+        );
+        assert_ne!(cache.path(), other_cache.path());
+
+        let descriptor_path = cache.path().join("descriptor.yaml");
+        let mut stale_descriptor = cache.descriptor().clone();
+        stale_descriptor.normalizer_mapping_version -= 1;
+        fs::write(
+            descriptor_path,
+            serde_json::to_vec(&stale_descriptor).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            catalog
+                .inspect(
+                    &key,
+                    &source.manifest().revision_identity,
+                    &expected_mapping,
+                )
+                .unwrap(),
+            PartitionCacheInspection::Stale
+        );
     }
 }

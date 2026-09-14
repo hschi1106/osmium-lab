@@ -13,7 +13,24 @@ use crate::CompletedBacktest;
 use crate::CompletedMultiBacktest;
 use crate::CompletedScheduledMultiBacktest;
 
-pub const RUN_MANIFEST_VERSION: u16 = 3;
+pub const RUN_MANIFEST_VERSION: u16 = 4;
+
+fn run_version_set() -> serde_json::Value {
+    serde_json::json!({
+        "event_schema": market_types::EVENT_SCHEMA_VERSION,
+        "canonical_event": market_types::CANONICAL_EVENT_VERSION,
+        "market_state": market_state::MARKET_STATE_VERSION,
+        "state_reducer": market_state::STATE_REDUCER_VERSION,
+        "canonical_market_state": market_state::CANONICAL_MARKET_STATE_VERSION,
+        "canonical_final_state_set": market_state::CANONICAL_FINAL_STATE_SET_VERSION,
+        "ordering_rule": replay_engine::ORDERING_RULE_VERSION,
+        "replay_engine": replay_engine::REPLAY_ENGINE_VERSION,
+        "canonical_replay_event_stream": replay_engine::CANONICAL_REPLAY_EVENT_STREAM_VERSION,
+        "strategy_api": strategy_api::STRATEGY_API_VERSION,
+        "execution_sim": execution_sim::EXECUTION_SIM_VERSION,
+        "fill_model": execution_sim::FILL_MODEL_VERSION,
+    })
+}
 
 pub fn publish_backtest(
     output: &Path,
@@ -23,6 +40,7 @@ pub fn publish_backtest(
     cache_identity: &str,
     strategy_metadata: &ResolvedStrategyMetadata,
 ) -> Result<(), ArtifactError> {
+    let accounting_version = completed.ledger.accounting_version();
     validate_strategy_metadata(&completed.strategy_output, strategy_metadata)?;
     if output.exists() {
         return Err(ArtifactError::OutputExists(output.to_path_buf()));
@@ -133,6 +151,8 @@ pub fn publish_backtest(
         .collect::<BTreeMap<_, _>>();
     let manifest = serde_json::json!({
         "run_manifest_version": RUN_MANIFEST_VERSION,
+        "versions": run_version_set(),
+        "accounting_version": accounting_version,
         "status": "successful",
         "completion_quality": "full",
         "plan_identity": hex(plan_identity),
@@ -269,6 +289,7 @@ pub fn publish_multi_backtest(
         .collect::<BTreeMap<_, _>>();
     let manifest = serde_json::json!({
         "run_manifest_version": RUN_MANIFEST_VERSION,
+        "versions": run_version_set(),
         "status": "successful",
         "completion_quality": "full",
         "accounting_version": accounting_version,
@@ -437,6 +458,7 @@ pub fn publish_scheduled_multi_backtest(
         .collect::<BTreeMap<_, _>>();
     let manifest = serde_json::json!({
         "run_manifest_version": RUN_MANIFEST_VERSION,
+        "versions": run_version_set(),
         "status": "successful",
         "completion_quality": "full",
         "execution_policy": "scheduled_visible_depth_v1",

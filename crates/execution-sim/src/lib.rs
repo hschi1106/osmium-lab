@@ -5,7 +5,7 @@ mod scheduled;
 use std::{collections::BTreeMap, collections::BTreeSet, error::Error, fmt};
 
 use market_types::{
-    DomainEvent, EventPayload, InstrumentId, MatchTime, Price, Quantity, QuantityUnit,
+    DomainEvent, EventPayload, InstrumentId, MatchTime, Price, PricePolicy, Quantity, QuantityUnit,
 };
 use replay_engine::EventOccurrence;
 use strategy_api::{
@@ -14,7 +14,7 @@ use strategy_api::{
     TradingContext,
 };
 
-pub const EXECUTION_SIM_VERSION: u16 = 2;
+pub const EXECUTION_SIM_VERSION: u16 = 3;
 pub const FILL_MODEL_VERSION: u16 = 2;
 
 pub use accounting::{
@@ -31,6 +31,7 @@ pub use scheduled::{
     AuctionMatchEvidence, ScheduledActivation, ScheduledDepthModel, ScheduledDepthSimulator,
     ScheduledInstrumentConfig, ScheduledOrder, ScheduledOrderStatus, ScheduledSimulationError,
     ScheduledSubmission, ScheduledSubmissionContext, VisibleBookEvidence,
+    VisibleTradingStateEvidence,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,6 +208,7 @@ pub struct Simulator {
     universe: BTreeSet<InstrumentId>,
     quantity_unit: QuantityUnit,
     model: FillModel,
+    price_policy: PricePolicy,
     orders: Vec<SimOrder>,
     fills: Vec<FillRecord>,
     next_acceptance_sequence: u64,
@@ -219,10 +221,21 @@ impl Simulator {
         quantity_unit: QuantityUnit,
         model: FillModel,
     ) -> Self {
+        Self::new_with_price_policy(universe, quantity_unit, model, PricePolicy::PositiveOnly)
+    }
+
+    #[must_use]
+    pub fn new_with_price_policy(
+        universe: impl IntoIterator<Item = InstrumentId>,
+        quantity_unit: QuantityUnit,
+        model: FillModel,
+        price_policy: PricePolicy,
+    ) -> Self {
         Self {
             universe: universe.into_iter().collect(),
             quantity_unit,
             model,
+            price_policy,
             orders: Vec::new(),
             fills: Vec::new(),
             next_acceptance_sequence: 1,
@@ -245,6 +258,12 @@ impl Simulator {
         if intent.quantity().unit() != self.quantity_unit {
             return Ok(OrderFeedback::Rejected {
                 reason: RejectionReason::QuantityUnitMismatch,
+            });
+        }
+        if matches!(intent.order_type(), OrderType::Limit { limit_price } if !self.price_policy.accepts(limit_price))
+        {
+            return Ok(OrderFeedback::Rejected {
+                reason: RejectionReason::PriceNotAllowedByInstrumentProfile,
             });
         }
         let entry_allowed = match trading.new_order_entry() {
@@ -299,6 +318,15 @@ impl Simulator {
         occurrence: &EventOccurrence,
         trading: &TradingContext,
     ) -> Result<Vec<OrderFeedback>, SimulationError> {
+        if matches!(
+            trading.matching(),
+            MatchingState::Indicative(
+                strategy_api::IndicativeReason::VolatilityInterruptionDown
+                    | strategy_api::IndicativeReason::VolatilityInterruptionUp
+            )
+        ) {
+            return Ok(self.cancel_pending_market_orders(event.instrument()));
+        }
         if !matches!(trading.matching(), MatchingState::Enabled(_)) {
             return Ok(Vec::new());
         }
@@ -309,8 +337,10 @@ impl Simulator {
             return Ok(Vec::new());
         }
         let model = self.model;
-        let mut available_buy = evidence(event, model.evidence, OrderSide::Buy);
-        let mut available_sell = evidence(event, model.evidence, OrderSide::Sell);
+        let mut available_buy = evidence(event, model.evidence, OrderSide::Buy)
+            .filter(|(price, _)| self.price_policy.accepts(*price));
+        let mut available_sell = evidence(event, model.evidence, OrderSide::Sell)
+            .filter(|(price, _)| self.price_policy.accepts(*price));
         let mut feedback = Vec::new();
         self.orders
             .sort_by_key(|order| (order.acceptance_sequence, order.id));
@@ -340,7 +370,12 @@ impl Simulator {
             if !limit_touched(&order.intent, evidence_price) {
                 continue;
             }
-            let fill_price = apply_slippage(evidence_price, order.intent.side(), model)?;
+            let fill_price = apply_slippage(
+                evidence_price,
+                order.intent.side(),
+                model,
+                self.price_policy,
+            )?;
             if !limit_touched(&order.intent, fill_price) {
                 continue;
             }
@@ -393,6 +428,27 @@ impl Simulator {
             }
         }
         Ok(feedback)
+    }
+
+    fn cancel_pending_market_orders(&mut self, instrument: &InstrumentId) -> Vec<OrderFeedback> {
+        self.orders
+            .iter_mut()
+            .filter(|order| {
+                order.intent.instrument() == instrument
+                    && matches!(order.intent.order_type(), OrderType::Market)
+                    && matches!(
+                        order.status,
+                        OrderStatus::Pending | OrderStatus::PartiallyFilled
+                    )
+            })
+            .map(|order| {
+                order.status = OrderStatus::Cancelled;
+                OrderFeedback::Cancelled {
+                    order_id: order.id,
+                    reason: CancellationReason::VolatilityInterruption,
+                }
+            })
+            .collect()
     }
 
     pub fn cancel_end_of_run(&mut self) -> Vec<OrderFeedback> {
@@ -486,6 +542,7 @@ fn apply_slippage(
     price: Price,
     side: OrderSide,
     model: FillModel,
+    price_policy: PricePolicy,
 ) -> Result<Price, SimulationError> {
     if model.adverse_price_delta.atoms() < 0 {
         return Err(SimulationError::InvalidSlippage);
@@ -495,7 +552,11 @@ fn apply_slippage(
         OrderSide::Sell => price.as_decimal().checked_sub(model.adverse_price_delta),
     }
     .map_err(|_| SimulationError::InvalidSlippage)?;
-    Price::new(decimal).map_err(|_| SimulationError::InvalidSlippage)
+    let adjusted = Price::new(decimal);
+    if !price_policy.accepts(adjusted) {
+        return Err(SimulationError::InvalidSlippage);
+    }
+    Ok(adjusted)
 }
 
 fn add_latency(
@@ -554,14 +615,19 @@ pub struct MultiSimulator {
 
 impl MultiSimulator {
     pub fn new(
-        configs: impl IntoIterator<Item = (InstrumentId, QuantityUnit, FillModel)>,
+        configs: impl IntoIterator<Item = (InstrumentId, QuantityUnit, FillModel, PricePolicy)>,
     ) -> Result<Self, SimulationError> {
         let mut simulators = BTreeMap::new();
-        for (instrument, quantity_unit, model) in configs {
+        for (instrument, quantity_unit, model, price_policy) in configs {
             if simulators
                 .insert(
                     instrument.clone(),
-                    Simulator::new([instrument], quantity_unit, model),
+                    Simulator::new_with_price_policy(
+                        [instrument],
+                        quantity_unit,
+                        model,
+                        price_policy,
+                    ),
                 )
                 .is_some()
             {
@@ -688,11 +754,16 @@ impl MultiSimulator {
 
 #[cfg(test)]
 mod tests {
+    use market_state::{
+        MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
+    };
     use market_types::{
         BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, EventPayload, IndicativeAuction,
-        MarketAnnotations, MarketId, Observation, QuoteSnapshot, SourceFormatId, Symbol,
-        TradePrint, TradePrintKind, TradingDate, Volume,
+        IndicativeAuctionKind, MarketAnnotations, MarketId, Observation, ObservedTrade,
+        QuoteSnapshot, SourceFormatId, Symbol, TradeObservationKind, TradingDate,
+        TwseQuoteAnnotations, Volume,
     };
+    use replay_engine::ReplayCore;
 
     use super::*;
 
@@ -720,16 +791,38 @@ mod tests {
             EventPayload::QuoteSnapshot(
                 QuoteSnapshot::new(
                     book,
-                    Observation::Set(TradePrint::new(
+                    Observation::Set(ObservedTrade::new(
                         Price::parse("100").unwrap(),
                         quantity(1),
-                        TradePrintKind::Regular,
+                        TradeObservationKind::Regular,
                     )),
                     Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
                     MarketAnnotations::None,
                 )
                 .unwrap(),
             ),
+        )
+    }
+
+    fn twse_event(micros: i64, cumulative: u64, limit_flags: u8) -> DomainEvent {
+        let template = event();
+        let EventPayload::QuoteSnapshot(snapshot) = template.payload() else {
+            unreachable!("event helper creates a quote")
+        };
+        let quote = QuoteSnapshot::new(
+            snapshot.book().clone(),
+            snapshot.trade().clone(),
+            Observation::Set(Volume::new(cumulative, QuantityUnit::TradingUnit)),
+            MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0x10, limit_flags)),
+        )
+        .unwrap();
+        DomainEvent::new(
+            template.instrument().clone(),
+            template.trading_date(),
+            template.source_format().clone(),
+            MatchTime::from_unix_microseconds(micros),
+            Some(micros as u64),
+            EventPayload::QuoteSnapshot(quote),
         )
     }
 
@@ -784,7 +877,13 @@ mod tests {
             order_latency_ms: 0,
         };
         assert_eq!(
-            apply_slippage(Price::parse("100").unwrap(), OrderSide::Buy, model).unwrap(),
+            apply_slippage(
+                Price::parse("100").unwrap(),
+                OrderSide::Buy,
+                model,
+                PricePolicy::PositiveOnly,
+            )
+            .unwrap(),
             Price::parse("101").unwrap()
         );
     }
@@ -801,8 +900,9 @@ mod tests {
             actual.source_format().clone(),
             actual.match_time(),
             None,
-            EventPayload::IndicativeOpeningAuction(
+            EventPayload::IndicativeAuction(
                 IndicativeAuction::new(
+                    IndicativeAuctionKind::Opening,
                     Observation::Set(Price::parse("100").unwrap()),
                     Observation::Set(Quantity::new(1, QuantityUnit::TradingUnit).unwrap()),
                     Observation::Set(snapshot.book().clone()),
@@ -814,6 +914,155 @@ mod tests {
         );
         assert!(evidence(&auction, EvidenceMode::TopOfBook, OrderSide::Buy).is_none());
         assert!(evidence(&auction, EvidenceMode::TradePrint, OrderSide::Buy).is_none());
+    }
+
+    #[test]
+    fn volatility_interruption_restricts_new_orders_and_cancels_pending_market_orders() {
+        let normal_event = twse_event(1, 1, 0);
+        let pause_event = twse_event(2, 2, 0x01);
+        let instrument = normal_event.instrument().clone();
+        let other_instrument = InstrumentId::new(MarketId::Twse, Symbol::new("2317").unwrap());
+        let date = normal_event.trading_date();
+        let segment_id = SessionSegmentId::new("regular").unwrap();
+        let segment = strategy_api::SessionSegment::new(
+            segment_id.clone(),
+            strategy_api::SessionKind::Regular,
+            date,
+            MatchTime::from_unix_microseconds(0),
+            MatchTime::from_unix_microseconds(1_000_000),
+        )
+        .unwrap();
+        let mut core = ReplayCore::new(
+            vec![MarketState::new(instrument.clone(), date)],
+            MarketStateReducer::twse_regular(),
+            ReducerContext::new(date, segment_id, SegmentBoundaryPolicy::Carry, 1),
+        )
+        .unwrap();
+        let mut simulator = Simulator::new(
+            [instrument.clone(), other_instrument.clone()],
+            QuantityUnit::TradingUnit,
+            FillModel {
+                evidence: EvidenceMode::TopOfBook,
+                quantity: QuantityPolicy::Displayed,
+                adverse_price_delta: market_types::Decimal::ZERO,
+                market_data_latency_ms: 0,
+                order_latency_ms: 0,
+            },
+        );
+        let quantity = Quantity::new(1, QuantityUnit::TradingUnit).unwrap();
+
+        let normal_commit = core.apply_ordered(&normal_event).unwrap();
+        let normal_state = core.state(&instrument).unwrap().view();
+        let normal_context = strategy_api::TwseTradingContextEvaluator
+            .evaluate(
+                &normal_event,
+                normal_commit.occurrence(),
+                normal_state,
+                &segment,
+            )
+            .unwrap();
+        let accepted = simulator
+            .submit(
+                "test.stability",
+                normal_commit.occurrence(),
+                &normal_context,
+                1,
+                OrderIntent::new(
+                    instrument.clone(),
+                    OrderSide::Buy,
+                    quantity,
+                    OrderType::Market,
+                ),
+            )
+            .unwrap();
+        let OrderFeedback::Accepted { order_id } = accepted else {
+            panic!("market order is accepted before the stability trigger")
+        };
+        let other_order_id = match simulator
+            .submit(
+                "test.stability",
+                normal_commit.occurrence(),
+                &normal_context,
+                2,
+                OrderIntent::new(
+                    other_instrument,
+                    OrderSide::Buy,
+                    quantity,
+                    OrderType::Market,
+                ),
+            )
+            .unwrap()
+        {
+            OrderFeedback::Accepted { order_id } => order_id,
+            feedback => panic!("other-instrument market order was not accepted: {feedback:?}"),
+        };
+
+        let pause_commit = core.apply_ordered(&pause_event).unwrap();
+        let pause_state = core.state(&instrument).unwrap().view();
+        let pause_context = strategy_api::TwseTradingContextEvaluator
+            .evaluate(
+                &pause_event,
+                pause_commit.occurrence(),
+                pause_state,
+                &segment,
+            )
+            .unwrap();
+        assert_eq!(
+            pause_context.new_order_entry(),
+            NewOrderEntry::Restricted(OrderRestrictionReason::IndicativeMarket)
+        );
+        assert_eq!(
+            simulator
+                .evaluate(&pause_event, pause_commit.occurrence(), &pause_context)
+                .unwrap(),
+            vec![OrderFeedback::Cancelled {
+                order_id,
+                reason: CancellationReason::VolatilityInterruption,
+            }]
+        );
+        assert_eq!(simulator.orders()[0].status(), OrderStatus::Cancelled);
+        assert_eq!(simulator.orders()[1].id(), other_order_id);
+        assert_eq!(simulator.orders()[1].status(), OrderStatus::Pending);
+
+        let market = simulator
+            .submit(
+                "test.stability",
+                pause_commit.occurrence(),
+                &pause_context,
+                3,
+                OrderIntent::new(
+                    instrument.clone(),
+                    OrderSide::Buy,
+                    quantity,
+                    OrderType::Market,
+                ),
+            )
+            .unwrap();
+        assert_eq!(
+            market,
+            OrderFeedback::Rejected {
+                reason: RejectionReason::NewOrderEntryBlocked,
+            }
+        );
+        assert!(matches!(
+            simulator
+                .submit(
+                    "test.stability",
+                    pause_commit.occurrence(),
+                    &pause_context,
+                    4,
+                    OrderIntent::new(
+                        instrument,
+                        OrderSide::Buy,
+                        quantity,
+                        OrderType::Limit {
+                            limit_price: Price::parse("101").unwrap(),
+                        },
+                    ),
+                )
+                .unwrap(),
+            OrderFeedback::Accepted { .. }
+        ));
     }
 
     #[test]

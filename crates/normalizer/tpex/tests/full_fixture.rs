@@ -4,7 +4,9 @@ use std::{
     path::PathBuf,
 };
 
-use market_types::{EventPayload, InstrumentId, MarketId, MatchTime, Symbol, TradingDate};
+use market_types::{
+    EventPayload, IndicativeAuctionKind, InstrumentId, MarketId, MatchTime, Symbol, TradingDate,
+};
 use tpex_normalizer::{NormalizerConfig, TpexNormalizer};
 
 #[test]
@@ -48,10 +50,17 @@ fn synthetic_regular_fixture_normalizes_offline() {
         |(quotes, trades, opening, closing), event| match event.payload() {
             EventPayload::QuoteSnapshot(_) => (quotes + 1, trades, opening, closing),
             EventPayload::TradeBatch(_) => (quotes, trades + 1, opening, closing),
-            EventPayload::IndicativeOpeningAuction(_) => (quotes, trades, opening + 1, closing),
-            EventPayload::IndicativeClosingAuction(_) => (quotes, trades, opening, closing + 1),
+            EventPayload::IndicativeAuction(auction) => match auction.kind() {
+                IndicativeAuctionKind::Opening => (quotes, trades, opening + 1, closing),
+                IndicativeAuctionKind::Closing => (quotes, trades, opening, closing + 1),
+                IndicativeAuctionKind::IntradayStability { .. }
+                | IndicativeAuctionKind::IntradayUnclassified => (quotes, trades, opening, closing),
+            },
             EventPayload::BookSnapshot(_) => {
                 panic!("TPEx M4 fixture must not produce BookSnapshot")
+            }
+            EventPayload::MarketStatus(_) => {
+                panic!("TPEx M4 fixture has no status-only observations")
             }
         },
     );

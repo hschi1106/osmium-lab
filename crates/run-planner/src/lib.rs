@@ -8,9 +8,9 @@ pub use config::{
     CACHE_POLICY_VERSION, CONFIG_SCHEMA_VERSION, CachePolicy, ChargeBasis, ChargeConfig,
     ChargeSides, ConfigError, Currency, CurrencyAmount, DayTradeMatchingConfig, DayTradeTaxConfig,
     EFFECTIVE_CONFIG_VERSION, EffectiveConfigChecksum, EffectiveRunConfig, ExecutionPolicyConfig,
-    FillEvidence, FillModelConfig, InstrumentChargeConfig, InstrumentEconomicsConfig,
-    LEGACY_EFFECTIVE_CONFIG_VERSION, LatencyConfig, MarkingPolicyConfig, OutputPolicy,
-    PositionAccountingConfig, QuantityAllocationConfig, QuantityEvidence,
+    FillEvidence, FillModelConfig, InstrumentChargeConfig, InstrumentContractConfig,
+    InstrumentEconomicsConfig, InstrumentReferenceConfig, LatencyConfig, MarkingPolicyConfig,
+    OutputPolicy, PositionAccountingConfig, QuantityAllocationConfig, QuantityEvidence,
     REPLAY_DATA_POLICY_VERSION, ReplayDataPolicy, RoundingPolicy, RunConfig, SOURCE_POLICY_VERSION,
     ScheduledExecutionConfig, SimulationConfig, SlippageModelConfig, SourcePolicy, StrategyBinding,
 };

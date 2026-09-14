@@ -2,21 +2,25 @@ use std::{error::Error, fmt};
 
 use market_types::{
     BookError, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventError,
-    EventPayload, IndicativeAuction, InstrumentId, MarketAnnotations, MarketId, MatchTime,
-    MatchTimeError, Observation, Price, PriceError, Quantity, QuantityError, QuantityUnit,
-    SourceFormatId, TradeBatch, TradeOrder, TradePrint, TradePrintKind, TradingDate,
+    EventPayload, IndicativeAuction, IndicativeAuctionKind, InstrumentId, MarketAnnotations,
+    MarketId, MatchTime, MatchTimeError, Observation, ObservedTrade, Price, PriceError, Quantity,
+    QuantityError, QuantityUnit, SourceFormatId, TradeBatch, TradeBatchOrdering,
+    TradeObservationKind, TradingDate,
 };
 use serde::Deserialize;
 use serde_json::value::RawValue;
 
 pub const MAPPING_NAME: &str = "TeralionTaifexFutures";
-pub const MAPPING_VERSION: u16 = 2;
+pub const MAPPING_VERSION: u16 = 3;
+pub const SPREAD_MAPPING_NAME: &str = "TeralionTaifexCalendarSpreads";
+pub const SPREAD_MAPPING_VERSION: u16 = 1;
 pub const OPTION_MAPPING_NAME: &str = "TeralionTaifexOptions";
-pub const OPTION_MAPPING_VERSION: u16 = 1;
+pub const OPTION_MAPPING_VERSION: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstrumentProfile {
     Futures,
+    FuturesCalendarSpread,
     IndexOptions,
 }
 
@@ -55,6 +59,20 @@ impl NormalizerConfig {
             instrument,
             trading_date,
             InstrumentProfile::IndexOptions,
+            [(replay_start, replay_end_exclusive)],
+        )
+    }
+
+    pub fn new_calendar_spread(
+        instrument: InstrumentId,
+        trading_date: TradingDate,
+        replay_start: MatchTime,
+        replay_end_exclusive: MatchTime,
+    ) -> Result<Self, ConfigError> {
+        Self::for_profile(
+            instrument,
+            trading_date,
+            InstrumentProfile::FuturesCalendarSpread,
             [(replay_start, replay_end_exclusive)],
         )
     }
@@ -129,7 +147,7 @@ impl NormalizerConfig {
     #[must_use]
     pub fn source_market(&self) -> &'static str {
         match self.profile {
-            InstrumentProfile::Futures => "taifex_fut",
+            InstrumentProfile::Futures | InstrumentProfile::FuturesCalendarSpread => "taifex_fut",
             InstrumentProfile::IndexOptions => "taifex_opt",
         }
     }
@@ -335,13 +353,23 @@ impl TaifexNormalizer {
         }
         let mut trades = Vec::with_capacity(wire.trades.len());
         for trade in wire.trades {
-            let price = parse_price(record_number, &context, "price", trade.price)?;
+            let price = parse_price(
+                record_number,
+                &context,
+                "price",
+                trade.price,
+                self.config.profile,
+            )?;
             let quantity = parse_quantity(record_number, &context, "quantity", trade.quantity)?;
-            trades.push(TradePrint::new(price, quantity, TradePrintKind::Regular));
+            trades.push(ObservedTrade::new(
+                price,
+                quantity,
+                TradeObservationKind::Regular,
+            ));
         }
         let batch = TradeBatch::new(
             trades,
-            TradeOrder::SourceOrdered,
+            TradeBatchOrdering::SourceSequencePreserved,
             Observation::NoObservation,
             MarketAnnotations::None,
         )
@@ -364,6 +392,13 @@ impl TaifexNormalizer {
         match_time: MatchTime,
         json: &str,
     ) -> Result<ClassifiedRecord, NormalizationError> {
+        if self.config.profile == InstrumentProfile::FuturesCalendarSpread {
+            return Err(payload_error(
+                record_number,
+                context,
+                "calendar spread profile does not accept opening indicative records",
+            ));
+        }
         let wire: WireTradeRecord<'_> = parse_json(record_number, &context, json)?;
         if wire.trades.len() != 1 {
             return Err(payload_error(
@@ -396,7 +431,7 @@ impl TaifexNormalizer {
             (Observation::NoObservation, Observation::NoObservation)
         } else {
             (
-                Observation::Set(Price::new(decimal).map_err(|error| {
+                Observation::Set(Price::positive(decimal).map_err(|error| {
                     NormalizationError::new(
                         record_number,
                         context.clone(),
@@ -415,6 +450,7 @@ impl TaifexNormalizer {
             )
         };
         let auction = IndicativeAuction::new(
+            IndicativeAuctionKind::Opening,
             price,
             quantity,
             Observation::NoObservation,
@@ -428,7 +464,7 @@ impl TaifexNormalizer {
             source_format,
             match_time,
             None,
-            EventPayload::IndicativeOpeningAuction(auction),
+            EventPayload::IndicativeAuction(auction),
         ))))
     }
 
@@ -441,8 +477,20 @@ impl TaifexNormalizer {
         json: &str,
     ) -> Result<ClassifiedRecord, NormalizationError> {
         let wire: WireBookRecord<'_> = parse_json(record_number, &context, json)?;
-        let bids = parse_side(record_number, &context, BookSideKind::Bid, wire.bids)?;
-        let asks = parse_side(record_number, &context, BookSideKind::Ask, wire.asks)?;
+        let bids = parse_side(
+            record_number,
+            &context,
+            BookSideKind::Bid,
+            wire.bids,
+            self.config.profile,
+        )?;
+        let asks = parse_side(
+            record_number,
+            &context,
+            BookSideKind::Ask,
+            wire.asks,
+            self.config.profile,
+        )?;
         let book = CompleteBookSnapshot::new(bids, asks).map_err(|error| {
             NormalizationError::new(
                 record_number,
@@ -475,16 +523,13 @@ fn expected_type(format: &str) -> Option<&'static str> {
 }
 
 fn sort_events(events: &mut [DomainEvent]) {
-    events.sort_by(|left, right| {
-        left.match_time()
-            .cmp(&right.match_time())
-            .then_with(|| left.source_format().cmp(right.source_format()))
-            .then_with(|| left.payload().kind().cmp(&right.payload().kind()))
-            .then_with(|| {
-                left.fingerprint()
-                    .expect("validated event fingerprint")
-                    .cmp(&right.fingerprint().expect("validated event fingerprint"))
-            })
+    events.sort_by_cached_key(|event| {
+        (
+            event.match_time(),
+            event.source_format().clone(),
+            event.payload().kind(),
+            event.fingerprint().expect("validated event fingerprint"),
+        )
     });
 }
 
@@ -493,6 +538,7 @@ fn parse_side(
     context: &RecordContext,
     kind: BookSideKind,
     levels: Vec<WireLevel<'_>>,
+    profile: InstrumentProfile,
 ) -> Result<BookSide, NormalizationError> {
     if levels.len() > 5 {
         return Err(NormalizationError::new(
@@ -506,7 +552,7 @@ fn parse_side(
     }
     let mut parsed = Vec::with_capacity(levels.len());
     for level in levels {
-        let price = parse_price(record_number, context, "book price", level.price)?;
+        let price = parse_price(record_number, context, "book price", level.price, profile)?;
         let quantity = parse_quantity(record_number, context, "book quantity", level.quantity)?;
         parsed.push(BookLevel::new(price, quantity));
     }
@@ -524,8 +570,15 @@ fn parse_price(
     context: &RecordContext,
     field: &'static str,
     raw: &RawValue,
+    profile: InstrumentProfile,
 ) -> Result<Price, NormalizationError> {
-    Price::parse(raw.get()).map_err(|error| {
+    let parsed = match profile {
+        InstrumentProfile::FuturesCalendarSpread => Price::parse(raw.get()),
+        InstrumentProfile::Futures | InstrumentProfile::IndexOptions => {
+            Price::parse_positive(raw.get())
+        }
+    };
+    parsed.map_err(|error| {
         NormalizationError::new(
             record_number,
             context.clone(),

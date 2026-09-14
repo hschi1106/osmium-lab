@@ -1,6 +1,6 @@
 # Release example. Replace the data_root, strategy and economics with values
 # appropriate for your deployment before running the workflow.
-config_version: 2
+config_version: 3
 data:
   source: teralion
   data_root: data
@@ -11,6 +11,7 @@ universe:
   instruments:
     - market: twse
       symbol: "2330"
+      instrument_class: equity
       session_kinds: [regular]
 strategy:
   id: acceptance.multi-market

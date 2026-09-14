@@ -2,14 +2,19 @@ use std::{error::Error, fmt, str::FromStr};
 
 use crate::{Decimal, DecimalError};
 
-/// A strictly positive exact market price.
+/// An exact signed market price. Instrument rules decide which values are valid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct Price(Decimal);
 
 impl Price {
-    /// Constructs a price when the underlying decimal is strictly positive.
-    pub const fn new(value: Decimal) -> Result<Self, PriceError> {
+    /// Constructs a signed market price, including zero.
+    pub const fn new(value: Decimal) -> Self {
+        Self(value)
+    }
+
+    /// Constructs a price for profiles that require strictly positive values.
+    pub const fn positive(value: Decimal) -> Result<Self, PriceError> {
         if value.atoms() > 0 {
             Ok(Self(value))
         } else {
@@ -17,11 +22,18 @@ impl Price {
         }
     }
 
-    /// Parses exact decimal text and enforces the positive-price invariant.
+    /// Parses exact signed decimal text, including zero.
     pub fn parse(input: &str) -> Result<Self, PriceError> {
         Decimal::parse(input)
+            .map(Self::new)
             .map_err(PriceError::InvalidDecimal)
-            .and_then(Self::new)
+    }
+
+    /// Parses exact decimal text and enforces a positive-only profile.
+    pub fn parse_positive(input: &str) -> Result<Self, PriceError> {
+        Decimal::parse(input)
+            .map_err(PriceError::InvalidDecimal)
+            .and_then(Self::positive)
     }
 
     /// Returns the exact decimal value.
@@ -43,10 +55,8 @@ impl Price {
     }
 }
 
-impl TryFrom<Decimal> for Price {
-    type Error = PriceError;
-
-    fn try_from(value: Decimal) -> Result<Self, Self::Error> {
+impl From<Decimal> for Price {
+    fn from(value: Decimal) -> Self {
         Self::new(value)
     }
 }

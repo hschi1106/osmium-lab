@@ -82,3 +82,27 @@ fn decimal_canonical_encoding_and_arithmetic_are_exact() {
         Err(DecimalError::OutOfRange)
     );
 }
+
+#[test]
+fn decimal_display_is_exact_and_canonical() {
+    let cases = [
+        (Decimal::ZERO, "0"),
+        (Decimal::from_atoms(1), "0.000000000000000001"),
+        (Decimal::from_atoms(-1), "-0.000000000000000001"),
+        (Decimal::parse("2350.000000000000000000").unwrap(), "2350"),
+        (Decimal::parse("-12.340000000000000000").unwrap(), "-12.34"),
+        (
+            Decimal::from_atoms(i128::MAX),
+            "170141183460469231731.687303715884105727",
+        ),
+        (
+            Decimal::from_atoms(i128::MIN),
+            "-170141183460469231731.687303715884105728",
+        ),
+    ];
+
+    for (value, expected) in cases {
+        assert_eq!(value.to_string(), expected);
+        assert_eq!(Decimal::parse(&value.to_string()).unwrap(), value);
+    }
+}

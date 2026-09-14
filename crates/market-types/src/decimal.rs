@@ -80,6 +80,28 @@ impl TryFrom<&str> for Decimal {
     }
 }
 
+impl fmt::Display for Decimal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let magnitude = self.0.unsigned_abs();
+        let scale_factor = DECIMAL_SCALE_FACTOR as u128;
+        let integer = magnitude / scale_factor;
+        let fraction = magnitude % scale_factor;
+
+        if self.0 < 0 {
+            formatter.write_str("-")?;
+        }
+        write!(formatter, "{integer}")?;
+
+        if fraction != 0 {
+            let fraction = format!("{fraction:018}");
+            formatter.write_str(".")?;
+            formatter.write_str(fraction.trim_end_matches('0'))?;
+        }
+
+        Ok(())
+    }
+}
+
 /// Stable error categories for exact decimal parsing and arithmetic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecimalError {

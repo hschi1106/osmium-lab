@@ -5,20 +5,24 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use data_sync::{ArchiveMarket, PartitionCacheCatalog, PartitionedSourceRepository};
+use data_sync::{
+    NormalizerMappingIdentity, PartitionCacheCatalog, PartitionCacheInspection,
+    PartitionedSourceRepository, normalizer_mapping_for,
+};
 use market_types::{
-    Decimal, InstrumentId, InstrumentKind, MarketId, OptionSide, QuantityUnit, Symbol, TradingDate,
+    ContractShape, Decimal, InstrumentClass, InstrumentId, MarketId, OptionSide, QuantityUnit,
+    Symbol, TradingDate,
 };
 use replay_engine::{ReplayPlan, ReplayStreamBinding, StableStreamDescriptorId};
 use run_planner::{
     CacheIdentity, CachePolicy, CacheState, ChargeConfig, ChargeSides, Currency, CurrencyAmount,
     DayTradeMatchingConfig, DayTradeTaxConfig, EffectiveRunConfig, ExecutionPlan, FillEvidence,
-    FillModelConfig, InstrumentChargeConfig, InstrumentEconomicsConfig, LatencyConfig,
-    MarkingPolicyConfig, OutputPolicy, PlannedPartition, PositionAccountingConfig,
-    QuantityAllocationConfig, QuantityEvidence, ReplayDataPolicy, RoundingPolicy,
-    RunConfig as PlannerRunConfig, ScheduledExecutionConfig, SessionPlan, SessionPlanError,
-    SessionProfileId, SlippageModelConfig, SourceId, SourcePartitionKey, SourcePolicy, SourceState,
-    StrategyBinding,
+    FillModelConfig, InstrumentChargeConfig, InstrumentContractConfig, InstrumentEconomicsConfig,
+    InstrumentReferenceConfig, LatencyConfig, MarkingPolicyConfig, OutputPolicy, PlannedPartition,
+    PositionAccountingConfig, QuantityAllocationConfig, QuantityEvidence, ReplayDataPolicy,
+    RoundingPolicy, RunConfig as PlannerRunConfig, ScheduledExecutionConfig, SessionPlan,
+    SessionPlanError, SessionProfileId, SlippageModelConfig, SourceId, SourcePartitionKey,
+    SourcePolicy, SourceState, StrategyBinding,
 };
 use serde::Deserialize;
 use strategy_api::{
@@ -26,7 +30,7 @@ use strategy_api::{
     StrategyRegistry, StrategyRegistryError,
 };
 
-pub const RUN_CONFIG_VERSION: u16 = 2;
+pub const RUN_CONFIG_VERSION: u16 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StrategyReferenceInput {
@@ -84,7 +88,8 @@ impl StrategyBootstrapConfig {
 pub struct InstrumentSelection {
     instrument: InstrumentId,
     session_kinds: Box<[SessionKind]>,
-    kind: InstrumentKind,
+    class: InstrumentClass,
+    contract_shape: Option<ContractShape>,
     session_profile: Option<SessionProfileId>,
     reference: Option<InstrumentReference>,
 }
@@ -161,8 +166,13 @@ impl InstrumentSelection {
     }
 
     #[must_use]
-    pub const fn kind(&self) -> InstrumentKind {
-        self.kind
+    pub const fn class(&self) -> InstrumentClass {
+        self.class
+    }
+
+    #[must_use]
+    pub const fn contract_shape(&self) -> Option<ContractShape> {
+        self.contract_shape
     }
 
     #[must_use]
@@ -213,19 +223,9 @@ impl RunConfig {
     }
 
     #[must_use]
-    pub fn instrument_kind_for(&self, instrument: &InstrumentId) -> InstrumentKind {
-        self.selection_for(instrument).map_or_else(
-            || default_kind(instrument.market()),
-            InstrumentSelection::kind,
-        )
-    }
-
-    #[must_use]
-    pub fn archive_market_for(&self, instrument: &InstrumentId) -> ArchiveMarket {
-        match self.instrument_kind_for(instrument) {
-            InstrumentKind::Option => ArchiveMarket::TaifexOptions,
-            _ => ArchiveMarket::for_instrument(instrument),
-        }
+    pub fn instrument_class_for(&self, instrument: &InstrumentId) -> Option<InstrumentClass> {
+        self.selection_for(instrument)
+            .map(InstrumentSelection::class)
     }
 
     pub fn session_plan_for(&self, key: &SourcePartitionKey) -> Result<SessionPlan, ConfigError> {
@@ -236,13 +236,7 @@ impl RunConfig {
                 key.session_kinds().iter().copied(),
             )
         } else {
-            SessionPlan::for_instrument_kind(
-                key.instrument(),
-                self.instrument_kind_for(key.instrument()),
-                key.trading_date(),
-                key.session_kinds().iter().copied(),
-            )
-            .map_err(ConfigError::SessionPlan)
+            Err(ConfigError::Invalid("universe.instruments"))
         }
     }
 
@@ -257,7 +251,7 @@ impl RunConfig {
                 )?;
                 keys.push(
                     SourcePartitionKey::new(
-                        SourceId::TeralionFeedArchive,
+                        self.effective.source(),
                         selection.instrument.clone(),
                         *trading_date,
                         selection.session_kinds.iter().copied(),
@@ -354,7 +348,7 @@ pub fn plan(config: &RunConfig) -> Result<PlanBundle, ConfigError> {
                 selection.session_kinds.iter().copied(),
             )?;
             let key = SourcePartitionKey::new(
-                SourceId::TeralionFeedArchive,
+                config.effective.source(),
                 selection.instrument.clone(),
                 *trading_date,
                 selection.session_kinds.iter().copied(),
@@ -365,7 +359,15 @@ pub fn plan(config: &RunConfig) -> Result<PlanBundle, ConfigError> {
                 PartitionedSourceRepository::new(config.effective.data_root(), key.clone())
                     .map_err(|error| ConfigError::Value(error.to_string()))?;
             let inspection = repository.inspect();
-            let cache_state = cache_state(&cache_catalog, &key, inspection.report())?;
+            let expected_mapping = normalizer_mapping_for(
+                config.effective.source(),
+                selection.instrument().market(),
+                selection.class(),
+                selection.contract_shape(),
+            )
+            .map_err(|error| ConfigError::Value(error.to_string()))?;
+            let cache_state =
+                cache_state(&cache_catalog, &key, inspection.report(), &expected_mapping)?;
             if let (SourceState::Complete { revision }, CacheState::Valid { identity: cache }) =
                 (inspection.state(), cache_state)
             {
@@ -410,16 +412,20 @@ fn cache_state(
     catalog: &PartitionCacheCatalog,
     key: &SourcePartitionKey,
     inspection: Option<&data_sync::VerificationReport>,
+    expected_mapping: &NormalizerMappingIdentity,
 ) -> Result<CacheState, ConfigError> {
     let Some(report) = inspection else {
         return Ok(CacheState::Missing);
     };
-    let entry = match catalog.find(key, &report.manifest().revision_identity) {
-        Ok(entry) => entry,
-        Err(_) => return Ok(CacheState::Corrupt),
-    };
-    let Some(entry) = entry else {
-        return Ok(CacheState::Missing);
+    let inspection =
+        match catalog.inspect(key, &report.manifest().revision_identity, expected_mapping) {
+            Ok(inspection) => inspection,
+            Err(_) => return Ok(CacheState::Corrupt),
+        };
+    let entry = match inspection {
+        PartitionCacheInspection::Missing => return Ok(CacheState::Missing),
+        PartitionCacheInspection::Stale => return Ok(CacheState::Stale),
+        PartitionCacheInspection::Current(entry) => entry,
     };
     let identity = decode_hex(&entry.descriptor().cache_identity)?;
     Ok(CacheState::Valid {
@@ -434,7 +440,7 @@ fn resolve(raw: FileConfig, registry: &StrategyRegistry) -> Result<RunConfig, Co
             actual: raw.config_version,
         });
     }
-    require(raw.data.source == "teralion", "data.source")?;
+    let source = parse_source(&raw.data.source)?;
     require(
         raw.data.cache_policy == "reuse_or_rebuild",
         "data.cache_policy",
@@ -482,7 +488,47 @@ fn resolve(raw: FileConfig, registry: &StrategyRegistry) -> Result<RunConfig, Co
         .into_iter()
         .map(parse_economics)
         .collect::<Result<Vec<_>, _>>()?;
+    if economics.iter().any(|economics| {
+        !selections
+            .iter()
+            .any(|selection| selection.instrument() == economics.instrument())
+    }) {
+        return Err(ConfigError::Invalid("instrument_economics"));
+    }
     validate_reference_economics(&selections, &economics)?;
+    let instrument_contracts = selections
+        .iter()
+        .map(|selection| {
+            let profile = match selection.session_profile {
+                Some(profile) => profile,
+                None => {
+                    SessionProfileId::for_instrument_class(&selection.instrument, selection.class)
+                        .map_err(ConfigError::SessionPlan)?
+                }
+            };
+            let contract = InstrumentContractConfig::new(
+                selection.instrument.clone(),
+                selection.class,
+                selection.contract_shape,
+                profile,
+            );
+            let contract = match selection.reference.as_ref() {
+                Some(reference) => contract.with_reference(InstrumentReferenceConfig::new(
+                    reference.underlying(),
+                    reference.expiry(),
+                    reference.strike(),
+                    reference.option_side(),
+                    reference.currency(),
+                    reference.multiplier(),
+                    reference.quantity_unit(),
+                    reference.units_per_trading_unit(),
+                    reference.provenance(),
+                )),
+                None => contract,
+            };
+            Ok(contract)
+        })
+        .collect::<Result<Vec<_>, ConfigError>>()?;
     let raw_parameters = parse_strategy_parameters(&raw.strategy.parameters)?;
     let resolved_strategy = registry.resolve(
         &raw.strategy.id,
@@ -499,9 +545,11 @@ fn resolve(raw: FileConfig, registry: &StrategyRegistry) -> Result<RunConfig, Co
     );
     let effective = EffectiveRunConfig::resolve(PlannerRunConfig {
         // The planner's effective schema is independent from the user-facing file version.
-        config_version: 1,
+        config_version: 2,
+        source,
         trading_dates: date_values,
         universe: instruments,
+        instrument_contracts,
         session_kinds: sessions,
         strategy,
         data_root: raw.data.data_root,
@@ -537,37 +585,61 @@ fn parse_selection(raw: &InstrumentConfig) -> Result<InstrumentSelection, Config
     if session_kinds.is_empty() {
         return Err(ConfigError::Invalid("universe.instruments.session_kinds"));
     }
-    let kind = raw
-        .instrument_kind
+    let class = raw
+        .instrument_class
         .as_deref()
-        .map(parse_instrument_kind)
+        .map(parse_instrument_class)
         .transpose()?
-        .unwrap_or_else(|| default_kind(market));
+        .ok_or(ConfigError::Invalid(
+            "universe.instruments.instrument_class",
+        ))?;
+    let contract_shape = raw
+        .contract_shape
+        .as_deref()
+        .map(parse_contract_shape)
+        .transpose()?;
     let session_profile = raw
         .session_profile
         .as_deref()
         .map(parse_session_profile)
         .transpose()?;
     let reference = raw.reference.as_ref().map(parse_reference).transpose()?;
-    match (market, kind) {
-        (MarketId::Twse | MarketId::Tpex, InstrumentKind::Equity)
-        | (MarketId::Twse | MarketId::Tpex, InstrumentKind::Warrant)
-        | (MarketId::Taifex, InstrumentKind::Future)
-        | (MarketId::Taifex, InstrumentKind::Option) => {}
+    match (market, class) {
+        (MarketId::Twse | MarketId::Tpex, InstrumentClass::Equity)
+        | (MarketId::Twse | MarketId::Tpex, InstrumentClass::Warrant)
+        | (MarketId::Taifex, InstrumentClass::Future)
+        | (MarketId::Taifex, InstrumentClass::Option) => {}
         _ => {
-            return Err(ConfigError::Invalid("universe.instruments.instrument_kind"));
+            return Err(ConfigError::Invalid(
+                "universe.instruments.instrument_class",
+            ));
         }
     }
-    if session_profile.is_some_and(|profile| !profile_matches(profile, market, kind)) {
+    if market == MarketId::Taifex && class == InstrumentClass::Future && contract_shape.is_none() {
+        return Err(ConfigError::Invalid("universe.instruments.contract_shape"));
+    }
+    if market == MarketId::Taifex && class == InstrumentClass::Future && session_profile.is_none() {
         return Err(ConfigError::Invalid("universe.instruments.session_profile"));
     }
-    if matches!(kind, InstrumentKind::Warrant | InstrumentKind::Option) && reference.is_none() {
+    if !contract_shape_matches_class(class, contract_shape) {
+        return Err(ConfigError::Invalid("universe.instruments.contract_shape"));
+    }
+    let resolved_session_profile = match session_profile {
+        Some(profile) => profile,
+        None => SessionProfileId::for_instrument_class(&instrument, class)
+            .map_err(ConfigError::SessionPlan)?,
+    };
+    if !resolved_session_profile.supports_contract(market, class, contract_shape) {
+        return Err(ConfigError::Invalid("universe.instruments.session_profile"));
+    }
+    if matches!(class, InstrumentClass::Warrant | InstrumentClass::Option) && reference.is_none() {
         return Err(ConfigError::Invalid("universe.instruments.reference"));
     }
     Ok(InstrumentSelection {
         instrument,
         session_kinds: session_kinds.into_boxed_slice(),
-        kind,
+        class,
+        contract_shape,
         session_profile,
         reference,
     })
@@ -582,9 +654,9 @@ fn session_plan(
         Some(profile) => {
             SessionPlan::with_profile(&selection.instrument, trading_date, profile, session_kinds)
         }
-        None => SessionPlan::for_instrument_kind(
+        None => SessionPlan::for_instrument_class(
             &selection.instrument,
-            selection.kind,
+            selection.class,
             trading_date,
             session_kinds,
         ),
@@ -592,49 +664,39 @@ fn session_plan(
     .map_err(ConfigError::SessionPlan)
 }
 
-const fn profile_matches(
-    profile: SessionProfileId,
-    market: MarketId,
-    kind: InstrumentKind,
+const fn contract_shape_matches_class(
+    class: InstrumentClass,
+    shape: Option<ContractShape>,
 ) -> bool {
     matches!(
-        (profile, market, kind),
+        (class, shape),
         (
-            SessionProfileId::TwseRegular,
-            MarketId::Twse,
-            InstrumentKind::Equity | InstrumentKind::Warrant
+            InstrumentClass::Future,
+            Some(ContractShape::Outright | ContractShape::CalendarSpread)
         ) | (
-            SessionProfileId::TpexRegular,
-            MarketId::Tpex,
-            InstrumentKind::Equity | InstrumentKind::Warrant
-        ) | (
-            SessionProfileId::TaifexIndexFutures
-                | SessionProfileId::TaifexStockFutures
-                | SessionProfileId::TaifexStockFuturesRegularOnly,
-            MarketId::Taifex,
-            InstrumentKind::Future
-        ) | (
-            SessionProfileId::TaifexIndexOptions,
-            MarketId::Taifex,
-            InstrumentKind::Option
+            InstrumentClass::Equity | InstrumentClass::Warrant | InstrumentClass::Option,
+            None
         )
     )
 }
 
-fn default_kind(market: MarketId) -> InstrumentKind {
-    match market {
-        MarketId::Twse | MarketId::Tpex => InstrumentKind::Equity,
-        MarketId::Taifex => InstrumentKind::Future,
+fn parse_instrument_class(value: &str) -> Result<InstrumentClass, ConfigError> {
+    match value {
+        "equity" => Ok(InstrumentClass::Equity),
+        "warrant" => Ok(InstrumentClass::Warrant),
+        "future" => Ok(InstrumentClass::Future),
+        "option" => Ok(InstrumentClass::Option),
+        _ => Err(ConfigError::Invalid(
+            "universe.instruments.instrument_class",
+        )),
     }
 }
 
-fn parse_instrument_kind(value: &str) -> Result<InstrumentKind, ConfigError> {
+fn parse_contract_shape(value: &str) -> Result<ContractShape, ConfigError> {
     match value {
-        "equity" => Ok(InstrumentKind::Equity),
-        "warrant" => Ok(InstrumentKind::Warrant),
-        "future" => Ok(InstrumentKind::Future),
-        "option" => Ok(InstrumentKind::Option),
-        _ => Err(ConfigError::Invalid("universe.instruments.instrument_kind")),
+        "outright" => Ok(ContractShape::Outright),
+        "calendar_spread" => Ok(ContractShape::CalendarSpread),
+        _ => Err(ConfigError::Invalid("universe.instruments.contract_shape")),
     }
 }
 
@@ -645,6 +707,9 @@ fn parse_session_profile(value: &str) -> Result<SessionProfileId, ConfigError> {
         "taifex_index_futures" => Ok(SessionProfileId::TaifexIndexFutures),
         "taifex_stock_futures" => Ok(SessionProfileId::TaifexStockFutures),
         "taifex_stock_futures_regular_only" => Ok(SessionProfileId::TaifexStockFuturesRegularOnly),
+        "taifex_calendar_spread_regular_only" => {
+            Ok(SessionProfileId::TaifexCalendarSpreadRegularOnly)
+        }
         "taifex_index_options" => Ok(SessionProfileId::TaifexIndexOptions),
         _ => Err(ConfigError::Invalid("universe.instruments.session_profile")),
     }
@@ -910,6 +975,13 @@ fn parse_market(value: &str) -> Result<MarketId, ConfigError> {
     }
 }
 
+fn parse_source(value: &str) -> Result<SourceId, ConfigError> {
+    match value {
+        "teralion" => Ok(SourceId::TeralionFeedArchive),
+        _ => Err(ConfigError::Invalid("data.source")),
+    }
+}
+
 fn parse_session(value: &str) -> Result<SessionKind, ConfigError> {
     match value {
         "regular" => Ok(SessionKind::Regular),
@@ -1108,7 +1180,9 @@ struct InstrumentConfig {
     symbol: String,
     session_kinds: Vec<String>,
     #[serde(default)]
-    instrument_kind: Option<String>,
+    instrument_class: Option<String>,
+    #[serde(default)]
+    contract_shape: Option<String>,
     #[serde(default)]
     session_profile: Option<String>,
     #[serde(default)]
@@ -1354,6 +1428,120 @@ mod tests {
     }
 
     #[test]
+    fn run_config_requires_explicit_instrument_class() {
+        let source = fs::read_to_string(fixture())
+            .unwrap()
+            .replace("      instrument_class: equity\n", "");
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("missing-instrument-kind.yaml");
+        fs::write(&path, source).unwrap();
+
+        assert!(matches!(
+            load(path, &registry()),
+            Err(ConfigError::Invalid(
+                "universe.instruments.instrument_class"
+            ))
+        ));
+    }
+
+    #[test]
+    fn taifex_futures_require_an_explicit_session_profile() {
+        let source = fs::read_to_string(fixture())
+            .unwrap()
+            .replace("market: twse", "market: taifex")
+            .replace("instrument_class: equity", "instrument_class: future")
+            .replace(
+                "instrument_class: future\n      session_kinds",
+                "instrument_class: future\n      contract_shape: outright\n      session_kinds",
+            );
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("missing-session-profile.yaml");
+        fs::write(&path, source).unwrap();
+
+        assert!(matches!(
+            load(path, &registry()),
+            Err(ConfigError::Invalid("universe.instruments.session_profile"))
+        ));
+    }
+
+    #[test]
+    fn taifex_futures_require_an_explicit_contract_shape() {
+        let source = fs::read_to_string(fixture())
+            .unwrap()
+            .replace("market: twse", "market: taifex")
+            .replace("instrument_class: equity", "instrument_class: future");
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("missing-contract-shape.yaml");
+        fs::write(&path, source).unwrap();
+
+        assert!(matches!(
+            load(path, &registry()),
+            Err(ConfigError::Invalid("universe.instruments.contract_shape"))
+        ));
+    }
+
+    #[test]
+    fn taifex_calendar_spread_resolves_to_day_session_profile() {
+        let source = fs::read_to_string(fixture())
+            .unwrap()
+            .replace("market: twse", "market: taifex")
+            .replace("instrument_class: equity", "instrument_class: future")
+            .replace(
+                "instrument_class: future\n      session_kinds",
+                "instrument_class: future\n      contract_shape: calendar_spread\n      session_profile: taifex_calendar_spread_regular_only\n      session_kinds",
+            )
+            .replace("quantity_unit: trading_unit", "quantity_unit: contract")
+            .replace("units_per_trading_unit: 1000", "units_per_trading_unit: 1");
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("calendar-spread.yaml");
+        fs::write(&path, source).unwrap();
+
+        let config = load(path, &registry()).unwrap();
+        assert_eq!(
+            config.selections()[0].contract_shape(),
+            Some(ContractShape::CalendarSpread)
+        );
+        assert_eq!(
+            config.effective().instrument_contracts()[0].shape(),
+            Some(ContractShape::CalendarSpread)
+        );
+        assert!(config.partition_keys().is_ok());
+    }
+
+    #[test]
+    fn option_reference_is_materialized_in_the_versioned_instrument_contract() {
+        let source = fs::read_to_string(fixture())
+            .unwrap()
+            .replace("market: twse", "market: taifex")
+            .replace("symbol: \"2330\"", "symbol: \"TXO20261216000C\"")
+            .replace("instrument_class: equity", "instrument_class: option")
+            .replace("quantity_unit: trading_unit", "quantity_unit: contract")
+            .replace("units_per_trading_unit: 1000", "units_per_trading_unit: 1")
+            .replace("multiplier: \"1\"", "multiplier: \"50\"")
+            .replace(
+                "      instrument_class: option\n",
+                "      instrument_class: option\n      reference:\n        underlying: TXO\n        expiry: \"2026-12-16\"\n        strike: \"24000\"\n        option_side: call\n        currency: TWD\n        multiplier: \"50\"\n        quantity_unit: contract\n        units_per_trading_unit: 1\n        provenance: verified-reference-fixture\n",
+            );
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("option-reference.yaml");
+        fs::write(&path, source).unwrap();
+
+        let config = load(path, &registry()).unwrap();
+        let contract = &config.effective().instrument_contracts()[0];
+        let reference = contract.reference().unwrap();
+        assert_eq!(reference.underlying(), "TXO");
+        assert_eq!(reference.expiry().to_string(), "2026-12-16");
+        assert_eq!(reference.strike().to_string(), "24000");
+        assert_eq!(reference.option_side(), OptionSide::Call);
+        assert_eq!(reference.multiplier().to_string(), "50");
+        assert_eq!(reference.provenance(), "verified-reference-fixture");
+        assert_eq!(
+            config.effective().canonical_version(),
+            run_planner::EFFECTIVE_CONFIG_VERSION
+        );
+    }
+
+    #[test]
     fn run_config_materializes_nonzero_latency() {
         let source = fs::read_to_string(fixture())
             .unwrap()
@@ -1377,8 +1565,8 @@ mod tests {
             .replace("market: twse", "market: taifex")
             .replace("symbol: \"2330\"", "symbol: \"CDFG6\"")
             .replace(
-                "      session_kinds: [regular]",
-                "      instrument_kind: future\n      session_profile: taifex_stock_futures\n      session_kinds: [regular]",
+                "      instrument_class: equity\n      session_kinds: [regular]",
+                "      instrument_class: future\n      contract_shape: outright\n      session_profile: taifex_stock_futures\n      session_kinds: [regular]",
             )
             .replace("quantity_unit: trading_unit", "quantity_unit: contract")
             .replace("units_per_trading_unit: 1000", "units_per_trading_unit: 1");
@@ -1478,14 +1666,17 @@ mod tests {
         let day_trade = charges.day_trade_tax().unwrap();
         assert_eq!(day_trade.charge().rate(), Decimal::parse("0.0015").unwrap());
         assert!(day_trade.is_eligible(TradingDate::parse("2026-07-27").unwrap()));
-        assert_eq!(config.effective().canonical_version(), 4);
+        assert_eq!(
+            config.effective().canonical_version(),
+            run_planner::EFFECTIVE_CONFIG_VERSION
+        );
     }
 
     #[test]
     fn run_config_rejects_embedded_credentials() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("secret.yaml");
-        fs::write(&path, "config_version: 2\napi_key: forbidden\n").unwrap();
+        fs::write(&path, "config_version: 3\napi_key: forbidden\n").unwrap();
         assert!(matches!(
             load(path, &registry()),
             Err(ConfigError::SecretField)

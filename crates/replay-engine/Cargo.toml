@@ -12,5 +12,13 @@ market-types = { path = "../market-types" }
 [dev-dependencies]
 twse-normalizer = { path = "../normalizer/twse" }
 
+[[bench]]
+name = "canonical_hot_path"
+harness = false
+
+[[bench]]
+name = "multi_stream_merge"
+harness = false
+
 [lints]
 workspace = true

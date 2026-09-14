@@ -5,17 +5,22 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use market_types::{Decimal, InstrumentId, MarketId, QuantityUnit, TradingDate};
+use market_types::{
+    ContractShape, Decimal, InstrumentClass, InstrumentId, MarketId, OptionSide, PricePolicy,
+    QuantityUnit, TradingDate,
+};
 use strategy_api::{CanonicalParamsChecksum, SessionKind, StrategyDeclaration, StrategyIdentity};
 
-use crate::canonical::{
-    append_decimal, append_instrument, append_len, append_session, append_strategy_identity,
-    append_text,
+use crate::{
+    SourceId,
+    canonical::{
+        append_decimal, append_instrument, append_len, append_session, append_strategy_identity,
+        append_text,
+    },
 };
 
-pub const CONFIG_SCHEMA_VERSION: u16 = 1;
-pub const EFFECTIVE_CONFIG_VERSION: u16 = 4;
-pub const LEGACY_EFFECTIVE_CONFIG_VERSION: u16 = 2;
+pub const CONFIG_SCHEMA_VERSION: u16 = 2;
+pub const EFFECTIVE_CONFIG_VERSION: u16 = 7;
 pub const SOURCE_POLICY_VERSION: u16 = 1;
 pub const CACHE_POLICY_VERSION: u16 = 1;
 pub const REPLAY_DATA_POLICY_VERSION: u16 = 1;
@@ -559,6 +564,165 @@ pub struct InstrumentEconomicsConfig {
     provenance: Box<str>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstrumentContractConfig {
+    instrument: InstrumentId,
+    class: InstrumentClass,
+    shape: Option<ContractShape>,
+    session_profile: crate::SessionProfileId,
+    reference: Option<InstrumentReferenceConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstrumentReferenceConfig {
+    underlying: Box<str>,
+    expiry: TradingDate,
+    strike: Decimal,
+    option_side: OptionSide,
+    currency: Currency,
+    multiplier: Decimal,
+    quantity_unit: QuantityUnit,
+    units_per_trading_unit: u64,
+    provenance: Box<str>,
+}
+
+impl InstrumentReferenceConfig {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        underlying: impl Into<Box<str>>,
+        expiry: TradingDate,
+        strike: Decimal,
+        option_side: OptionSide,
+        currency: Currency,
+        multiplier: Decimal,
+        quantity_unit: QuantityUnit,
+        units_per_trading_unit: u64,
+        provenance: impl Into<Box<str>>,
+    ) -> Self {
+        Self {
+            underlying: underlying.into(),
+            expiry,
+            strike,
+            option_side,
+            currency,
+            multiplier,
+            quantity_unit,
+            units_per_trading_unit,
+            provenance: provenance.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn underlying(&self) -> &str {
+        &self.underlying
+    }
+
+    #[must_use]
+    pub const fn expiry(&self) -> TradingDate {
+        self.expiry
+    }
+
+    #[must_use]
+    pub const fn strike(&self) -> Decimal {
+        self.strike
+    }
+
+    #[must_use]
+    pub const fn option_side(&self) -> OptionSide {
+        self.option_side
+    }
+
+    #[must_use]
+    pub const fn currency(&self) -> Currency {
+        self.currency
+    }
+
+    #[must_use]
+    pub const fn multiplier(&self) -> Decimal {
+        self.multiplier
+    }
+
+    #[must_use]
+    pub const fn quantity_unit(&self) -> QuantityUnit {
+        self.quantity_unit
+    }
+
+    #[must_use]
+    pub const fn units_per_trading_unit(&self) -> u64 {
+        self.units_per_trading_unit
+    }
+
+    #[must_use]
+    pub fn provenance(&self) -> &str {
+        &self.provenance
+    }
+
+    fn is_valid(&self) -> bool {
+        !self.underlying.trim().is_empty()
+            && self.strike > Decimal::ZERO
+            && self.multiplier > Decimal::ZERO
+            && self.units_per_trading_unit != 0
+            && !self.provenance.trim().is_empty()
+    }
+}
+
+impl InstrumentContractConfig {
+    #[must_use]
+    pub const fn new(
+        instrument: InstrumentId,
+        class: InstrumentClass,
+        shape: Option<ContractShape>,
+        session_profile: crate::SessionProfileId,
+    ) -> Self {
+        Self {
+            instrument,
+            class,
+            shape,
+            session_profile,
+            reference: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_reference(mut self, reference: InstrumentReferenceConfig) -> Self {
+        self.reference = Some(reference);
+        self
+    }
+
+    #[must_use]
+    pub const fn instrument(&self) -> &InstrumentId {
+        &self.instrument
+    }
+
+    #[must_use]
+    pub const fn class(&self) -> InstrumentClass {
+        self.class
+    }
+
+    #[must_use]
+    pub const fn shape(&self) -> Option<ContractShape> {
+        self.shape
+    }
+
+    #[must_use]
+    pub const fn session_profile(&self) -> crate::SessionProfileId {
+        self.session_profile
+    }
+
+    #[must_use]
+    pub const fn reference(&self) -> Option<&InstrumentReferenceConfig> {
+        self.reference.as_ref()
+    }
+
+    #[must_use]
+    pub const fn price_policy(&self) -> PricePolicy {
+        match self.shape {
+            Some(ContractShape::CalendarSpread) => PricePolicy::Signed,
+            Some(ContractShape::Outright) | None => PricePolicy::PositiveOnly,
+        }
+    }
+}
+
 impl InstrumentEconomicsConfig {
     pub fn new(
         instrument: InstrumentId,
@@ -649,8 +813,10 @@ impl StrategyBinding {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunConfig {
     pub config_version: u16,
+    pub source: SourceId,
     pub trading_dates: Vec<TradingDate>,
     pub universe: Vec<InstrumentId>,
+    pub instrument_contracts: Vec<InstrumentContractConfig>,
     pub session_kinds: Vec<SessionKind>,
     pub strategy: StrategyBinding,
     pub data_root: PathBuf,
@@ -679,8 +845,10 @@ impl EffectiveConfigChecksum {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectiveRunConfig {
+    source: SourceId,
     trading_dates: Box<[TradingDate]>,
     universe: Box<[InstrumentId]>,
+    instrument_contracts: Box<[InstrumentContractConfig]>,
     session_kinds: Box<[SessionKind]>,
     strategy: StrategyBinding,
     data_root: PathBuf,
@@ -707,6 +875,8 @@ impl EffectiveRunConfig {
 
         let trading_dates = canonical_non_empty(config.trading_dates, ConfigError::EmptyDates)?;
         let universe = canonical_non_empty(config.universe, ConfigError::EmptyUniverse)?;
+        let instrument_contracts =
+            validate_instrument_contracts(config.instrument_contracts, &universe)?;
         let session_kinds = canonical_non_empty(config.session_kinds, ConfigError::EmptySessions)?;
         if config.strategy.declaration().universe() != &*universe {
             return Err(ConfigError::StrategyUniverseMismatch);
@@ -730,10 +900,13 @@ impl EffectiveRunConfig {
         validate_simulation(&config.simulation)?;
         validate_instrument_charges(&mut config.simulation, &universe, &trading_dates)?;
         let instrument_economics = validate_economics(config.instrument_economics, &universe)?;
+        validate_reference_economics(&instrument_contracts, &instrument_economics)?;
 
         let mut effective = Self {
+            source: config.source,
             trading_dates,
             universe,
+            instrument_contracts,
             session_kinds,
             strategy: config.strategy,
             data_root: config.data_root,
@@ -753,6 +926,11 @@ impl EffectiveRunConfig {
     }
 
     #[must_use]
+    pub const fn source(&self) -> SourceId {
+        self.source
+    }
+
+    #[must_use]
     pub const fn trading_dates(&self) -> &[TradingDate] {
         &self.trading_dates
     }
@@ -760,6 +938,11 @@ impl EffectiveRunConfig {
     #[must_use]
     pub const fn universe(&self) -> &[InstrumentId] {
         &self.universe
+    }
+
+    #[must_use]
+    pub const fn instrument_contracts(&self) -> &[InstrumentContractConfig] {
+        &self.instrument_contracts
     }
 
     #[must_use]
@@ -825,6 +1008,7 @@ impl EffectiveRunConfig {
         output.extend_from_slice(&SOURCE_POLICY_VERSION.to_be_bytes());
         output.extend_from_slice(&CACHE_POLICY_VERSION.to_be_bytes());
         output.extend_from_slice(&REPLAY_DATA_POLICY_VERSION.to_be_bytes());
+        output.push(self.source as u8);
 
         append_len(self.trading_dates.len(), &mut output)?;
         for date in &self.trading_dates {
@@ -833,6 +1017,10 @@ impl EffectiveRunConfig {
         append_len(self.universe.len(), &mut output)?;
         for instrument in &self.universe {
             append_instrument(instrument, &mut output)?;
+        }
+        append_len(self.instrument_contracts.len(), &mut output)?;
+        for contract in &self.instrument_contracts {
+            append_instrument_contract(contract, &mut output)?;
         }
         append_len(self.session_kinds.len(), &mut output)?;
         for session in &self.session_kinds {
@@ -846,11 +1034,7 @@ impl EffectiveRunConfig {
         output.push(self.source_policy as u8);
         output.push(self.cache_policy as u8);
         output.push(self.replay_data_policy as u8);
-        append_simulation(
-            &self.simulation,
-            self.canonical_version() >= EFFECTIVE_CONFIG_VERSION,
-            &mut output,
-        )?;
+        append_simulation(&self.simulation, true, &mut output)?;
         append_len(self.instrument_economics.len(), &mut output)?;
         for economics in &self.instrument_economics {
             append_economics(economics, &mut output)?;
@@ -861,13 +1045,7 @@ impl EffectiveRunConfig {
 
     #[must_use]
     pub fn canonical_version(&self) -> u16 {
-        if self.simulation.instrument_charges.is_empty()
-            && self.simulation.execution_policy == ExecutionPolicyConfig::SubsequentEventV1
-        {
-            LEGACY_EFFECTIVE_CONFIG_VERSION
-        } else {
-            EFFECTIVE_CONFIG_VERSION
-        }
+        EFFECTIVE_CONFIG_VERSION
     }
 }
 
@@ -1105,11 +1283,136 @@ fn append_economics(
     append_text(&config.provenance, output)
 }
 
+fn append_instrument_contract(
+    contract: &InstrumentContractConfig,
+    output: &mut Vec<u8>,
+) -> Result<(), ConfigError> {
+    append_instrument(&contract.instrument, output)?;
+    output.push(contract.class as u8);
+    output.push(contract.shape.map_or(0, |shape| shape.discriminant()));
+    output.push(contract.session_profile as u8);
+    output.push(contract.price_policy().discriminant());
+    match &contract.reference {
+        None => output.push(0),
+        Some(reference) => {
+            output.push(1);
+            append_text(&reference.underlying, output)?;
+            output.extend_from_slice(&reference.expiry.to_canonical_bytes());
+            append_decimal(reference.strike, output);
+            output.push(reference.option_side as u8);
+            output.push(reference.currency as u8);
+            append_decimal(reference.multiplier, output);
+            output.push(reference.quantity_unit.discriminant());
+            output.extend_from_slice(&reference.units_per_trading_unit.to_be_bytes());
+            append_text(&reference.provenance, output)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_instrument_contracts(
+    mut contracts: Vec<InstrumentContractConfig>,
+    universe: &[InstrumentId],
+) -> Result<Box<[InstrumentContractConfig]>, ConfigError> {
+    contracts.sort_by(|left, right| left.instrument.cmp(&right.instrument));
+    if let Some(pair) = contracts
+        .windows(2)
+        .find(|pair| pair[0].instrument == pair[1].instrument && pair[0] != pair[1])
+    {
+        return Err(ConfigError::InvalidInstrumentContract(
+            pair[0].instrument.clone(),
+        ));
+    }
+    contracts.dedup_by(|left, right| left.instrument == right.instrument);
+    if contracts.len() != universe.len() {
+        return Err(ConfigError::MissingInstrumentContract);
+    }
+    for (index, contract) in contracts.iter().enumerate() {
+        if !universe.contains(&contract.instrument)
+            || (index > 0 && contracts[index - 1].instrument == contract.instrument)
+            || !contract.session_profile.supports_contract(
+                contract.instrument.market(),
+                contract.class,
+                contract.shape,
+            )
+            || !contract_shape_matches_class(contract.class, contract.shape)
+            || (matches!(
+                contract.class,
+                InstrumentClass::Warrant | InstrumentClass::Option
+            ) && contract.reference.is_none())
+            || contract
+                .reference
+                .as_ref()
+                .is_some_and(|reference| !reference.is_valid())
+        {
+            return Err(ConfigError::InvalidInstrumentContract(
+                contract.instrument.clone(),
+            ));
+        }
+    }
+    for instrument in universe {
+        if !contracts
+            .iter()
+            .any(|contract| &contract.instrument == instrument)
+        {
+            return Err(ConfigError::MissingInstrumentContract);
+        }
+    }
+    Ok(contracts.into_boxed_slice())
+}
+
+fn validate_reference_economics(
+    contracts: &[InstrumentContractConfig],
+    economics: &[InstrumentEconomicsConfig],
+) -> Result<(), ConfigError> {
+    for contract in contracts {
+        let Some(reference) = contract.reference() else {
+            continue;
+        };
+        let Some(economics) = economics
+            .iter()
+            .find(|economics| economics.instrument() == &contract.instrument)
+        else {
+            return Err(ConfigError::InvalidInstrumentContract(
+                contract.instrument.clone(),
+            ));
+        };
+        if economics.quantity_unit() != reference.quantity_unit()
+            || economics.units_per_trading_unit() != reference.units_per_trading_unit()
+            || economics.currency() != reference.currency()
+            || economics.multiplier() != reference.multiplier()
+        {
+            return Err(ConfigError::InvalidInstrumentContract(
+                contract.instrument.clone(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+const fn contract_shape_matches_class(
+    class: InstrumentClass,
+    shape: Option<ContractShape>,
+) -> bool {
+    matches!(
+        (class, shape),
+        (
+            InstrumentClass::Future,
+            Some(ContractShape::Outright | ContractShape::CalendarSpread)
+        ) | (
+            InstrumentClass::Equity | InstrumentClass::Warrant | InstrumentClass::Option,
+            None
+        )
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigError {
     UnsupportedConfigVersion { actual: u16 },
     EmptyDates,
     EmptyUniverse,
+    MissingInstrumentContract,
+    InvalidInstrumentContract(InstrumentId),
     EmptySessions,
     EmptyDataRoot,
     StrategyUniverseMismatch,
@@ -1140,6 +1443,12 @@ impl fmt::Display for ConfigError {
             }
             Self::EmptyDates => formatter.write_str("run config requires a trading date"),
             Self::EmptyUniverse => formatter.write_str("run config requires an instrument"),
+            Self::MissingInstrumentContract => {
+                formatter.write_str("run config requires one contract profile per instrument")
+            }
+            Self::InvalidInstrumentContract(instrument) => {
+                write!(formatter, "invalid contract profile for {instrument:?}")
+            }
             Self::EmptySessions => formatter.write_str("run config requires a session kind"),
             Self::EmptyDataRoot => formatter.write_str("data_root must not be empty"),
             Self::StrategyUniverseMismatch => {

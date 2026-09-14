@@ -235,6 +235,7 @@ name = "data-sync"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "market-state",
  "market-types",
  "replay-engine",
  "reqwest",
@@ -315,6 +316,7 @@ name = "execution-sim"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "market-state",
  "market-types",
  "replay-engine",
  "strategy-api",
@@ -848,9 +850,7 @@ dependencies = [
  "run-planner",
  "serde_json",
  "strategy-api",
- "taifex-normalizer",
- "tpex-normalizer",
- "twse-normalizer",
+ "tempfile",
 ]
 
 [[package]]

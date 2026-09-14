@@ -105,7 +105,7 @@ Non-interactive output options:
   --quiet               Suppress successful command output
   --no-color            Disable terminal color
 
-config_version 2 is required. Legacy config_version 1 is not supported. Output directories
+config_version 3 is required. Legacy config_version 1 is not supported. Output directories
 must not already exist.
 ";
 
@@ -623,7 +623,7 @@ pub fn execute_market_replay_with_registry_provider(
 }
 
 const INIT_CONFIG: &str = r#"# Edit the placeholders before running `osmium config check`.
-config_version: 2
+config_version: 3
 data:
   source: teralion
   data_root: data
@@ -782,6 +782,14 @@ mod tests {
             assert!(error.is_usage_error());
             assert_eq!(error.exit_code(), 2);
         }
+    }
+
+    #[test]
+    fn usage_names_the_current_config_schema_version() {
+        assert!(USAGE.contains(&format!(
+            "config_version {} is required",
+            osmium_config::RUN_CONFIG_VERSION
+        )));
     }
 
     #[test]

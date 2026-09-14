@@ -1,9 +1,9 @@
 use std::{cmp::Ordering, error::Error, fmt, str::FromStr};
 
 use market_types::{
-    CompleteBookSnapshot, DomainEvent, EventFingerprint, EventKind, InstrumentId,
-    MarketAnnotations, MatchTime, SourceFormatId, TradeOrder, TradePrint, TradingDate,
-    UnknownValue, Volume,
+    CompleteBookSnapshot, DomainEvent, EventFingerprint, EventKind, IndicativeAuction,
+    InstrumentId, MarketAnnotations, MatchTime, ObservedTrade, SourceFormatId, TradeBatchOrdering,
+    TradingDate, UnknownValue, Volume,
 };
 
 /// A non-empty, byte-exact session segment identifier from a market profile.
@@ -137,9 +137,9 @@ fn source_phase_for_event(event: &DomainEvent) -> u8 {
     match event.payload() {
         market_types::EventPayload::TradeBatch(_) => 10,
         market_types::EventPayload::QuoteSnapshot(_)
-        | market_types::EventPayload::BookSnapshot(_) => 20,
-        market_types::EventPayload::IndicativeOpeningAuction(auction)
-        | market_types::EventPayload::IndicativeClosingAuction(auction) => {
+        | market_types::EventPayload::BookSnapshot(_)
+        | market_types::EventPayload::MarketStatus(_) => 20,
+        market_types::EventPayload::IndicativeAuction(auction) => {
             if auction.book().as_set().is_some() {
                 20
             } else {
@@ -197,15 +197,18 @@ impl<T> StateField<T> {
 /// The latest source-observed trade value, never an unbounded history.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TradeObservation {
-    Single(TradePrint),
+    Single(ObservedTrade),
     Batch {
-        trades: Box<[TradePrint]>,
-        trade_order: TradeOrder,
+        trades: Box<[ObservedTrade]>,
+        trade_order: TradeBatchOrdering,
     },
 }
 
 impl TradeObservation {
-    pub fn batch(trades: Vec<TradePrint>, trade_order: TradeOrder) -> Result<Self, ModelError> {
+    pub fn batch(
+        trades: Vec<ObservedTrade>,
+        trade_order: TradeBatchOrdering,
+    ) -> Result<Self, ModelError> {
         if trades.is_empty() {
             Err(ModelError::EmptyTradeBatch)
         } else {
@@ -217,7 +220,7 @@ impl TradeObservation {
     }
 
     #[must_use]
-    pub const fn trades(&self) -> &[TradePrint] {
+    pub const fn trades(&self) -> &[ObservedTrade] {
         match self {
             Self::Single(trade) => std::slice::from_ref(trade),
             Self::Batch { trades, .. } => trades,
@@ -225,7 +228,7 @@ impl TradeObservation {
     }
 
     #[must_use]
-    pub const fn trade_order(&self) -> Option<TradeOrder> {
+    pub const fn trade_order(&self) -> Option<TradeBatchOrdering> {
         match self {
             Self::Single(_) => None,
             Self::Batch { trade_order, .. } => Some(*trade_order),
@@ -258,6 +261,7 @@ pub struct MarketState {
     book: StateField<CompleteBookSnapshot>,
     recent_trade: StateField<TradeObservation>,
     cumulative_volume: StateField<Volume>,
+    indicative_auction: StateField<IndicativeAuction>,
     last_annotations: StateField<MarketAnnotations>,
     last_event: Option<AppliedEventRef>,
     state_version: u64,
@@ -273,6 +277,7 @@ impl MarketState {
             book: StateField::initial(),
             recent_trade: StateField::initial(),
             cumulative_volume: StateField::initial(),
+            indicative_auction: StateField::initial(),
             last_annotations: StateField::initial(),
             last_event: None,
             state_version: 0,
@@ -325,6 +330,11 @@ impl MarketState {
     }
 
     #[must_use]
+    pub const fn indicative_auction(&self) -> &StateField<IndicativeAuction> {
+        &self.indicative_auction
+    }
+
+    #[must_use]
     pub const fn last_annotations(&self) -> &StateField<MarketAnnotations> {
         &self.last_annotations
     }
@@ -338,6 +348,7 @@ impl MarketState {
         self.book = StateField::initial();
         self.recent_trade = StateField::initial();
         self.cumulative_volume = StateField::initial();
+        self.indicative_auction = StateField::initial();
         self.last_annotations = StateField::initial();
     }
 
@@ -355,6 +366,10 @@ impl MarketState {
 
     pub(crate) fn set_cumulative_volume(&mut self, volume: StateField<Volume>) {
         self.cumulative_volume = volume;
+    }
+
+    pub(crate) fn set_indicative_auction(&mut self, auction: StateField<IndicativeAuction>) {
+        self.indicative_auction = auction;
     }
 
     pub(crate) fn set_last_annotations(&mut self, annotations: StateField<MarketAnnotations>) {
@@ -442,7 +457,7 @@ impl<'a> MarketStateView<'a> {
                 value:
                     TradeObservation::Batch {
                         trades,
-                        trade_order: TradeOrder::SourceOrdered,
+                        trade_order: TradeBatchOrdering::SourceSequencePreserved,
                     },
                 ..
             } => LastTrade::Known(
@@ -453,7 +468,7 @@ impl<'a> MarketStateView<'a> {
             StateField::Known {
                 value:
                     TradeObservation::Batch {
-                        trade_order: TradeOrder::Unspecified,
+                        trade_order: TradeBatchOrdering::Unspecified,
                         ..
                     },
                 ..
@@ -467,6 +482,11 @@ impl<'a> MarketStateView<'a> {
     }
 
     #[must_use]
+    pub const fn indicative_auction(self) -> &'a StateField<IndicativeAuction> {
+        self.state.indicative_auction()
+    }
+
+    #[must_use]
     pub const fn last_annotations(self) -> &'a StateField<MarketAnnotations> {
         self.state.last_annotations()
     }
@@ -474,7 +494,7 @@ impl<'a> MarketStateView<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LastTrade<'a> {
-    Known(&'a TradePrint),
+    Known(&'a ObservedTrade),
     Unavailable(LastTradeUnavailable<'a>),
     Unknown(&'a UnknownValue),
 }

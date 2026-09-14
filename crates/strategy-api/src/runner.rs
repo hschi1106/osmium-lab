@@ -207,7 +207,13 @@ pub fn run_strategy<S: Strategy>(
                     Some(commit.occurrence()),
                 )
             })?;
-        let context = StrategyEventContext::new(commit.occurrence(), event, state, &trading);
+        let context = StrategyEventContext::new_with_states(
+            commit.occurrence(),
+            event,
+            state,
+            core.state_views(),
+            &trading,
+        );
         let mut sink = StrategyOutputSink::new();
         invoke_strategy(StrategyRunErrorCategory::Callback, || {
             strategy.on_event(context, &mut sink)

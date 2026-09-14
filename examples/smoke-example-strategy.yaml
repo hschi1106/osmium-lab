@@ -1,5 +1,5 @@
 # Maintainer/CI config for the compiled custom strategy and synthetic smoke fixture.
-config_version: 2
+config_version: 3
 data:
   source: teralion
   data_root: target/smoke-data
@@ -10,6 +10,7 @@ universe:
   instruments:
     - market: twse
       symbol: "SYNTH-SMOKE"
+      instrument_class: equity
       session_kinds: [regular]
 strategy:
   id: example.price-threshold-buy-once

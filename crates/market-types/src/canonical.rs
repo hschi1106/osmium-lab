@@ -1,14 +1,15 @@
 use std::{error::Error, fmt};
 
 use crate::{
-    CompleteBookSnapshot, MarketAnnotations, Observation, Price, Quantity, TradePrint,
-    UnknownValue, Volume,
+    CompleteBookSnapshot, IndicativeAuction, MarketAnnotations, Observation, ObservedTrade, Price,
+    Quantity, UnknownValue, Volume,
 };
 
 /// Error produced when a variable-length canonical value cannot use its fixed u32 frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CanonicalEncodingError {
     LengthOverflow,
+    InvalidMatchTime,
 }
 
 impl fmt::Display for CanonicalEncodingError {
@@ -17,6 +18,8 @@ impl fmt::Display for CanonicalEncodingError {
             Self::LengthOverflow => {
                 formatter.write_str("canonical string, byte value, or vector exceeds u32 length")
             }
+            Self::InvalidMatchTime => formatter
+                .write_str("canonical event match_time is outside four-digit ISO-8601 range"),
         }
     }
 }
@@ -31,6 +34,13 @@ pub trait CanonicalValue {
 impl CanonicalValue for CompleteBookSnapshot {
     fn append_canonical(&self, bytes: &mut Vec<u8>) -> Result<(), CanonicalEncodingError> {
         for side in [self.bids(), self.asks()] {
+            match side.market_order_quantity() {
+                None => bytes.push(0),
+                Some(quantity) => {
+                    bytes.push(1);
+                    bytes.extend_from_slice(&quantity.to_canonical_bytes());
+                }
+            }
             for slot in side.slots() {
                 match slot {
                     None => bytes.push(0),
@@ -46,11 +56,22 @@ impl CanonicalValue for CompleteBookSnapshot {
     }
 }
 
-impl CanonicalValue for TradePrint {
+impl CanonicalValue for IndicativeAuction {
+    fn append_canonical(&self, bytes: &mut Vec<u8>) -> Result<(), CanonicalEncodingError> {
+        bytes.push(self.kind().discriminant());
+        self.price().append_canonical(bytes)?;
+        self.quantity().append_canonical(bytes)?;
+        self.book().append_canonical(bytes)?;
+        self.cumulative_volume().append_canonical(bytes)?;
+        self.annotations().append_canonical(bytes)
+    }
+}
+
+impl CanonicalValue for ObservedTrade {
     fn append_canonical(&self, bytes: &mut Vec<u8>) -> Result<(), CanonicalEncodingError> {
         bytes.extend_from_slice(&self.price().to_canonical_bytes());
         bytes.extend_from_slice(&self.quantity().to_canonical_bytes());
-        bytes.push(self.print_kind().discriminant());
+        bytes.push(self.observation_kind().discriminant());
         Ok(())
     }
 }

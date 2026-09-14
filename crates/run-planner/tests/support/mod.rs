@@ -1,11 +1,15 @@
 use std::path::PathBuf;
 
-use market_types::{Decimal, InstrumentId, MarketId, QuantityUnit, Symbol, TradingDate};
+use market_types::{
+    ContractShape, Decimal, InstrumentClass, InstrumentId, MarketId, QuantityUnit, Symbol,
+    TradingDate,
+};
 use run_planner::{
     ChargeConfig, ChargeSides, Currency, CurrencyAmount, FillEvidence, FillModelConfig,
-    InstrumentEconomicsConfig, MarkingPolicyConfig, OutputPolicy, PositionAccountingConfig,
-    QuantityAllocationConfig, QuantityEvidence, ReplayDataPolicy, RoundingPolicy, RunConfig,
-    SimulationConfig, SlippageModelConfig, SourcePolicy, StrategyBinding,
+    InstrumentContractConfig, InstrumentEconomicsConfig, MarkingPolicyConfig, OutputPolicy,
+    PositionAccountingConfig, QuantityAllocationConfig, QuantityEvidence, ReplayDataPolicy,
+    RoundingPolicy, RunConfig, SessionProfileId, SimulationConfig, SlippageModelConfig,
+    SourcePolicy, StrategyBinding,
 };
 use strategy_api::{
     BinaryIdentity, CanonicalParamsChecksum, SessionKind, StrategyDeclaration, StrategyIdentity,
@@ -80,10 +84,28 @@ pub fn run_config(
     universe: Vec<InstrumentId>,
     data_root: &str,
 ) -> RunConfig {
+    let instrument_contracts = universe
+        .iter()
+        .cloned()
+        .map(|instrument| {
+            let (class, shape, session_profile) = match instrument.market() {
+                MarketId::Twse => (InstrumentClass::Equity, None, SessionProfileId::TwseRegular),
+                MarketId::Tpex => (InstrumentClass::Equity, None, SessionProfileId::TpexRegular),
+                MarketId::Taifex => (
+                    InstrumentClass::Future,
+                    Some(ContractShape::Outright),
+                    SessionProfileId::TaifexIndexFutures,
+                ),
+            };
+            InstrumentContractConfig::new(instrument, class, shape, session_profile)
+        })
+        .collect();
     RunConfig {
-        config_version: 1,
+        config_version: 2,
+        source: run_planner::SourceId::TeralionFeedArchive,
         trading_dates: dates,
         universe: universe.clone(),
+        instrument_contracts,
         session_kinds: vec![SessionKind::Regular],
         strategy: strategy_binding(universe.clone(), vec![SessionKind::Regular]),
         data_root: PathBuf::from(data_root),

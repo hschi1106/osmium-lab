@@ -327,7 +327,7 @@ fn apply_adverse_price(
         OrderSide::Sell => price.as_decimal().checked_sub(adverse_price_delta),
     }
     .map_err(|_| DepthSweepError::InvalidAdversePriceDelta)?;
-    Price::new(adjusted).map_err(|_| DepthSweepError::InvalidAdversePriceDelta)
+    Ok(Price::new(adjusted))
 }
 
 fn is_marketable(price: Price, side: OrderSide, order_type: OrderType) -> bool {
@@ -454,6 +454,30 @@ mod tests {
     }
 
     #[test]
+    fn market_order_quantity_is_not_used_as_price_or_fill_depth() {
+        let book = CompleteBookSnapshot::new(
+            BookSide::new(BookSideKind::Bid, vec![level("100", 2)]).unwrap(),
+            BookSide::with_market_order_quantity(
+                BookSideKind::Ask,
+                Some(quantity(50, QuantityUnit::Contract)),
+                vec![level("101", 1)],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let result = sweep_visible_depth(
+            &book,
+            OrderSide::Buy,
+            quantity(2, QuantityUnit::Contract),
+            5,
+        )
+        .unwrap();
+        assert_eq!(result.filled().unwrap().value(), 1);
+        assert_eq!(result.remaining().unwrap().value(), 1);
+        assert_eq!(result.fills()[0].price(), Price::parse("101").unwrap());
+    }
+
+    #[test]
     fn invalid_depth_and_quantity_unit_are_rejected() {
         assert_eq!(
             sweep_visible_depth(
@@ -518,7 +542,7 @@ mod tests {
     }
 
     #[test]
-    fn negative_or_non_positive_slipped_price_is_rejected() {
+    fn negative_adverse_delta_is_rejected_but_zero_result_is_representable() {
         assert_eq!(
             sweep_marketable_depth(
                 &book(),
@@ -531,18 +555,16 @@ mod tests {
             .unwrap_err(),
             DepthSweepError::InvalidAdversePriceDelta
         );
-        assert_eq!(
-            sweep_marketable_depth(
-                &book(),
-                OrderSide::Sell,
-                quantity(1, QuantityUnit::Contract),
-                5,
-                OrderType::Market,
-                Decimal::parse("100").unwrap(),
-            )
-            .unwrap_err(),
-            DepthSweepError::InvalidAdversePriceDelta
-        );
+        let result = sweep_marketable_depth(
+            &book(),
+            OrderSide::Sell,
+            quantity(1, QuantityUnit::Contract),
+            5,
+            OrderType::Market,
+            Decimal::parse("100").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(result.fills()[0].price(), Price::parse("0").unwrap());
     }
 
     #[test]

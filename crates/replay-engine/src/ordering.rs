@@ -2,12 +2,12 @@ use std::{error::Error, fmt};
 
 use market_types::{
     CanonicalEncodingError, DomainEvent, EventFingerprint, EventPayload, MatchTime, SourceFormatId,
-    Symbol, TradePrintKind,
+    Symbol, TradeObservationKind,
 };
 
-pub const ORDERING_RULE_VERSION: u16 = 3;
+pub const ORDERING_RULE_VERSION: u16 = 4;
 
-/// Fully materialized version-2 deterministic event ordering key.
+/// Fully materialized deterministic event ordering key.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct OrderingKey {
     match_time: MatchTime,
@@ -22,6 +22,24 @@ pub struct OrderingKey {
 
 impl OrderingKey {
     pub fn for_event(event: &DomainEvent) -> Result<Self, OrderingError> {
+        Self::for_event_and_canonical(event).map(|(key, _)| key)
+    }
+
+    pub(crate) fn for_event_and_canonical(
+        event: &DomainEvent,
+    ) -> Result<(Self, Vec<u8>), OrderingError> {
+        let canonical = event
+            .to_canonical_bytes()
+            .map_err(OrderingError::CanonicalEncoding)?;
+        let fingerprint = EventFingerprint::hash_canonical_bytes(&canonical);
+        let key = Self::for_event_with_fingerprint(event, fingerprint)?;
+        Ok((key, canonical))
+    }
+
+    fn for_event_with_fingerprint(
+        event: &DomainEvent,
+        event_fingerprint: EventFingerprint,
+    ) -> Result<Self, OrderingError> {
         Ok(Self {
             match_time: event.match_time(),
             market_rank: event.instrument().market().ordering_rank(),
@@ -30,9 +48,7 @@ impl OrderingKey {
             source_phase_rank: source_phase_rank(event)?,
             event_kind_rank: event.payload().discriminant(),
             source_sequence: event.source_sequence(),
-            event_fingerprint: event
-                .fingerprint()
-                .map_err(OrderingError::CanonicalEncoding)?,
+            event_fingerprint,
         })
     }
 
@@ -100,10 +116,7 @@ struct PreparedOrderEvent {
 
 impl PreparedOrderEvent {
     fn new(event: DomainEvent) -> Result<Self, OrderingError> {
-        let key = OrderingKey::for_event(&event)?;
-        let canonical = event
-            .to_canonical_bytes()
-            .map_err(OrderingError::CanonicalEncoding)?;
+        let (key, canonical) = OrderingKey::for_event_and_canonical(&event)?;
         Ok(Self {
             event,
             key,
@@ -123,24 +136,20 @@ fn source_phase_rank(event: &DomainEvent) -> Result<u8, OrderingError> {
     }
 
     match event.payload() {
-        EventPayload::QuoteSnapshot(_) => Ok(20),
+        EventPayload::QuoteSnapshot(_) | EventPayload::MarketStatus(_) => Ok(20),
         EventPayload::TradeBatch(batch)
             if !batch.trades().is_empty()
-                && batch
-                    .trades()
-                    .iter()
-                    .all(|trade| trade.print_kind() == TradePrintKind::Intermediate) =>
+                && batch.trades().iter().all(|trade| {
+                    trade.observation_kind() == TradeObservationKind::Intermediate
+                }) =>
         {
             Ok(10)
         }
-        EventPayload::IndicativeOpeningAuction(auction)
-        | EventPayload::IndicativeClosingAuction(auction) => {
-            Ok(if auction.book().as_set().is_some() {
-                20
-            } else {
-                10
-            })
-        }
+        EventPayload::IndicativeAuction(auction) => Ok(if auction.book().as_set().is_some() {
+            20
+        } else {
+            10
+        }),
         EventPayload::BookSnapshot(_) | EventPayload::TradeBatch(_) => Err(invalid_shape),
     }
 }

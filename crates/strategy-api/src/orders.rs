@@ -489,12 +489,14 @@ pub enum RejectionReason {
     QuantityUnitMismatch,
     NewOrderEntryBlocked,
     UnsupportedOrderType,
+    PriceNotAllowedByInstrumentProfile,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CancellationReason {
     EndOfRun,
     SegmentEnd,
+    VolatilityInterruption,
     Expired,
     Replaced,
     StrategyCancelled,

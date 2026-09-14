@@ -77,41 +77,37 @@ impl TpexStatus {
 
     #[must_use]
     pub const fn trial(self) -> bool {
-        self.raw & 0x80 != 0
+        QuoteStatusBits(self.raw).trial()
     }
 
     #[must_use]
     pub const fn delayed_open(self) -> bool {
-        self.trial() && self.raw & 0x40 != 0
+        QuoteStatusBits(self.raw).delayed_open()
     }
 
     #[must_use]
     pub const fn delayed_close(self) -> bool {
-        self.trial() && self.raw & 0x20 != 0
+        QuoteStatusBits(self.raw).delayed_close()
     }
 
     #[must_use]
     pub const fn matching_method(self) -> MatchingMethod {
-        if self.raw & 0x10 != 0 {
-            MatchingMethod::Continuous
-        } else {
-            MatchingMethod::CallAuction
-        }
+        QuoteStatusBits(self.raw).matching_method()
     }
 
     #[must_use]
     pub const fn opening_marker(self) -> bool {
-        self.raw & 0x08 != 0
+        QuoteStatusBits(self.raw).opening_marker()
     }
 
     #[must_use]
     pub const fn closing_marker(self) -> bool {
-        self.raw & 0x04 != 0
+        QuoteStatusBits(self.raw).closing_marker()
     }
 
     #[must_use]
     pub const fn reserved_bits(self) -> u8 {
-        self.raw & 0x03
+        QuoteStatusBits(self.raw).reserved_bits()
     }
 }
 
@@ -134,22 +130,22 @@ impl TpexLimits {
 
     #[must_use]
     pub const fn trade(self) -> LimitPosition {
-        LimitPosition::from_bits((self.raw >> 6) & 0x03)
+        QuoteLimitBits(self.raw).trade()
     }
 
     #[must_use]
     pub const fn best_bid(self) -> LimitPosition {
-        LimitPosition::from_bits((self.raw >> 4) & 0x03)
+        QuoteLimitBits(self.raw).best_bid()
     }
 
     #[must_use]
     pub const fn best_ask(self) -> LimitPosition {
-        LimitPosition::from_bits((self.raw >> 2) & 0x03)
+        QuoteLimitBits(self.raw).best_ask()
     }
 
     #[must_use]
     pub const fn instant_trend(self) -> InstantTrend {
-        InstantTrend::from_bits(self.raw & 0x03)
+        QuoteLimitBits(self.raw).instant_trend()
     }
 }
 
@@ -209,41 +205,37 @@ impl TwseStatus {
 
     #[must_use]
     pub const fn trial(self) -> bool {
-        self.raw & 0x80 != 0
+        QuoteStatusBits(self.raw).trial()
     }
 
     #[must_use]
     pub const fn delayed_open(self) -> bool {
-        self.trial() && self.raw & 0x40 != 0
+        QuoteStatusBits(self.raw).delayed_open()
     }
 
     #[must_use]
     pub const fn delayed_close(self) -> bool {
-        self.trial() && self.raw & 0x20 != 0
+        QuoteStatusBits(self.raw).delayed_close()
     }
 
     #[must_use]
     pub const fn matching_method(self) -> MatchingMethod {
-        if self.raw & 0x10 != 0 {
-            MatchingMethod::Continuous
-        } else {
-            MatchingMethod::CallAuction
-        }
+        QuoteStatusBits(self.raw).matching_method()
     }
 
     #[must_use]
     pub const fn opening_marker(self) -> bool {
-        self.raw & 0x08 != 0
+        QuoteStatusBits(self.raw).opening_marker()
     }
 
     #[must_use]
     pub const fn closing_marker(self) -> bool {
-        self.raw & 0x04 != 0
+        QuoteStatusBits(self.raw).closing_marker()
     }
 
     #[must_use]
     pub const fn reserved_bits(self) -> u8 {
-        self.raw & 0x03
+        QuoteStatusBits(self.raw).reserved_bits()
     }
 }
 
@@ -272,22 +264,22 @@ impl TwseLimits {
 
     #[must_use]
     pub const fn trade(self) -> LimitPosition {
-        LimitPosition::from_bits((self.raw >> 6) & 0x03)
+        QuoteLimitBits(self.raw).trade()
     }
 
     #[must_use]
     pub const fn best_bid(self) -> LimitPosition {
-        LimitPosition::from_bits((self.raw >> 4) & 0x03)
+        QuoteLimitBits(self.raw).best_bid()
     }
 
     #[must_use]
     pub const fn best_ask(self) -> LimitPosition {
-        LimitPosition::from_bits((self.raw >> 2) & 0x03)
+        QuoteLimitBits(self.raw).best_ask()
     }
 
     #[must_use]
     pub const fn instant_trend(self) -> InstantTrend {
-        InstantTrend::from_bits(self.raw & 0x03)
+        QuoteLimitBits(self.raw).instant_trend()
     }
 }
 
@@ -326,5 +318,66 @@ impl InstantTrend {
             2 => Self::VolatilityInterruptionUp,
             _ => Self::Reserved,
         }
+    }
+}
+
+/// Private decoder for currently shared TWSE/TPEx status-byte positions.
+/// The public wrappers remain market-specific so a future wire divergence is explicit.
+#[derive(Debug, Clone, Copy)]
+struct QuoteStatusBits(u8);
+
+impl QuoteStatusBits {
+    const fn trial(self) -> bool {
+        self.0 & 0x80 != 0
+    }
+
+    const fn delayed_open(self) -> bool {
+        self.trial() && self.0 & 0x40 != 0
+    }
+
+    const fn delayed_close(self) -> bool {
+        self.trial() && self.0 & 0x20 != 0
+    }
+
+    const fn matching_method(self) -> MatchingMethod {
+        if self.0 & 0x10 != 0 {
+            MatchingMethod::Continuous
+        } else {
+            MatchingMethod::CallAuction
+        }
+    }
+
+    const fn opening_marker(self) -> bool {
+        self.0 & 0x08 != 0
+    }
+
+    const fn closing_marker(self) -> bool {
+        self.0 & 0x04 != 0
+    }
+
+    const fn reserved_bits(self) -> u8 {
+        self.0 & 0x03
+    }
+}
+
+/// Private decoder for currently shared TWSE/TPEx limit-byte positions.
+#[derive(Debug, Clone, Copy)]
+struct QuoteLimitBits(u8);
+
+impl QuoteLimitBits {
+    const fn trade(self) -> LimitPosition {
+        LimitPosition::from_bits((self.0 >> 6) & 0x03)
+    }
+
+    const fn best_bid(self) -> LimitPosition {
+        LimitPosition::from_bits((self.0 >> 4) & 0x03)
+    }
+
+    const fn best_ask(self) -> LimitPosition {
+        LimitPosition::from_bits((self.0 >> 2) & 0x03)
+    }
+
+    const fn instant_trend(self) -> InstantTrend {
+        InstantTrend::from_bits(self.0 & 0x03)
     }
 }

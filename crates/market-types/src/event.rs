@@ -3,21 +3,23 @@ use std::{error::Error, fmt};
 use crate::{
     BookLevel, BookSide, BookSideKind, CanonicalEncodingError, CanonicalValue,
     CompleteBookSnapshot, Decimal, InstrumentId, MarketAnnotations, MarketId, MatchTime,
-    Observation, Price, Quantity, QuantityUnit, SourceFormatId, Symbol, TpexQuoteAnnotations,
-    TradeError, TradeOrder, TradePrint, TradePrintKind, TradingDate, TwseQuoteAnnotations,
-    UnknownValue, Volume, append_bytes, append_length, append_optional_u64,
+    Observation, ObservedTrade, Price, Quantity, QuantityUnit, SourceFormatId, Symbol,
+    TpexQuoteAnnotations, TradeBatchOrdering, TradeError, TradeObservationKind, TradingDate,
+    TwseQuoteAnnotations, UnknownValue, Volume, append_bytes, append_length, append_optional_u64,
     trade::validate_trade_units,
 };
 
-pub const MARKET_TYPES_VERSION: u16 = 3;
-pub const EVENT_SCHEMA_VERSION: u16 = 3;
-pub const CANONICAL_EVENT_VERSION: u16 = 3;
+pub const MARKET_TYPES_VERSION: u16 = 7;
+pub const EVENT_SCHEMA_VERSION: u16 = 6;
+pub const CANONICAL_EVENT_VERSION: u16 = 6;
 const CANONICAL_MAGIC: &[u8; 4] = b"OSME";
+const CANONICAL_TRADE_BYTES: usize = 16 + 9 + 1;
+const MIN_TRADE_BATCH_SUFFIX_BYTES: usize = 1 + 1 + 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct QuoteSnapshot {
     book: CompleteBookSnapshot,
-    trade: Observation<TradePrint>,
+    trade: Observation<ObservedTrade>,
     cumulative_volume: Observation<Volume>,
     annotations: MarketAnnotations,
 }
@@ -25,7 +27,7 @@ pub struct QuoteSnapshot {
 impl QuoteSnapshot {
     pub fn new(
         book: CompleteBookSnapshot,
-        trade: Observation<TradePrint>,
+        trade: Observation<ObservedTrade>,
         cumulative_volume: Observation<Volume>,
         annotations: MarketAnnotations,
     ) -> Result<Self, EventError> {
@@ -44,7 +46,7 @@ impl QuoteSnapshot {
     }
 
     #[must_use]
-    pub const fn trade(&self) -> &Observation<TradePrint> {
+    pub const fn trade(&self) -> &Observation<ObservedTrade> {
         &self.trade
     }
 
@@ -84,16 +86,16 @@ impl BookSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TradeBatch {
-    trades: Box<[TradePrint]>,
-    trade_order: TradeOrder,
+    trades: Box<[ObservedTrade]>,
+    trade_order: TradeBatchOrdering,
     cumulative_volume: Observation<Volume>,
     annotations: MarketAnnotations,
 }
 
 impl TradeBatch {
     pub fn new(
-        trades: Vec<TradePrint>,
-        trade_order: TradeOrder,
+        trades: Vec<ObservedTrade>,
+        trade_order: TradeBatchOrdering,
         cumulative_volume: Observation<Volume>,
         annotations: MarketAnnotations,
     ) -> Result<Self, EventError> {
@@ -115,12 +117,12 @@ impl TradeBatch {
     }
 
     #[must_use]
-    pub const fn trades(&self) -> &[TradePrint] {
+    pub const fn trades(&self) -> &[ObservedTrade] {
         &self.trades
     }
 
     #[must_use]
-    pub const fn trade_order(&self) -> TradeOrder {
+    pub const fn trade_order(&self) -> TradeBatchOrdering {
         self.trade_order
     }
 
@@ -136,8 +138,57 @@ impl TradeBatch {
 }
 
 /// An indicative call-auction observation that is not an executed trade.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum StabilityDirection {
+    Down = 1,
+    Up = 2,
+}
+
+/// The source-local phase of one indicative auction observation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IndicativeAuctionKind {
+    Opening,
+    Closing,
+    IntradayStability { direction: StabilityDirection },
+    IntradayUnclassified,
+}
+
+impl IndicativeAuctionKind {
+    #[must_use]
+    pub const fn discriminant(self) -> u8 {
+        match self {
+            Self::Opening => 1,
+            Self::Closing => 2,
+            Self::IntradayStability {
+                direction: StabilityDirection::Down,
+            } => 3,
+            Self::IntradayStability {
+                direction: StabilityDirection::Up,
+            } => 4,
+            Self::IntradayUnclassified => 5,
+        }
+    }
+
+    const fn from_discriminant(discriminant: u8) -> Option<Self> {
+        match discriminant {
+            1 => Some(Self::Opening),
+            2 => Some(Self::Closing),
+            3 => Some(Self::IntradayStability {
+                direction: StabilityDirection::Down,
+            }),
+            4 => Some(Self::IntradayStability {
+                direction: StabilityDirection::Up,
+            }),
+            5 => Some(Self::IntradayUnclassified),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct IndicativeAuction {
+    kind: IndicativeAuctionKind,
     price: Observation<Price>,
     quantity: Observation<Quantity>,
     book: Observation<CompleteBookSnapshot>,
@@ -147,6 +198,7 @@ pub struct IndicativeAuction {
 
 impl IndicativeAuction {
     pub fn new(
+        kind: IndicativeAuctionKind,
         price: Observation<Price>,
         quantity: Observation<Quantity>,
         book: Observation<CompleteBookSnapshot>,
@@ -155,12 +207,18 @@ impl IndicativeAuction {
     ) -> Result<Self, EventError> {
         validate_auction_units(&quantity, &book, &cumulative_volume)?;
         Ok(Self {
+            kind,
             price,
             quantity,
             book,
             cumulative_volume,
             annotations,
         })
+    }
+
+    #[must_use]
+    pub const fn kind(&self) -> IndicativeAuctionKind {
+        self.kind
     }
 
     #[must_use]
@@ -189,13 +247,43 @@ impl IndicativeAuction {
     }
 }
 
+/// A source observation that changes market status without publishing a book or trade.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct MarketStatusObservation {
+    cumulative_volume: Observation<Volume>,
+    annotations: MarketAnnotations,
+}
+
+impl MarketStatusObservation {
+    #[must_use]
+    pub const fn new(
+        cumulative_volume: Observation<Volume>,
+        annotations: MarketAnnotations,
+    ) -> Self {
+        Self {
+            cumulative_volume,
+            annotations,
+        }
+    }
+
+    #[must_use]
+    pub const fn cumulative_volume(&self) -> &Observation<Volume> {
+        &self.cumulative_volume
+    }
+
+    #[must_use]
+    pub const fn annotations(&self) -> &MarketAnnotations {
+        &self.annotations
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum EventPayload {
     QuoteSnapshot(QuoteSnapshot),
     BookSnapshot(BookSnapshot),
     TradeBatch(TradeBatch),
-    IndicativeOpeningAuction(IndicativeAuction),
-    IndicativeClosingAuction(IndicativeAuction),
+    IndicativeAuction(IndicativeAuction),
+    MarketStatus(MarketStatusObservation),
 }
 
 impl EventPayload {
@@ -210,8 +298,19 @@ impl EventPayload {
             Self::QuoteSnapshot(_) => EventKind::QuoteSnapshot,
             Self::BookSnapshot(_) => EventKind::BookSnapshot,
             Self::TradeBatch(_) => EventKind::TradeBatch,
-            Self::IndicativeOpeningAuction(_) => EventKind::IndicativeOpeningAuction,
-            Self::IndicativeClosingAuction(_) => EventKind::IndicativeClosingAuction,
+            Self::IndicativeAuction(_) => EventKind::IndicativeAuction,
+            Self::MarketStatus(_) => EventKind::MarketStatus,
+        }
+    }
+
+    #[must_use]
+    pub const fn annotations(&self) -> &MarketAnnotations {
+        match self {
+            Self::QuoteSnapshot(snapshot) => snapshot.annotations(),
+            Self::BookSnapshot(snapshot) => snapshot.annotations(),
+            Self::TradeBatch(batch) => batch.annotations(),
+            Self::IndicativeAuction(auction) => auction.annotations(),
+            Self::MarketStatus(status) => status.annotations(),
         }
     }
 }
@@ -222,8 +321,8 @@ pub enum EventKind {
     QuoteSnapshot = 10,
     BookSnapshot = 20,
     TradeBatch = 30,
-    IndicativeOpeningAuction = 40,
-    IndicativeClosingAuction = 50,
+    IndicativeAuction = 40,
+    MarketStatus = 50,
 }
 
 impl EventKind {
@@ -294,8 +393,11 @@ impl DomainEvent {
         &self.payload
     }
 
-    /// Encodes the version-3 canonical event frame.
+    /// Encodes the current canonical event frame.
     pub fn to_canonical_bytes(&self) -> Result<Vec<u8>, CanonicalEncodingError> {
+        if !self.match_time.is_utc_iso8601_representable() {
+            return Err(CanonicalEncodingError::InvalidMatchTime);
+        }
         let mut bytes = Vec::with_capacity(256);
         bytes.extend_from_slice(CANONICAL_MAGIC);
         bytes.extend_from_slice(&CANONICAL_EVENT_VERSION.to_be_bytes());
@@ -311,7 +413,7 @@ impl DomainEvent {
         Ok(bytes)
     }
 
-    /// Decodes and validates one complete version-3 canonical event frame.
+    /// Decodes and validates one complete current-version canonical event frame.
     pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, CanonicalDecodingError> {
         let mut parser = CanonicalParser::new(bytes);
         if parser.take(4)? != CANONICAL_MAGIC
@@ -324,10 +426,14 @@ impl DomainEvent {
             .map_err(|_| CanonicalDecodingError::InvalidValue)?;
         let symbol =
             Symbol::new(parser.string()?).map_err(|_| CanonicalDecodingError::InvalidValue)?;
-        let trading_date = TradingDate::from_epoch_days(parser.i32()?);
+        let trading_date = TradingDate::from_epoch_days(parser.i32()?)
+            .map_err(|_| CanonicalDecodingError::InvalidValue)?;
         let source_format = SourceFormatId::new(parser.string()?)
             .map_err(|_| CanonicalDecodingError::InvalidValue)?;
         let match_time = MatchTime::from_unix_microseconds(parser.i64()?);
+        if !match_time.is_utc_iso8601_representable() {
+            return Err(CanonicalDecodingError::InvalidValue);
+        }
         let source_sequence = match parser.u8()? {
             0 => None,
             1 => Some(parser.u64()?),
@@ -348,13 +454,20 @@ impl DomainEvent {
             }
             30 => {
                 let count = parser.u32()? as usize;
+                let maximum_count = parser
+                    .remaining_len()
+                    .saturating_sub(MIN_TRADE_BATCH_SUFFIX_BYTES)
+                    / CANONICAL_TRADE_BYTES;
+                if count > maximum_count {
+                    return Err(CanonicalDecodingError::LengthOutOfBounds);
+                }
                 let mut trades = Vec::with_capacity(count);
                 for _ in 0..count {
                     trades.push(parser.trade()?);
                 }
                 let order = match parser.u8()? {
-                    0 => TradeOrder::Unspecified,
-                    1 => TradeOrder::SourceOrdered,
+                    0 => TradeBatchOrdering::Unspecified,
+                    1 => TradeBatchOrdering::SourceSequencePreserved,
                     _ => return Err(CanonicalDecodingError::InvalidValue),
                 };
                 EventPayload::TradeBatch(
@@ -367,8 +480,10 @@ impl DomainEvent {
                     .map_err(|_| CanonicalDecodingError::InvalidValue)?,
                 )
             }
-            40 => EventPayload::IndicativeOpeningAuction(
+            40 => EventPayload::IndicativeAuction(
                 IndicativeAuction::new(
+                    IndicativeAuctionKind::from_discriminant(parser.u8()?)
+                        .ok_or(CanonicalDecodingError::InvalidValue)?,
                     parser.observation(CanonicalParser::price)?,
                     parser.observation(CanonicalParser::quantity)?,
                     parser.observation(CanonicalParser::book)?,
@@ -377,16 +492,10 @@ impl DomainEvent {
                 )
                 .map_err(|_| CanonicalDecodingError::InvalidValue)?,
             ),
-            50 => EventPayload::IndicativeClosingAuction(
-                IndicativeAuction::new(
-                    parser.observation(CanonicalParser::price)?,
-                    parser.observation(CanonicalParser::quantity)?,
-                    parser.observation(CanonicalParser::book)?,
-                    parser.observation(CanonicalParser::volume)?,
-                    parser.annotations()?,
-                )
-                .map_err(|_| CanonicalDecodingError::InvalidValue)?,
-            ),
+            50 => EventPayload::MarketStatus(MarketStatusObservation::new(
+                parser.observation(CanonicalParser::volume)?,
+                parser.annotations()?,
+            )),
             _ => return Err(CanonicalDecodingError::InvalidValue),
         };
         if !parser.is_finished() {
@@ -405,13 +514,14 @@ impl DomainEvent {
     /// Computes BLAKE3-256 over the canonical event frame.
     pub fn fingerprint(&self) -> Result<EventFingerprint, CanonicalEncodingError> {
         let bytes = self.to_canonical_bytes()?;
-        Ok(EventFingerprint(*blake3::hash(&bytes).as_bytes()))
+        Ok(EventFingerprint::hash_canonical_bytes(&bytes))
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CanonicalDecodingError {
     Truncated,
+    LengthOutOfBounds,
     UnsupportedHeader,
     InvalidUtf8,
     InvalidValue,
@@ -493,8 +603,7 @@ impl<'a> CanonicalParser<'a> {
     }
 
     fn price(&mut self) -> Result<Price, CanonicalDecodingError> {
-        Price::new(Decimal::from_atoms(self.i128()?))
-            .map_err(|_| CanonicalDecodingError::InvalidValue)
+        Ok(Price::new(Decimal::from_atoms(self.i128()?)))
     }
 
     fn quantity(&mut self) -> Result<Quantity, CanonicalDecodingError> {
@@ -509,15 +618,15 @@ impl<'a> CanonicalParser<'a> {
         Ok(Volume::new(self.u64()?, unit))
     }
 
-    fn trade(&mut self) -> Result<TradePrint, CanonicalDecodingError> {
+    fn trade(&mut self) -> Result<ObservedTrade, CanonicalDecodingError> {
         let price = self.price()?;
         let quantity = self.quantity()?;
         let kind = match self.u8()? {
-            0 => TradePrintKind::Regular,
-            1 => TradePrintKind::Intermediate,
+            0 => TradeObservationKind::Regular,
+            1 => TradeObservationKind::Intermediate,
             _ => return Err(CanonicalDecodingError::InvalidValue),
         };
-        Ok(TradePrint::new(price, quantity, kind))
+        Ok(ObservedTrade::new(price, quantity, kind))
     }
 
     fn book(&mut self) -> Result<CompleteBookSnapshot, CanonicalDecodingError> {
@@ -527,6 +636,11 @@ impl<'a> CanonicalParser<'a> {
     }
 
     fn book_side(&mut self, kind: BookSideKind) -> Result<BookSide, CanonicalDecodingError> {
+        let market_order_quantity = match self.u8()? {
+            0 => None,
+            1 => Some(self.quantity()?),
+            _ => return Err(CanonicalDecodingError::InvalidValue),
+        };
         let mut slots = [None; 5];
         for slot in &mut slots {
             *slot = match self.u8()? {
@@ -535,7 +649,8 @@ impl<'a> CanonicalParser<'a> {
                 _ => return Err(CanonicalDecodingError::InvalidValue),
             };
         }
-        BookSide::from_slots(kind, slots).map_err(|_| CanonicalDecodingError::InvalidValue)
+        BookSide::from_parts(kind, market_order_quantity, slots)
+            .map_err(|_| CanonicalDecodingError::InvalidValue)
     }
 
     fn observation<T>(
@@ -580,12 +695,22 @@ impl<'a> CanonicalParser<'a> {
     const fn is_finished(&self) -> bool {
         self.offset == self.bytes.len()
     }
+
+    const fn remaining_len(&self) -> usize {
+        self.bytes.len() - self.offset
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EventFingerprint([u8; 32]);
 
 impl EventFingerprint {
+    /// Hashes an already encoded canonical event frame.
+    #[must_use]
+    pub fn hash_canonical_bytes(bytes: &[u8]) -> Self {
+        Self(*blake3::hash(bytes).as_bytes())
+    }
+
     #[must_use]
     pub const fn as_bytes(&self) -> &[u8; 32] {
         &self.0
@@ -624,7 +749,7 @@ impl Error for EventError {
 
 fn validate_snapshot_units(
     book: &CompleteBookSnapshot,
-    trade: &Observation<TradePrint>,
+    trade: &Observation<ObservedTrade>,
     cumulative_volume: &Observation<Volume>,
 ) -> Result<(), EventError> {
     let mut expected = book.quantity_unit();
@@ -698,13 +823,12 @@ fn encode_payload(
             batch.cumulative_volume().append_canonical(bytes)?;
             batch.annotations().append_canonical(bytes)?;
         }
-        EventPayload::IndicativeOpeningAuction(auction)
-        | EventPayload::IndicativeClosingAuction(auction) => {
-            auction.price().append_canonical(bytes)?;
-            auction.quantity().append_canonical(bytes)?;
-            auction.book().append_canonical(bytes)?;
-            auction.cumulative_volume().append_canonical(bytes)?;
-            auction.annotations().append_canonical(bytes)?;
+        EventPayload::IndicativeAuction(auction) => {
+            auction.append_canonical(bytes)?;
+        }
+        EventPayload::MarketStatus(status) => {
+            status.cumulative_volume().append_canonical(bytes)?;
+            status.annotations().append_canonical(bytes)?;
         }
     }
     Ok(())

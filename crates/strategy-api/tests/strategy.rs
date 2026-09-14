@@ -3,8 +3,9 @@ use market_state::{
 };
 use market_types::{
     BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventPayload,
-    InstrumentId, MarketAnnotations, MarketId, MatchTime, Observation, Price, Quantity,
-    QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol, TradingDate, TwseQuoteAnnotations, Volume,
+    IndicativeAuction, IndicativeAuctionKind, InstrumentId, MarketAnnotations, MarketId, MatchTime,
+    Observation, Price, Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol, TradingDate,
+    TwseQuoteAnnotations, Volume,
 };
 use replay_engine::ReplayCore;
 use strategy_api::{
@@ -14,6 +15,7 @@ use strategy_api::{
     StrategyExecutionError, StrategyIdentity, StrategyOutputRecord, StrategyOutputSink,
     StrategyRunErrorCategory, run_strategy,
 };
+use twse_normalizer::{NormalizerConfig, TwseNormalizer};
 
 fn instrument() -> InstrumentId {
     InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap())
@@ -65,22 +67,59 @@ fn book() -> CompleteBookSnapshot {
 }
 
 fn quote(time: &str, cumulative: u64, status: u8, limits: u8) -> DomainEvent {
-    DomainEvent::new(
-        instrument(),
-        date(),
-        SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
-        MatchTime::parse(time).unwrap(),
-        None,
+    let annotations = TwseQuoteAnnotations::new(status, limits);
+    let match_time = MatchTime::parse(time).unwrap();
+    let payload = if annotations.status().trial() {
+        let kind = if annotations.status().opening_marker() || match_time < segment().open() {
+            IndicativeAuctionKind::Opening
+        } else if annotations.status().closing_marker() {
+            IndicativeAuctionKind::Closing
+        } else {
+            IndicativeAuctionKind::IntradayUnclassified
+        };
+        EventPayload::IndicativeAuction(
+            IndicativeAuction::new(
+                kind,
+                Observation::NoObservation,
+                Observation::NoObservation,
+                Observation::Set(book()),
+                Observation::Set(Volume::new(cumulative, QuantityUnit::TradingUnit)),
+                MarketAnnotations::TwseQuote(annotations),
+            )
+            .unwrap(),
+        )
+    } else {
         EventPayload::QuoteSnapshot(
             QuoteSnapshot::new(
                 book(),
                 Observation::NoObservation,
                 Observation::Set(Volume::new(cumulative, QuantityUnit::TradingUnit)),
-                MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(status, limits)),
+                MarketAnnotations::TwseQuote(annotations),
             )
             .unwrap(),
-        ),
+        )
+    };
+    DomainEvent::new(
+        instrument(),
+        date(),
+        SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
+        match_time,
+        None,
+        payload,
     )
+}
+
+fn delayed_open_auction() -> DomainEvent {
+    let config = NormalizerConfig::new(
+        instrument(),
+        date(),
+        MatchTime::parse("2026-07-27T08:55:00+08:00").unwrap(),
+        MatchTime::parse("2026-07-27T13:35:00+08:00").unwrap(),
+    )
+    .unwrap();
+    let normalizer = TwseNormalizer::new(config);
+    let wire = r#"{"type":"quote","market":"twse","format":"STOCK_REALTIME","symbol":"2330","match_time":"2026-07-27T08:59:59+08:00","received_at":"2026-07-27T09:00:00+08:00","bids":[{"price":100,"quantity":2}],"asks":[{"price":101,"quantity":2}],"deal":{"price":100,"quantity":2},"cum_volume":0,"limit_flags":0,"status_flags":192,"intermediate_print":false}"#;
+    normalizer.normalize_json_lines([wire]).unwrap().events()[0].clone()
 }
 
 fn binary_identity() -> BinaryIdentity {
@@ -151,6 +190,11 @@ impl Strategy for ContextObserver {
             "seen_version",
             IndicatorValue::Unsigned(context.market_state().state_version()),
         )?;
+        if context.trading().matching()
+            == MatchingState::Indicative(strategy_api::IndicativeReason::DelayedOpen)
+        {
+            output.emit_indicator("delayed_open_seen", IndicatorValue::Bool(true))?;
+        }
         Ok(())
     }
 }
@@ -174,6 +218,29 @@ fn callback_observes_committed_post_event_state_and_context() {
             ..
         }
     ));
+}
+
+#[test]
+fn strategy_callback_can_observe_explicit_delayed_open_signal() {
+    let completed = run_strategy(
+        core(),
+        ContextObserver::new(),
+        &segment(),
+        vec![delayed_open_auction()],
+    )
+    .unwrap();
+
+    assert_eq!(completed.callback_count(), 1);
+    assert!(completed.strategy_output().records().iter().any(|record| {
+        matches!(
+            record,
+            StrategyOutputRecord::EventIndicator {
+                indicator_name,
+                value: IndicatorValue::Bool(true),
+                ..
+            } if indicator_name.as_ref() == "delayed_open_seen"
+        )
+    }));
 }
 
 #[test]
@@ -380,7 +447,7 @@ fn session_phase_and_twse_indicative_rules_are_explicit() {
             quote("2026-07-27T09:01:00+08:00", 2, 0x10, 1),
             SessionPhase::Active,
             MatchingState::Indicative(strategy_api::IndicativeReason::VolatilityInterruptionDown),
-            NewOrderEntry::Allowed,
+            NewOrderEntry::Restricted(OrderRestrictionReason::IndicativeMarket),
         ),
         (
             quote("2026-07-27T13:30:00.000001+08:00", 2, 0x04, 0),

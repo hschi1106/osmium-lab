@@ -2,18 +2,19 @@ use std::{collections::BTreeMap, error::Error, fmt};
 
 use market_types::{
     BookError, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventError,
-    EventPayload, IndicativeAuction, InstantTrend, InstrumentId, LimitPosition, MarketAnnotations,
-    MarketId, MatchTime, MatchTimeError, Observation, Price, PriceError, Quantity, QuantityError,
-    QuantityUnit, QuoteSnapshot, SourceFormatId, TpexQuoteAnnotations, TradeBatch, TradeOrder,
-    TradePrint, TradePrintKind, TradingDate, Volume,
+    EventPayload, IndicativeAuction, IndicativeAuctionKind, InstantTrend, InstrumentId,
+    LimitPosition, MarketAnnotations, MarketId, MarketStatusObservation, MatchTime, MatchTimeError,
+    Observation, ObservedTrade, Price, PriceError, Quantity, QuantityError, QuantityUnit,
+    QuoteSnapshot, SourceFormatId, TpexQuoteAnnotations, TradeBatch, TradeBatchOrdering,
+    TradeObservationKind, TradingDate, Volume,
 };
 use serde::Deserialize;
 use serde_json::value::RawValue;
 
 pub const MAPPING_NAME: &str = "TeralionTpexQuote";
-pub const MAPPING_VERSION: u16 = 1;
+pub const MAPPING_VERSION: u16 = 6;
 pub const WARRANT_MAPPING_NAME: &str = "TeralionTpexWarrant";
-pub const WARRANT_MAPPING_VERSION: u16 = 1;
+pub const WARRANT_MAPPING_VERSION: u16 = 6;
 
 const STOCK_SNAPSHOT: &str = "STOCK_SNAPSHOT";
 const STOCK_REALTIME: &str = "STOCK_REALTIME";
@@ -294,6 +295,25 @@ impl TpexNormalizer {
         let record_warnings = annotation_warnings(&context, annotations);
         let cumulative_volume = Volume::new(wire.cum_volume, QuantityUnit::TradingUnit);
         let (deal, deal_zero_quantity) = parse_deal(record_number, &context, wire.deal)?;
+        if deal_zero_quantity {
+            let is_pause = matches!(
+                annotations.limits().instant_trend(),
+                InstantTrend::VolatilityInterruptionDown | InstantTrend::VolatilityInterruptionUp
+            );
+            if !is_pause
+                || wire.intermediate_print
+                || !wire.bids.is_empty()
+                || !wire.asks.is_empty()
+            {
+                return Err(NormalizationError::new(
+                    record_number,
+                    context,
+                    NormalizationErrorKind::InvalidPayload(
+                        "zero-quantity deal is only valid for a book-empty volatility-pause quote",
+                    ),
+                ));
+            }
+        }
 
         let book = if wire.intermediate_print {
             if format != WireFormat::StockRealtime {
@@ -464,6 +484,13 @@ impl TpexNormalizer {
                 RealtimeGroupError::ExpectedOneIntermediateAndOneFinal { records: 1 },
             ));
         }
+        if is_status_only_pause(record) {
+            let status = MarketStatusObservation::new(
+                Observation::Set(record.cumulative_volume),
+                MarketAnnotations::TpexQuote(record.annotations),
+            );
+            return Ok(self.domain_event(record, EventPayload::MarketStatus(status)));
+        }
         let book = record.book.clone().ok_or_else(|| {
             NormalizationError::new(
                 record.record_number,
@@ -498,14 +525,14 @@ impl TpexNormalizer {
         if let Some(phase) = self.auction_phase(record)? {
             return self.auction_event(record, phase, Observation::NoObservation);
         }
-        let trade = TradePrint::new(
+        let trade = ObservedTrade::new(
             trade.price(),
             trade.quantity(),
-            TradePrintKind::Intermediate,
+            TradeObservationKind::Intermediate,
         );
         let batch = TradeBatch::new(
             vec![trade],
-            TradeOrder::SourceOrdered,
+            TradeBatchOrdering::SourceSequencePreserved,
             Observation::Set(record.cumulative_volume),
             MarketAnnotations::TpexQuote(record.annotations),
         )
@@ -529,16 +556,16 @@ impl TpexNormalizer {
                 let trade = record.deal.ok_or_else(|| {
                     group_error(record, RealtimeGroupError::IntermediateDealMissing)
                 })?;
-                Ok(TradePrint::new(
+                Ok(ObservedTrade::new(
                     trade.price(),
                     trade.quantity(),
-                    TradePrintKind::Intermediate,
+                    TradeObservationKind::Intermediate,
                 ))
             })
             .collect::<Result<Vec<_>, NormalizationError>>()?;
         let batch = TradeBatch::new(
             trades,
-            TradeOrder::SourceOrdered,
+            TradeBatchOrdering::SourceSequencePreserved,
             Observation::Set(last.cumulative_volume),
             MarketAnnotations::TpexQuote(first.annotations),
         )
@@ -549,7 +576,7 @@ impl TpexNormalizer {
     fn auction_event(
         &self,
         record: &ValidatedRecord,
-        phase: AuctionPhase,
+        kind: IndicativeAuctionKind,
         book: Observation<CompleteBookSnapshot>,
     ) -> Result<DomainEvent, NormalizationError> {
         let (price, quantity) = match record.deal {
@@ -560,6 +587,7 @@ impl TpexNormalizer {
             None => (Observation::NoObservation, Observation::NoObservation),
         };
         let auction = IndicativeAuction::new(
+            kind,
             price,
             quantity,
             book,
@@ -567,24 +595,32 @@ impl TpexNormalizer {
             MarketAnnotations::TpexQuote(record.annotations),
         )
         .map_err(|error| event_error(record, error))?;
-        let payload = match phase {
-            AuctionPhase::Opening => EventPayload::IndicativeOpeningAuction(auction),
-            AuctionPhase::Closing => EventPayload::IndicativeClosingAuction(auction),
-        };
-        Ok(self.domain_event(record, payload))
+        Ok(self.domain_event(record, EventPayload::IndicativeAuction(auction)))
     }
 
     fn auction_phase(
         &self,
         record: &ValidatedRecord,
-    ) -> Result<Option<AuctionPhase>, NormalizationError> {
+    ) -> Result<Option<IndicativeAuctionKind>, NormalizationError> {
         let status = record.annotations.status();
-        let marked = status.delayed_open()
-            || status.delayed_close()
-            || status.opening_marker()
-            || status.closing_marker();
-        if !status.trial() && !marked {
+        if !status.trial() {
             return Ok(None);
+        }
+
+        if status.delayed_open() && status.delayed_close() {
+            return Err(NormalizationError::new(
+                record.record_number,
+                record.context.clone(),
+                NormalizationErrorKind::InvalidPayload(
+                    "trial quote cannot set delayed-open and delayed-close together",
+                ),
+            ));
+        }
+        if status.delayed_open() {
+            return Ok(Some(IndicativeAuctionKind::Opening));
+        }
+        if status.delayed_close() {
+            return Ok(Some(IndicativeAuctionKind::Closing));
         }
 
         let opening_window_start = self.session_time("08:30:00");
@@ -602,12 +638,13 @@ impl TpexNormalizer {
             || status.closing_marker()
             || (status.trial() && in_closing_window);
         match (opening, closing) {
-            (true, false) => Ok(Some(AuctionPhase::Opening)),
-            (false, true) => Ok(Some(AuctionPhase::Closing)),
-            // TPEx can set the trial bit for an in-session volatility auction
-            // without carrying an opening/closing marker. Preserve that raw
-            // annotation on the ordinary quote instead of guessing a phase.
-            (false, false) => Ok(None),
+            (true, false) => Ok(Some(IndicativeAuctionKind::Opening)),
+            (false, true) => Ok(Some(IndicativeAuctionKind::Closing)),
+            // Instant-trend proves a pause direction, not that Teralion's
+            // deal/book fields are simulated-auction values. Preserve the
+            // annotation and keep the indicative observation unclassified
+            // until a real source fixture verifies that mapping.
+            (false, false) => Ok(Some(IndicativeAuctionKind::IntradayUnclassified)),
             (true, true) => Err(NormalizationError::new(
                 record.record_number,
                 record.context.clone(),
@@ -927,12 +964,6 @@ enum WireFormat {
     StockRealtime,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AuctionPhase {
-    Opening,
-    Closing,
-}
-
 #[derive(Debug)]
 enum ClassifiedRecord {
     Accepted {
@@ -952,7 +983,7 @@ struct ValidatedRecord {
     match_time: MatchTime,
     intermediate: bool,
     book: Option<CompleteBookSnapshot>,
-    deal: Option<TradePrint>,
+    deal: Option<ObservedTrade>,
     deal_zero_quantity: bool,
     cumulative_volume: Volume,
     annotations: TpexQuoteAnnotations,
@@ -1043,8 +1074,8 @@ fn parse_side(
     wire_levels: Vec<WireLevel<'_>>,
 ) -> Result<BookSide, NormalizationError> {
     let mut levels = Vec::with_capacity(wire_levels.len());
-    for wire in wire_levels {
-        let price = parse_price(record_number, context, "book level price", wire.price)?;
+    let mut market_order_quantity = None;
+    for (index, wire) in wire_levels.into_iter().enumerate() {
         let quantity =
             Quantity::new(wire.quantity, QuantityUnit::TradingUnit).map_err(|error| {
                 NormalizationError::new(
@@ -1056,9 +1087,21 @@ fn parse_side(
                     },
                 )
             })?;
-        levels.push(BookLevel::new(price, quantity));
+        match parse_book_price(record_number, context, wire.price)? {
+            Some(price) => levels.push(BookLevel::new(price, quantity)),
+            None if index == 0 => market_order_quantity = Some(quantity),
+            None => {
+                return Err(NormalizationError::new(
+                    record_number,
+                    context.clone(),
+                    NormalizationErrorKind::InvalidPayload(
+                        "zero-price market-order level must be the first book entry",
+                    ),
+                ));
+            }
+        }
     }
-    BookSide::new(kind, levels).map_err(|error| {
+    BookSide::with_market_order_quantity(kind, market_order_quantity, levels).map_err(|error| {
         NormalizationError::new(
             record_number,
             context.clone(),
@@ -1067,11 +1110,58 @@ fn parse_side(
     })
 }
 
+fn parse_book_price(
+    record_number: usize,
+    context: &RecordContext,
+    raw: &RawValue,
+) -> Result<Option<Price>, NormalizationError> {
+    let price = Price::parse(raw.get()).map_err(|error| {
+        NormalizationError::new(
+            record_number,
+            context.clone(),
+            NormalizationErrorKind::InvalidPrice {
+                field: "book level price",
+                error,
+            },
+        )
+    })?;
+    if price.atoms() == 0 {
+        return Ok(None);
+    }
+    Price::positive(price.as_decimal())
+        .map(Some)
+        .map_err(|error| {
+            NormalizationError::new(
+                record_number,
+                context.clone(),
+                NormalizationErrorKind::InvalidPrice {
+                    field: "book level price",
+                    error,
+                },
+            )
+        })
+}
+
+fn is_status_only_pause(record: &ValidatedRecord) -> bool {
+    !record.annotations.status().trial()
+        && matches!(
+            record.annotations.limits().instant_trend(),
+            InstantTrend::VolatilityInterruptionDown | InstantTrend::VolatilityInterruptionUp
+        )
+        && record.deal.is_none()
+        && record.book.as_ref().is_some_and(|book| {
+            book.bids().market_order_quantity().is_none()
+                && book.asks().market_order_quantity().is_none()
+                && book.bids().levels().next().is_none()
+                && book.asks().levels().next().is_none()
+        })
+}
+
 fn parse_deal(
     record_number: usize,
     context: &RecordContext,
     raw: &RawValue,
-) -> Result<(Option<TradePrint>, bool), NormalizationError> {
+) -> Result<(Option<ObservedTrade>, bool), NormalizationError> {
     if raw.get() == "null" {
         return Ok((None, false));
     }
@@ -1097,7 +1187,11 @@ fn parse_deal(
         )
     })?;
     Ok((
-        Some(TradePrint::new(price, quantity, TradePrintKind::Regular)),
+        Some(ObservedTrade::new(
+            price,
+            quantity,
+            TradeObservationKind::Regular,
+        )),
         false,
     ))
 }
@@ -1108,7 +1202,7 @@ fn parse_price(
     field: &'static str,
     raw: &RawValue,
 ) -> Result<Price, NormalizationError> {
-    Price::parse(raw.get()).map_err(|error| {
+    Price::parse_positive(raw.get()).map_err(|error| {
         NormalizationError::new(
             record_number,
             context.clone(),

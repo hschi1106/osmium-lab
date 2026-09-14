@@ -1,14 +1,12 @@
 use std::{
     collections::BTreeMap,
-    env,
     error::Error,
     fmt,
     path::{Path, PathBuf},
 };
 
 use data_sync::{
-    ArchiveKind, ArchiveTimestamp, CacheBuilder, FeedArchiveTransport, PartitionNormalizerConfig,
-    PartitionedSourceRepository, StagingRevision, TeralionCredential, TeralionQuery, TeralionSync,
+    CacheBuilder, PartitionedSourceRepository, SourceAdapterRuntime, normalizer_config_for,
 };
 use execution_sim::{
     AccountingModel, ChargeBasis, ChargeModel, ChargeSides, DayTradeTaxModel, EvidenceMode,
@@ -19,7 +17,7 @@ use execution_sim::{
 use market_state::{
     MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
 };
-use market_types::{InstrumentKind, MarketId};
+use market_types::{InstrumentClass, MarketId};
 use osmium_config::{RUN_CONFIG_VERSION, RunConfig, plan};
 use replay_engine::{ReplayContextWindow, ReplayCore};
 use run_planner::{
@@ -28,9 +26,6 @@ use run_planner::{
     RoundingPolicy as PlanRounding, SlippageModelConfig, SourceAction, SourceState,
 };
 use strategy_api::{AcceptanceStrategyFactory, SessionKind, SessionSegment, StrategyRegistry};
-use taifex_normalizer::NormalizerConfig as TaifexNormalizerConfig;
-use tpex_normalizer::NormalizerConfig as TpexNormalizerConfig;
-use twse_normalizer::NormalizerConfig as TwseNormalizerConfig;
 
 use crate::ExitCategory;
 
@@ -213,110 +208,25 @@ pub fn load_config_with_registry_provider(
     Ok(osmium_config::load(path, &registry)?)
 }
 
-fn queries(
+fn normalizer_config(
     config: &RunConfig,
     key: &run_planner::SourcePartitionKey,
-) -> Result<(TeralionQuery, TeralionQuery, PartitionNormalizerConfig), CommandError> {
+) -> Result<data_sync::PartitionNormalizerConfig, CommandError> {
     let session_plan = config.session_plan_for(key)?;
-    let replay_start = session_plan
-        .windows()
-        .iter()
-        .map(|window| window.replay_start())
-        .min()
-        .ok_or_else(|| CommandError::Other("session plan has no windows".to_owned()))?;
-    let replay_end_exclusive = session_plan
-        .windows()
-        .iter()
-        .map(|window| window.replay_end_exclusive())
-        .max()
-        .ok_or_else(|| CommandError::Other("session plan has no windows".to_owned()))?;
-    let kinds = match key.instrument().market() {
-        MarketId::Twse => [ArchiveKind::Quote].as_slice(),
-        MarketId::Tpex => [ArchiveKind::Quote].as_slice(),
-        MarketId::Taifex => [
-            ArchiveKind::Book,
-            ArchiveKind::Close,
-            ArchiveKind::Stats,
-            ArchiveKind::Trade,
-        ]
-        .as_slice(),
-    };
-    let kind = config.instrument_kind_for(key.instrument());
-    let source_market = config.archive_market_for(key.instrument());
-    let start = ArchiveTimestamp::parse(replay_start.to_iso8601(480))?;
-    let end = ArchiveTimestamp::parse(replay_end_exclusive.to_iso8601(480))?;
-    let ticks = match kind {
-        InstrumentKind::Warrant | InstrumentKind::Option => TeralionQuery::ticks_for_market(
-            key.instrument().clone(),
-            start,
-            end,
-            kinds.iter().copied(),
-            5_000,
-            source_market,
-        )?,
-        _ => TeralionQuery::ticks(
-            key.instrument().clone(),
-            start,
-            end,
-            kinds.iter().copied(),
-            5_000,
-        )?,
-    };
-    let daily = TeralionQuery::daily_instrument(key.instrument().clone(), key.trading_date());
-    let normalizer = match (key.instrument().market(), kind) {
-        (MarketId::Twse, InstrumentKind::Warrant) => {
-            PartitionNormalizerConfig::Warrant(TwseNormalizerConfig::new_warrant(
-                key.instrument().clone(),
-                key.trading_date(),
-                replay_start,
-                replay_end_exclusive,
-            )?)
-        }
-        (MarketId::Twse, _) => PartitionNormalizerConfig::Twse(TwseNormalizerConfig::new(
-            key.instrument().clone(),
-            key.trading_date(),
-            replay_start,
-            replay_end_exclusive,
-        )?),
-        (MarketId::Tpex, InstrumentKind::Warrant) => {
-            PartitionNormalizerConfig::TpexWarrant(TpexNormalizerConfig::new_warrant(
-                key.instrument().clone(),
-                key.trading_date(),
-                replay_start,
-                replay_end_exclusive,
-            )?)
-        }
-        (MarketId::Tpex, _) => PartitionNormalizerConfig::Tpex(TpexNormalizerConfig::new(
-            key.instrument().clone(),
-            key.trading_date(),
-            replay_start,
-            replay_end_exclusive,
-        )?),
-        (MarketId::Taifex, InstrumentKind::Option) => {
-            let windows = session_plan
-                .windows()
-                .iter()
-                .map(|window| (window.replay_start(), window.replay_end_exclusive()));
-            PartitionNormalizerConfig::TaifexOption(TaifexNormalizerConfig::for_profile(
-                key.instrument().clone(),
-                key.trading_date(),
-                taifex_normalizer::InstrumentProfile::IndexOptions,
-                windows,
-            )?)
-        }
-        (MarketId::Taifex, _) => PartitionNormalizerConfig::Taifex(TaifexNormalizerConfig::new(
-            key.instrument().clone(),
-            key.trading_date(),
-            replay_start,
-            replay_end_exclusive,
-        )?),
-    };
-    Ok((ticks, daily, normalizer))
-}
-
-fn attempt_id(key: &run_planner::SourcePartitionKey) -> String {
-    let identity = hex(key.identity().as_bytes());
-    format!("run-{}", &identity[..24])
+    let kind = config
+        .instrument_class_for(key.instrument())
+        .ok_or_else(|| CommandError::Other("partition instrument is not selected".to_owned()))?;
+    let contract_shape = config
+        .selection_for(key.instrument())
+        .and_then(|selection| selection.contract_shape());
+    Ok(normalizer_config_for(
+        config.effective().source(),
+        key,
+        kind,
+        contract_shape,
+        &session_plan,
+    )
+    .map_err(data_sync::SourceAdapterError::from)?)
 }
 
 fn load_dotenv() {
@@ -331,20 +241,42 @@ fn execute_sync(
 ) -> Result<String, CommandError> {
     let config = load_config_with_registry_provider(path, provider)?;
     let bundle = plan(&config)?;
-    let needs_network = bundle.execution.partitions().iter().any(|partition| {
-        !matches!(
-            partition.source_action(),
+    for partition in bundle.execution.partitions() {
+        match partition.source_action() {
+            SourceAction::RejectIncomplete { .. } | SourceAction::RejectCorrupt { .. } => {
+                let repository = PartitionedSourceRepository::new(
+                    config.effective().data_root(),
+                    partition.key().clone(),
+                )?;
+                let inspection = repository.inspect();
+                return Err(source_not_complete_error(
+                    partition.key(),
+                    inspection.state(),
+                    inspection.diagnostic(),
+                ));
+            }
+            SourceAction::CoverageUnavailable => {
+                return Err(source_not_complete_error(
+                    partition.key(),
+                    partition.source_state(),
+                    Some("source coverage is unavailable"),
+                ));
+            }
             SourceAction::ReuseCompleteSource { .. }
-        )
-    });
+            | SourceAction::DownloadMissingSource
+            | SourceAction::ResumeOrRestartBuilding => {}
+        }
+    }
+    let needs_network = bundle
+        .execution
+        .partitions()
+        .iter()
+        .any(|partition| partition.source_action().requires_network());
     if !needs_network {
         return Ok("source=reused\nhttp_requests=0".to_owned());
     }
     load_dotenv();
-    let credential = TeralionCredential::new(
-        env::var("TERALION_API_KEY").map_err(|_| CommandError::MissingCredential)?,
-    )?;
-    let mut sync = TeralionSync::new(FeedArchiveTransport::new()?);
+    let mut source_runtime = SourceAdapterRuntime::new(config.effective().source())?;
     let mut output = String::from("source=partitions\n");
     let mut total_pages = 0_u64;
     let mut published = 0_u32;
@@ -362,42 +294,26 @@ fn execute_sync(
             continue;
         }
         let key = partition.key();
-        let (ticks, daily_query, _) = queries(&config, key)?;
-        validate_json(&sync.fetch_single(
-            TeralionQuery::coverage(key.trading_date(), key.trading_date())?,
-            &credential,
-        )?)?;
-        validate_json(&sync.fetch_single(
-            TeralionQuery::symbol_range(key.instrument().clone()),
-            &credential,
-        )?)?;
-        let daily = sync.fetch_single(daily_query.clone(), &credential)?;
-        validate_json(&daily)?;
-        let repository =
-            PartitionedSourceRepository::new(config.effective().data_root(), key.clone())?;
-        let attempt = attempt_id(key);
-        let checkpoint = repository
-            .root()
-            .join("staging")
-            .join(&attempt)
-            .join("checkpoint.json");
-        let mut staging = if checkpoint.exists() {
-            StagingRevision::resume_for_partition(config.effective().data_root(), key, &attempt)?
-        } else {
-            StagingRevision::create_for_partition(config.effective().data_root(), key, &attempt)?
-        };
-        let report = sync.sync_pages(ticks.clone(), &credential, &mut staging)?;
-        staging.stage_daily_instrument(daily_query.identity(), &daily)?;
-        let revision = staging.publish(ticks.identity(), report.terminal)?;
-        total_pages += u64::from(report.page_count);
+        let selection = config.selection_for(key.instrument()).ok_or_else(|| {
+            CommandError::Other("partition instrument is not selected".to_owned())
+        })?;
+        let session_plan = config.session_plan_for(key)?;
+        let report = source_runtime.sync_partition(
+            config.effective().data_root(),
+            key,
+            selection.class(),
+            selection.contract_shape(),
+            &session_plan,
+        )?;
+        total_pages += u64::from(report.page_count());
         published += 1;
         output.push_str(&format!(
             "partition={:?}/{:?}@{} status=published pages={} revision={}\n",
             key.instrument().market(),
             key.instrument().symbol(),
             key.trading_date(),
-            report.page_count,
-            revision.manifest().revision_identity
+            report.page_count(),
+            report.revision_identity()
         ));
     }
     output.push_str(&format!("published={} pages={}\n", published, total_pages));
@@ -413,7 +329,17 @@ fn execute_verify(
     for key in config.partition_keys()? {
         let repository =
             PartitionedSourceRepository::new(config.effective().data_root(), key.clone())?;
-        let report = repository.verify_current()?;
+        let inspection = repository.inspect();
+        let report = match (inspection.state(), inspection.report()) {
+            (SourceState::Complete { .. }, Some(report)) => report,
+            (state, _) => {
+                return Err(source_not_complete_error(
+                    &key,
+                    state,
+                    inspection.diagnostic(),
+                ));
+            }
+        };
         output.push_str(&format!(
             "partition={:?}/{:?}@{} revision={} records={}\n",
             key.instrument().market(),
@@ -447,9 +373,18 @@ fn prepare_cache(
             }
             CacheAction::RebuildCacheFromCompleteSource => {
                 if !matches!(partition.source_state(), SourceState::Complete { .. }) {
-                    return Err(CommandError::CacheMissing);
+                    let repository = PartitionedSourceRepository::new(
+                        config.effective().data_root(),
+                        partition.key().clone(),
+                    )?;
+                    let inspection = repository.inspect();
+                    return Err(source_not_complete_error(
+                        partition.key(),
+                        inspection.state(),
+                        inspection.diagnostic(),
+                    ));
                 }
-                let (_, _, normalizer) = queries(&config, partition.key())?;
+                let normalizer = normalizer_config(&config, partition.key())?;
                 let built = builder.build_partition(partition.key(), normalizer)?;
                 output.push_str(&format!(
                     "partition={:?}/{:?}@{} status=built cache_identity={}\n",
@@ -459,10 +394,38 @@ fn prepare_cache(
                     built.descriptor().cache_identity
                 ));
             }
-            CacheAction::AwaitCompleteSource => return Err(CommandError::CacheMissing),
+            CacheAction::AwaitCompleteSource => {
+                let repository = PartitionedSourceRepository::new(
+                    config.effective().data_root(),
+                    partition.key().clone(),
+                )?;
+                let inspection = repository.inspect();
+                return Err(source_not_complete_error(
+                    partition.key(),
+                    inspection.state(),
+                    inspection.diagnostic(),
+                ));
+            }
         }
     }
     Ok(output.trim_end().to_owned())
+}
+
+fn source_not_complete_error(
+    key: &run_planner::SourcePartitionKey,
+    state: SourceState,
+    diagnostic: Option<&str>,
+) -> CommandError {
+    CommandError::SourceNotComplete {
+        partition: format!(
+            "{:?}/{}@{}",
+            key.instrument().market(),
+            key.instrument().symbol().as_str(),
+            key.trading_date()
+        ),
+        state,
+        diagnostic: diagnostic.map(str::to_owned),
+    }
 }
 
 fn execute_replay(
@@ -486,7 +449,10 @@ fn replay(
     let bundle = plan(&config)?;
     let replay = bundle.replay.as_ref().ok_or(CommandError::CacheMissing)?;
     let mut core = replay_core(&config, &bundle)?;
-    let mut factory = data_sync::LocalCacheFactory::new_partitioned(config.effective().data_root());
+    let mut factory = data_sync::LocalCacheFactory::new_partitioned(
+        config.effective().data_root(),
+        config.effective().source(),
+    );
     core.replay_frozen_multi(replay, &mut factory)?;
     Ok(core.complete()?)
 }
@@ -524,13 +490,17 @@ pub(crate) fn replay_core(
         }
         let context = default_context
             .ok_or_else(|| CommandError::Other("session plan has no windows".to_owned()))?;
-        let kind = config.instrument_kind_for(key.instrument());
+        let kind = config
+            .instrument_class_for(key.instrument())
+            .ok_or_else(|| {
+                CommandError::Other("partition instrument is not selected".to_owned())
+            })?;
         let reducer = match (key.instrument().market(), kind) {
-            (MarketId::Twse, InstrumentKind::Warrant) => MarketStateReducer::twse_warrant(),
+            (MarketId::Twse, InstrumentClass::Warrant) => MarketStateReducer::twse_warrant(),
             (MarketId::Twse, _) => MarketStateReducer::twse_regular(),
-            (MarketId::Tpex, InstrumentKind::Warrant) => MarketStateReducer::tpex_warrant(),
+            (MarketId::Tpex, InstrumentClass::Warrant) => MarketStateReducer::tpex_warrant(),
             (MarketId::Tpex, _) => MarketStateReducer::tpex_regular(),
-            (MarketId::Taifex, InstrumentKind::Option) => MarketStateReducer::taifex_options(),
+            (MarketId::Taifex, InstrumentClass::Option) => MarketStateReducer::taifex_options(),
             (MarketId::Taifex, _) => MarketStateReducer::taifex_futures(),
         };
         states
@@ -597,12 +567,15 @@ fn execute_backtest(
     };
     let mut ledger_configs = Vec::new();
     for economics in bundle.execution.config().instrument_economics() {
-        let model = match config.instrument_kind_for(economics.instrument()) {
-            InstrumentKind::Option => AccountingModel::OptionsV1,
-            InstrumentKind::Future => AccountingModel::FuturesV1,
-            InstrumentKind::Equity | InstrumentKind::Warrant | InstrumentKind::Unknown => {
-                AccountingModel::EquityV1
-            }
+        let kind = config
+            .instrument_class_for(economics.instrument())
+            .ok_or_else(|| {
+                CommandError::Other("economics instrument is not selected".to_owned())
+            })?;
+        let model = match kind {
+            InstrumentClass::Option => AccountingModel::OptionsV1,
+            InstrumentClass::Future => AccountingModel::FuturesV1,
+            InstrumentClass::Equity | InstrumentClass::Warrant => AccountingModel::EquityV1,
         };
         let charges = simulation.charges_for(economics.instrument());
         let fee = charge(charges.map_or(simulation.fee_model(), |charges| charges.fee()));
@@ -619,6 +592,17 @@ fn execute_backtest(
             fee,
             tax,
         );
+        let price_policy = bundle
+            .execution
+            .config()
+            .instrument_contracts()
+            .iter()
+            .find(|contract| contract.instrument() == economics.instrument())
+            .map(|contract| contract.price_policy())
+            .ok_or_else(|| {
+                CommandError::Other("instrument contract profile is missing".to_owned())
+            })?;
+        ledger_config = ledger_config.with_price_policy(price_policy);
         if let Some(day_trade) = charges.and_then(|charges| charges.day_trade_tax()) {
             ledger_config = ledger_config.with_day_trade_tax(DayTradeTaxModel::new_for_dates(
                 tax,
@@ -659,31 +643,49 @@ fn execute_backtest(
     }
     let source_revision = source_lineage.join(",");
     let cache_identity = cache_lineage.join(",");
-    let mut factory = data_sync::LocalCacheFactory::new_partitioned(config.effective().data_root());
+    let mut factory = data_sync::LocalCacheFactory::new_partitioned(
+        config.effective().data_root(),
+        config.effective().source(),
+    );
     match simulation.execution_policy() {
         ExecutionPolicyConfig::SubsequentEventV1 => {
-            let simulator =
-                MultiSimulator::new(bundle.execution.config().instrument_economics().iter().map(
-                    |economics| {
-                        (
-                            economics.instrument().clone(),
-                            economics.quantity_unit(),
-                            FillModel {
-                                evidence: match fill.evidence() {
-                                    FillEvidence::TopOfBook => EvidenceMode::TopOfBook,
-                                    FillEvidence::TradePrint => EvidenceMode::TradePrint,
-                                },
-                                quantity: match fill.quantity() {
-                                    QuantityEvidence::Unlimited => QuantityPolicy::Unlimited,
-                                    QuantityEvidence::Observed => QuantityPolicy::Displayed,
-                                },
-                                adverse_price_delta: slippage,
-                                market_data_latency_ms: latency.market_data_latency_ms(),
-                                order_latency_ms: latency.order_latency_ms(),
+            let simulator_configs = bundle
+                .execution
+                .config()
+                .instrument_economics()
+                .iter()
+                .map(|economics| {
+                    let price_policy = bundle
+                        .execution
+                        .config()
+                        .instrument_contracts()
+                        .iter()
+                        .find(|contract| contract.instrument() == economics.instrument())
+                        .map(|contract| contract.price_policy())
+                        .ok_or_else(|| {
+                            CommandError::Other("instrument contract profile is missing".to_owned())
+                        })?;
+                    Ok((
+                        economics.instrument().clone(),
+                        economics.quantity_unit(),
+                        FillModel {
+                            evidence: match fill.evidence() {
+                                FillEvidence::TopOfBook => EvidenceMode::TopOfBook,
+                                FillEvidence::TradePrint => EvidenceMode::TradePrint,
                             },
-                        )
-                    },
-                ))?;
+                            quantity: match fill.quantity() {
+                                QuantityEvidence::Unlimited => QuantityPolicy::Unlimited,
+                                QuantityEvidence::Observed => QuantityPolicy::Displayed,
+                            },
+                            adverse_price_delta: slippage,
+                            market_data_latency_ms: latency.market_data_latency_ms(),
+                            order_latency_ms: latency.order_latency_ms(),
+                        },
+                        price_policy,
+                    ))
+                })
+                .collect::<Result<Vec<_>, CommandError>>()?;
+            let simulator = MultiSimulator::new(simulator_configs)?;
             let completed = osmium_runner::run_multi_backtest(
                 core,
                 strategy,
@@ -721,6 +723,18 @@ fn execute_backtest(
                     .instrument_economics()
                     .iter()
                     .map(|economics| {
+                        let price_policy = bundle
+                            .execution
+                            .config()
+                            .instrument_contracts()
+                            .iter()
+                            .find(|contract| contract.instrument() == economics.instrument())
+                            .map(|contract| contract.price_policy())
+                            .ok_or_else(|| {
+                                CommandError::Other(
+                                    "instrument contract profile is missing".to_owned(),
+                                )
+                            })?;
                         Ok(ScheduledInstrumentConfig::new(
                             economics.instrument().clone(),
                             economics.quantity_unit(),
@@ -729,9 +743,10 @@ fn execute_backtest(
                                 scheduled.max_stale_ms(),
                                 slippage,
                             )?,
-                        ))
+                        )
+                        .with_price_policy(price_policy))
                     })
-                    .collect::<Result<Vec<_>, execution_sim::ScheduledSimulationError>>()?,
+                    .collect::<Result<Vec<_>, CommandError>>()?,
             )?;
             let completed = osmium_runner::run_scheduled_multi_backtest(
                 core,
@@ -818,12 +833,6 @@ fn charge(value: &run_planner::ChargeConfig) -> ChargeModel {
     }
 }
 
-fn validate_json(bytes: &[u8]) -> Result<(), CommandError> {
-    serde_json::from_slice::<serde_json::Value>(bytes)
-        .map(|_| ())
-        .map_err(|error| CommandError::Other(error.to_string()))
-}
-
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -831,16 +840,10 @@ fn hex(bytes: &[u8]) -> String {
 #[derive(Debug)]
 pub enum CommandError {
     Config(osmium_config::ConfigError),
-    Query(data_sync::QueryError),
-    Transport(data_sync::TransportError),
-    Sync(data_sync::SyncError),
-    Staging(data_sync::StagingError),
     Verify(data_sync::VerificationError),
     CacheBuild(data_sync::CacheBuildError),
     CacheRead(data_sync::CacheReadError),
-    Normalizer(twse_normalizer::ConfigError),
-    TpexNormalizer(tpex_normalizer::ConfigError),
-    TaifexNormalizer(taifex_normalizer::ConfigError),
+    SourceAdapter(data_sync::SourceAdapterError),
     Replay(replay_engine::ReplayError),
     State(market_state::SessionSegmentIdError),
     Context(strategy_api::ContextError),
@@ -854,7 +857,11 @@ pub enum CommandError {
     Io(std::io::Error),
     Partition(data_sync::PartitionRepositoryError),
     ReplayContextWindow(replay_engine::ReplayContextWindowError),
-    MissingCredential,
+    SourceNotComplete {
+        partition: String,
+        state: SourceState,
+        diagnostic: Option<String>,
+    },
     CacheMissing,
     OutputRequired,
     Other(String),
@@ -865,28 +872,25 @@ impl CommandError {
     pub const fn category(&self) -> ExitCategory {
         match self {
             Self::Config(_)
-            | Self::Query(_)
-            | Self::Normalizer(_)
-            | Self::TpexNormalizer(_)
-            | Self::TaifexNormalizer(_)
             | Self::State(_)
             | Self::Context(_)
             | Self::Strategy(_)
-            | Self::ReplayContextWindow(_) => ExitCategory::Config,
+            | Self::ReplayContextWindow(_)
+            | Self::SourceAdapter(data_sync::SourceAdapterError::Configuration(_)) => {
+                ExitCategory::Config
+            }
             Self::OutputRequired => ExitCategory::Usage,
-            Self::Transport(_) | Self::Sync(_) | Self::MissingCredential | Self::Partition(_) => {
-                ExitCategory::Source
-            }
-            Self::CacheBuild(_) | Self::CacheRead(_) | Self::Staging(_) | Self::CacheMissing => {
-                ExitCategory::Cache
-            }
+            Self::SourceAdapter(_) | Self::Partition(_) => ExitCategory::Source,
+            Self::CacheBuild(_) | Self::CacheRead(_) | Self::CacheMissing => ExitCategory::Cache,
             Self::Replay(_) => ExitCategory::Replay,
             Self::Backtest(_)
             | Self::MultiBacktest(_)
             | Self::Simulation(_)
             | Self::ScheduledSimulation(_)
             | Self::Accounting(_) => ExitCategory::Simulation,
-            Self::Verify(_) | Self::Artifact(_) => ExitCategory::Integrity,
+            Self::Verify(_) | Self::Artifact(_) | Self::SourceNotComplete { .. } => {
+                ExitCategory::Integrity
+            }
             Self::Io(_) | Self::Other(_) => ExitCategory::Internal,
         }
     }
@@ -907,16 +911,10 @@ macro_rules! convert {
     };
 }
 convert!(Config, osmium_config::ConfigError);
-convert!(Query, data_sync::QueryError);
-convert!(Transport, data_sync::TransportError);
-convert!(Sync, data_sync::SyncError);
-convert!(Staging, data_sync::StagingError);
 convert!(Verify, data_sync::VerificationError);
 convert!(CacheBuild, data_sync::CacheBuildError);
 convert!(CacheRead, data_sync::CacheReadError);
-convert!(Normalizer, twse_normalizer::ConfigError);
-convert!(TpexNormalizer, tpex_normalizer::ConfigError);
-convert!(TaifexNormalizer, taifex_normalizer::ConfigError);
+convert!(SourceAdapter, data_sync::SourceAdapterError);
 convert!(Replay, replay_engine::ReplayError);
 convert!(State, market_state::SessionSegmentIdError);
 convert!(Context, strategy_api::ContextError);
@@ -935,6 +933,20 @@ impl fmt::Display for CommandError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Config(error) => write!(formatter, "config error: {error}"),
+            Self::SourceNotComplete {
+                partition,
+                state,
+                diagnostic,
+            } => {
+                write!(
+                    formatter,
+                    "source partition {partition} is not complete: {state:?}"
+                )?;
+                if let Some(diagnostic) = diagnostic {
+                    write!(formatter, " ({diagnostic})")?;
+                }
+                Ok(())
+            }
             _ => write!(formatter, "{self:?}"),
         }
     }
@@ -944,7 +956,17 @@ impl Error for CommandError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::{
+        fs,
+        sync::atomic::{AtomicBool, Ordering},
+    };
+
+    use data_sync::{
+        ArchiveKind, ArchiveTimestamp, CursorStateMachine, StagingRevision, TeralionQuery,
+    };
+    use market_types::{InstrumentId, Symbol, TradingDate};
+    use run_planner::{CorruptReason, SessionPlan, SourceId, SourcePartitionKey};
+    use strategy_api::SessionKind;
 
     #[test]
     fn command_exit_codes_preserve_stable_failure_categories() {
@@ -954,12 +976,125 @@ mod tests {
             10
         );
         assert_eq!(CommandError::CacheMissing.exit_code(), 21);
-        assert_eq!(CommandError::MissingCredential.exit_code(), 20);
+        assert_eq!(
+            CommandError::SourceAdapter(data_sync::SourceAdapterError::MissingCredential)
+                .exit_code(),
+            20
+        );
         assert_eq!(
             CommandError::Replay(replay_engine::ReplayError::EmptyUniverse).exit_code(),
             30
         );
         assert_eq!(CommandError::Other("internal".to_owned()).exit_code(), 1);
+    }
+
+    #[test]
+    fn incomplete_source_error_identifies_partition_state_and_diagnostic() {
+        let instrument = InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap());
+        let trading_date: TradingDate = "2026-07-27".parse().unwrap();
+        let session = SessionPlan::for_instrument_class(
+            &instrument,
+            InstrumentClass::Equity,
+            trading_date,
+            [SessionKind::Regular],
+        )
+        .unwrap();
+        let key = SourcePartitionKey::new(
+            SourceId::TeralionFeedArchive,
+            instrument,
+            trading_date,
+            [SessionKind::Regular],
+            session.identity(),
+        )
+        .unwrap();
+        let error = source_not_complete_error(
+            &key,
+            SourceState::Corrupt {
+                reason: CorruptReason::ReferenceMismatch,
+            },
+            Some("partition metadata does not match key"),
+        );
+
+        assert_eq!(error.category(), ExitCategory::Integrity);
+        let message = error.to_string();
+        assert!(message.contains("Twse/2330@2026-07-27"));
+        assert!(message.contains("ReferenceMismatch"));
+        assert!(message.contains("partition metadata does not match key"));
+    }
+
+    #[test]
+    fn source_commands_reject_a_mismatched_partition_descriptor_with_context() {
+        let root = tempfile::tempdir().unwrap();
+        let config_path = root.path().join("config.yaml");
+        let example = fs::read_to_string(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/config.yaml"),
+        )
+        .unwrap();
+        fs::write(
+            &config_path,
+            example.replace(
+                "data_root: data",
+                &format!("data_root: {}", root.path().display()),
+            ),
+        )
+        .unwrap();
+        let config =
+            load_config_with_registry_provider(&config_path, &BuiltInStrategyRegistry).unwrap();
+        let key = config.partition_keys().unwrap().into_iter().next().unwrap();
+        let ticks = TeralionQuery::ticks(
+            key.instrument().clone(),
+            ArchiveTimestamp::parse("2026-07-27T08:55:00+08:00").unwrap(),
+            ArchiveTimestamp::parse("2026-07-27T13:35:00+08:00").unwrap(),
+            [ArchiveKind::Quote],
+            5_000,
+        )
+        .unwrap();
+        let tick = br#"{"type":"quote","market":"twse","format":"STOCK_SNAPSHOT","symbol":"2330","match_time":"2026-07-27T09:00:00+08:00","received_at":"2026-07-27T09:00:00+08:00","status_flags":16,"limit_flags":0,"cum_volume":1,"intermediate_print":false,"deal":{"price":100,"quantity":1},"bids":[{"price":99,"quantity":2}],"asks":[{"price":101,"quantity":2}]}"#;
+        let body = format!(
+            r#"{{"items":[{}],"next_cursor":null}}"#,
+            std::str::from_utf8(tick).unwrap()
+        )
+        .into_bytes();
+        let mut staging =
+            StagingRevision::create_for_partition(root.path(), &key, "cli-diagnostic").unwrap();
+        let mut cursor = CursorStateMachine::new(ticks.clone()).unwrap();
+        let request = cursor.request_next().unwrap();
+        let pending = cursor.accept_response(&request, body).unwrap();
+        let staged = staging.stage_page(pending).unwrap();
+        cursor.commit_page(staged.commit_receipt()).unwrap();
+        staging
+            .stage_daily_instrument(
+                TeralionQuery::daily_instrument(key.instrument().clone(), key.trading_date())
+                    .identity(),
+                br#"{}"#,
+            )
+            .unwrap();
+        staging.publish(ticks.identity(), true).unwrap();
+
+        let repository = PartitionedSourceRepository::new(root.path(), key).unwrap();
+        let manifest_path = repository.partition_manifest_path();
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        manifest["layout_version"] = serde_json::json!(1);
+        fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+
+        for kind in [
+            CommandKind::DataSync,
+            CommandKind::DataVerify,
+            CommandKind::CachePrepare,
+        ] {
+            let error = execute(&Command {
+                kind,
+                config: config_path.clone(),
+                output: None,
+            })
+            .unwrap_err();
+            assert_eq!(error.category(), ExitCategory::Integrity);
+            let message = error.to_string();
+            assert!(message.contains("Twse/2330@2026-07-27"));
+            assert!(message.contains("ReferenceMismatch"));
+            assert!(message.contains("partition metadata does not match key"));
+        }
     }
 
     #[test]

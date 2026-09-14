@@ -37,15 +37,28 @@ pub enum BookSideKind {
     Ask,
 }
 
-/// Five fixed slots representing one complete side of a book.
+/// One complete displayed side of a book.
+///
+/// Some exchanges publish aggregate market-order quantity as the first of the
+/// five displayed entries with a zero wire price. It is kept separately from
+/// priced levels so that zero never becomes executable price evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BookSide {
     kind: BookSideKind,
+    market_order_quantity: Option<Quantity>,
     slots: [Option<BookLevel>; BOOK_DEPTH],
 }
 
 impl BookSide {
     pub fn new(kind: BookSideKind, levels: Vec<BookLevel>) -> Result<Self, BookError> {
+        Self::with_market_order_quantity(kind, None, levels)
+    }
+
+    pub fn with_market_order_quantity(
+        kind: BookSideKind,
+        market_order_quantity: Option<Quantity>,
+        levels: Vec<BookLevel>,
+    ) -> Result<Self, BookError> {
         if levels.len() > BOOK_DEPTH {
             return Err(BookError::TooManyLevels {
                 side: kind,
@@ -57,14 +70,26 @@ impl BookSide {
         for (index, level) in levels.into_iter().enumerate() {
             slots[index] = Some(level);
         }
-        Self::from_slots(kind, slots)
+        Self::from_parts(kind, market_order_quantity, slots)
     }
 
     pub fn from_slots(
         kind: BookSideKind,
         slots: [Option<BookLevel>; BOOK_DEPTH],
     ) -> Result<Self, BookError> {
-        let side = Self { kind, slots };
+        Self::from_parts(kind, None, slots)
+    }
+
+    pub fn from_parts(
+        kind: BookSideKind,
+        market_order_quantity: Option<Quantity>,
+        slots: [Option<BookLevel>; BOOK_DEPTH],
+    ) -> Result<Self, BookError> {
+        let side = Self {
+            kind,
+            market_order_quantity,
+            slots,
+        };
         side.validate()?;
         Ok(side)
     }
@@ -72,6 +97,12 @@ impl BookSide {
     #[must_use]
     pub const fn kind(&self) -> BookSideKind {
         self.kind
+    }
+
+    /// Aggregate displayed quantity for unpriced market orders, when present.
+    #[must_use]
+    pub const fn market_order_quantity(&self) -> Option<Quantity> {
+        self.market_order_quantity
     }
 
     #[must_use]
@@ -85,15 +116,26 @@ impl BookSide {
 
     #[must_use]
     pub fn quantity_unit(&self) -> Option<QuantityUnit> {
-        self.levels()
-            .next()
-            .map(|level| level.displayed_quantity().unit())
+        self.market_order_quantity.map(Quantity::unit).or_else(|| {
+            self.levels()
+                .next()
+                .map(|level| level.displayed_quantity().unit())
+        })
     }
 
     fn validate(&self) -> Result<(), BookError> {
         let mut empty_seen = false;
         let mut previous: Option<BookLevel> = None;
-        let mut unit = None;
+        let mut unit = self.market_order_quantity.map(Quantity::unit);
+        let priced_level_count = self.levels().count();
+        let displayed_entry_count =
+            priced_level_count + usize::from(self.market_order_quantity.is_some());
+        if displayed_entry_count > BOOK_DEPTH {
+            return Err(BookError::TooManyLevels {
+                side: self.kind,
+                count: displayed_entry_count,
+            });
+        }
 
         for (index, slot) in self.slots.iter().enumerate() {
             let Some(level) = slot else {

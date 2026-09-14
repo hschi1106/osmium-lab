@@ -4,7 +4,9 @@ use std::{
     path::PathBuf,
 };
 
-use market_types::{EventPayload, InstrumentId, MarketId, MatchTime, Symbol, TradingDate};
+use market_types::{
+    EventPayload, IndicativeAuctionKind, InstrumentId, MarketId, MatchTime, Symbol, TradingDate,
+};
 use tpex_normalizer::{NormalizerConfig, TpexNormalizer};
 
 #[test]
@@ -47,11 +49,18 @@ fn synthetic_warrant_fixture_normalizes_offline() {
         (0_usize, 0_usize, 0_usize),
         |(quotes, opening, closing), event| match event.payload() {
             EventPayload::QuoteSnapshot(_) => (quotes + 1, opening, closing),
-            EventPayload::IndicativeOpeningAuction(_) => (quotes, opening + 1, closing),
-            EventPayload::IndicativeClosingAuction(_) => (quotes, opening, closing + 1),
+            EventPayload::IndicativeAuction(auction) => match auction.kind() {
+                IndicativeAuctionKind::Opening => (quotes, opening + 1, closing),
+                IndicativeAuctionKind::Closing => (quotes, opening, closing + 1),
+                IndicativeAuctionKind::IntradayStability { .. }
+                | IndicativeAuctionKind::IntradayUnclassified => (quotes, opening, closing),
+            },
             EventPayload::TradeBatch(_) => panic!("TPEx warrant fixture has no trade prints"),
             EventPayload::BookSnapshot(_) => {
                 panic!("TPEx warrant fixture must not produce BookSnapshot")
+            }
+            EventPayload::MarketStatus(_) => {
+                panic!("TPEx warrant fixture has no status-only observations")
             }
         },
     );

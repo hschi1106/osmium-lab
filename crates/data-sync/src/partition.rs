@@ -10,8 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{LocalSourceRepository, SourceInspection};
 
-pub const PARTITION_LAYOUT_VERSION: u16 = 1;
+pub const PARTITION_LAYOUT_VERSION: u16 = 2;
 pub const PARTITION_MANIFEST_FILE: &str = "partition.yaml";
+const SYMBOL_COMPONENT_CHARS: usize = 180;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourcePartitionManifest {
@@ -151,14 +152,15 @@ pub fn cache_partition_root(
 
 pub fn cache_instrument_root(
     data_root: &Path,
+    source: SourceId,
     instrument: &InstrumentId,
     trading_date: market_types::TradingDate,
 ) -> Result<PathBuf, PartitionRepositoryError> {
     let market = market_name(instrument);
-    let symbol = safe_component(instrument.symbol().as_str())?;
+    let symbol = encoded_symbol_path(instrument.symbol().as_str());
     Ok(data_root
         .join("cache/replay")
-        .join("teralion")
+        .join(source.storage_namespace())
         .join(market)
         .join(trading_date.to_string())
         .join(symbol))
@@ -172,10 +174,10 @@ fn keyed_root(
     let instrument = key.instrument();
     let market = market_name(instrument);
     let date = key.trading_date().to_string();
-    let symbol = safe_component(instrument.symbol().as_str())?;
+    let symbol = encoded_symbol_path(instrument.symbol().as_str());
     Ok(data_root
         .join(prefix)
-        .join("teralion")
+        .join(key.source().storage_namespace())
         .join(market)
         .join(date)
         .join(symbol))
@@ -189,22 +191,28 @@ fn market_name(instrument: &InstrumentId) -> &'static str {
     }
 }
 
-fn safe_component(value: &str) -> Result<&str, PartitionRepositoryError> {
-    if value.is_empty()
-        || value == "."
-        || value == ".."
-        || value.contains('/')
-        || value.contains('\\')
-    {
-        return Err(PartitionRepositoryError::UnsafePathComponent);
+fn encoded_symbol_path(value: &str) -> PathBuf {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_') {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(HEX[(byte >> 4) as usize]));
+            encoded.push(char::from(HEX[(byte & 0x0f) as usize]));
+        }
     }
-    Ok(value)
+    let mut path = PathBuf::new();
+    for component in encoded.as_bytes().chunks(SYMBOL_COMPONENT_CHARS) {
+        // Encoded components are ASCII by construction and never empty.
+        path.push(std::str::from_utf8(component).expect("symbol path encoding is ASCII"));
+    }
+    path
 }
 
 fn source_name(source: SourceId) -> &'static str {
-    match source {
-        SourceId::TeralionFeedArchive => "teralion",
-    }
+    source.storage_namespace()
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), PartitionRepositoryError> {
@@ -229,7 +237,6 @@ pub enum PartitionRepositoryError {
     Io(std::io::Error),
     Manifest(String),
     ManifestMismatch,
-    UnsafePathComponent,
 }
 
 impl fmt::Display for PartitionRepositoryError {
@@ -247,17 +254,41 @@ impl From<std::io::Error> for PartitionRepositoryError {
 }
 
 #[cfg(test)]
+fn decode_hex_digit(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use market_types::{InstrumentId, MarketId, Symbol, TradingDate};
-    use run_planner::{SessionPlan, SourceId, SourcePartitionKey};
+    use run_planner::{SessionPlan, SessionProfileId, SourceId, SourcePartitionKey};
     use strategy_api::SessionKind;
 
     use super::*;
 
     fn key(symbol: &str) -> SourcePartitionKey {
-        let instrument = InstrumentId::new(MarketId::Twse, Symbol::new(symbol).unwrap());
+        key_for(MarketId::Twse, symbol)
+    }
+
+    fn key_for(market: MarketId, symbol: &str) -> SourcePartitionKey {
+        let instrument = InstrumentId::new(market, Symbol::new(symbol).unwrap());
         let date: TradingDate = "2026-07-27".parse().unwrap();
-        let plan = SessionPlan::for_instrument(&instrument, date, [SessionKind::Regular]).unwrap();
+        let plan = match market {
+            MarketId::Taifex => SessionPlan::with_profile(
+                &instrument,
+                date,
+                SessionProfileId::TaifexIndexFutures,
+                [SessionKind::Regular],
+            )
+            .unwrap(),
+            MarketId::Twse | MarketId::Tpex => {
+                SessionPlan::for_instrument(&instrument, date, [SessionKind::Regular]).unwrap()
+            }
+        };
         SourcePartitionKey::new(
             SourceId::TeralionFeedArchive,
             instrument,
@@ -285,6 +316,76 @@ mod tests {
         assert_ne!(
             cache_catalog.root_for(first.key()).unwrap(),
             cache_catalog.root_for(second.key()).unwrap()
+        );
+    }
+
+    #[test]
+    fn symbol_path_encoding_is_reversible_and_path_safe() {
+        let symbols = ["2330", "TXF/202612", "a%b", "../x", "台積電", "a\\b"];
+        let encoded = symbols
+            .iter()
+            .map(|symbol| encoded_symbol_path(symbol))
+            .collect::<Vec<_>>();
+        for (symbol, path) in symbols.iter().zip(&encoded) {
+            let components = path
+                .components()
+                .map(|component| component.as_os_str().to_str().unwrap())
+                .collect::<Vec<_>>();
+            let joined = components.concat();
+            let mut decoded = Vec::new();
+            let bytes = joined.as_bytes();
+            let mut index = 0;
+            while index < bytes.len() {
+                if bytes[index] == b'%' {
+                    let high = decode_hex_digit(bytes[index + 1]).unwrap();
+                    let low = decode_hex_digit(bytes[index + 2]).unwrap();
+                    decoded.push((high << 4) | low);
+                    index += 3;
+                } else {
+                    decoded.push(bytes[index]);
+                    index += 1;
+                }
+            }
+            assert_eq!(String::from_utf8(decoded).unwrap(), *symbol);
+            assert!(components.iter().all(|component| {
+                !component.is_empty()
+                    && *component != "."
+                    && *component != ".."
+                    && !component.contains('/')
+                    && !component.contains('\\')
+            }));
+        }
+        for left in 0..encoded.len() {
+            for right in (left + 1)..encoded.len() {
+                assert_ne!(encoded[left], encoded[right]);
+            }
+        }
+
+        let long = "x".repeat(400);
+        let long_path = encoded_symbol_path(&long);
+        assert!(long_path.components().count() > 1);
+        assert_eq!(long_path.components().count(), 3);
+    }
+
+    #[test]
+    fn calendar_spread_symbol_remains_intact_in_source_and_cache_layouts() {
+        let root = tempfile::tempdir().unwrap();
+        let partition_key = key_for(MarketId::Taifex, "TXFH6/TXFM6");
+        let repository =
+            PartitionedSourceRepository::new(root.path(), partition_key.clone()).unwrap();
+        repository.ensure_layout().unwrap();
+
+        assert!(repository.root().ends_with("TXFH6%2fTXFM6"));
+        let manifest: SourcePartitionManifest =
+            serde_json::from_slice(&fs::read(repository.partition_manifest_path()).unwrap())
+                .unwrap();
+        assert_eq!(manifest.instrument_symbol, "TXFH6/TXFM6");
+
+        let cache_root = cache_partition_root(root.path(), &partition_key).unwrap();
+        assert!(cache_root.ends_with("TXFH6%2fTXFM6"));
+        assert_ne!(
+            cache_root,
+            cache_partition_root(root.path(), &key_for(MarketId::Taifex, "TXFH6%2fTXFM6")).unwrap()
         );
     }
 }

@@ -54,14 +54,14 @@ binary=$staging/prefix/bin/osmium
 
 version_output=$(cd "$staging" && env -i PATH="$staging/prefix/bin:/usr/bin:/bin" LANG=C "$binary" version)
 printf '%s\n' "$version_output" | grep -Eq '^osmium [0-9]+\.[0-9]+\.[0-9]+$'
-printf '%s\n' "$version_output" | grep -Eq '^config_schema=2$'
+printf '%s\n' "$version_output" | grep -Eq '^config_schema=3$'
 
 help_output=$(cd "$staging" && env -i PATH="$staging/prefix/bin:/usr/bin:/bin" LANG=C "$binary" --help)
 printf '%s\n' "$help_output" | grep -Eq 'osmium data sync\|verify'
 
 json_output=$(cd "$staging" && env -i PATH="$staging/prefix/bin:/usr/bin:/bin" LANG=C "$binary" version --format json)
 printf '%s\n' "$json_output" | grep -Eq '"status":"success"'
-printf '%s\n' "$json_output" | grep -Eq '"config_schema":2'
+printf '%s\n' "$json_output" | grep -Eq '"config_schema":3'
 
 quiet_output=$(cd "$staging" && env -i PATH="$staging/prefix/bin:/usr/bin:/bin" LANG=C "$binary" version --quiet)
 [ -z "$quiet_output" ] || { echo "quiet mode emitted output" >&2; exit 1; }

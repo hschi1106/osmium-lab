@@ -19,8 +19,13 @@ tpex-normalizer = { path = "../normalizer/tpex" }
 taifex-normalizer = { path = "../normalizer/taifex" }
 
 [dev-dependencies]
+market-state = { path = "../market-state" }
 strategy-api = { path = "../strategy-api" }
 tempfile = "3"
+
+[[bench]]
+name = "verified_cache_pipeline"
+harness = false
 
 [lints]
 workspace = true

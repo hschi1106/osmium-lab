@@ -6,7 +6,8 @@ use std::{
 };
 
 use market_types::{
-    EventPayload, InstrumentId, MarketId, MatchTime, Observation, QuantityUnit, Symbol, TradingDate,
+    EventPayload, IndicativeAuctionKind, InstrumentId, MarketId, MatchTime, Observation, Price,
+    QuantityUnit, Symbol, TradingDate,
 };
 use taifex_normalizer::{
     KnownSkipReason, NormalizationErrorKind, NormalizerConfig, TaifexNormalizer,
@@ -53,6 +54,18 @@ fn normalizer(symbol: &str) -> TaifexNormalizer {
     )
 }
 
+fn calendar_spread_normalizer(symbol: &str) -> TaifexNormalizer {
+    TaifexNormalizer::new(
+        NormalizerConfig::new_calendar_spread(
+            InstrumentId::new(MarketId::Taifex, Symbol::new(symbol).unwrap()),
+            TradingDate::parse("2026-07-20").unwrap(),
+            MatchTime::parse("2026-07-20T08:45:00+08:00").unwrap(),
+            MatchTime::parse("2026-07-20T13:45:00+08:00").unwrap(),
+        )
+        .unwrap(),
+    )
+}
+
 #[test]
 fn synthetic_futures_fixture_normalizes_with_opening_events_only() {
     let symbol = "SYNTH-FUT";
@@ -72,14 +85,17 @@ fn synthetic_futures_fixture_normalizes_with_opening_events_only() {
         report
             .events()
             .iter()
-            .all(|event| { !matches!(event.payload(), EventPayload::IndicativeClosingAuction(_)) })
+            .filter_map(|event| match event.payload() {
+                EventPayload::IndicativeAuction(auction) => Some(auction),
+                _ => None,
+            })
+            .all(|auction| auction.kind() == IndicativeAuctionKind::Opening)
     );
-    assert!(
-        report
-            .events()
-            .iter()
-            .any(|event| { matches!(event.payload(), EventPayload::IndicativeOpeningAuction(_)) })
-    );
+    assert!(report.events().iter().any(|event| matches!(
+        event.payload(),
+        EventPayload::IndicativeAuction(auction)
+            if auction.kind() == IndicativeAuctionKind::Opening
+    )));
 }
 
 #[test]
@@ -95,14 +111,15 @@ fn i022_zero_zero_is_a_no_observation_opening_event() {
             event.source_format().as_str() == "I022"
                 && matches!(
                     event.payload(),
-                    EventPayload::IndicativeOpeningAuction(auction)
+                    EventPayload::IndicativeAuction(auction)
                         if auction.price().as_set().is_none()
                 )
         })
         .expect("fixture contains zero/zero I022");
-    let EventPayload::IndicativeOpeningAuction(auction) = event.payload() else {
+    let EventPayload::IndicativeAuction(auction) = event.payload() else {
         panic!("I022 must map to opening auction event")
     };
+    assert_eq!(auction.kind(), IndicativeAuctionKind::Opening);
     assert_eq!(auction.price(), &Observation::NoObservation);
     assert_eq!(auction.quantity(), &Observation::NoObservation);
     assert_eq!(auction.book(), &Observation::NoObservation);
@@ -137,7 +154,7 @@ fn timeline_quantities_use_contract_units() {
                     Some(QuantityUnit::Contract)
                 );
             }
-            EventPayload::IndicativeOpeningAuction(auction) => {
+            EventPayload::IndicativeAuction(auction) => {
                 assert!(
                     auction
                         .quantity()
@@ -145,7 +162,7 @@ fn timeline_quantities_use_contract_units() {
                         .is_none_or(|quantity| quantity.unit() == QuantityUnit::Contract)
                 );
             }
-            EventPayload::QuoteSnapshot(_) | EventPayload::IndicativeClosingAuction(_) => {
+            EventPayload::QuoteSnapshot(_) | EventPayload::MarketStatus(_) => {
                 panic!("unexpected payload in TAIFEX fixture")
             }
         }
@@ -161,6 +178,50 @@ fn i020_continuation_is_rejected_in_the_current_source_boundary() {
     assert!(matches!(
         error.kind(),
         NormalizationErrorKind::InvalidPayload("unsupported I020 continuation")
+    ));
+}
+
+#[test]
+fn calendar_spread_profile_preserves_negative_and_zero_trade_and_book_prices() {
+    let symbol = "TXF/202609-202610";
+    let lines = [
+        r#"{"first_packet":true,"format":"I020","market":"taifex_fut","match_time":"2026-07-20T09:00:00+08:00","received_at":"2026-07-20T09:00:00.001000+08:00","symbol":"TXF/202609-202610","trades":[{"price":-1.25,"quantity":2},{"price":0,"quantity":1}],"type":"trade"}"#,
+        r#"{"format":"I080","market":"taifex_fut","match_time":"2026-07-20T09:00:01+08:00","received_at":"2026-07-20T09:00:01.001000+08:00","symbol":"TXF/202609-202610","type":"book","bids":[{"price":-0.5,"quantity":3}],"asks":[{"price":0,"quantity":4}]}"#,
+    ];
+    let report = calendar_spread_normalizer(symbol)
+        .normalize_json_lines(lines)
+        .unwrap();
+
+    let EventPayload::TradeBatch(batch) = report.events()[0].payload() else {
+        panic!("I020 must remain an observed trade batch")
+    };
+    assert_eq!(batch.trades()[0].price(), Price::parse("-1.25").unwrap());
+    assert_eq!(batch.trades()[1].price(), Price::parse("0").unwrap());
+    let EventPayload::BookSnapshot(snapshot) = report.events()[1].payload() else {
+        panic!("I080 must remain a book snapshot")
+    };
+    assert_eq!(
+        snapshot.book().bids().levels().next().unwrap().price(),
+        Price::parse("-0.5").unwrap()
+    );
+    assert_eq!(
+        snapshot.book().asks().levels().next().unwrap().price(),
+        Price::parse("0").unwrap()
+    );
+}
+
+#[test]
+fn outright_future_profile_rejects_non_positive_trade_prices() {
+    let line = r#"{"first_packet":true,"format":"I020","market":"taifex_fut","match_time":"2026-07-20T09:00:00+08:00","received_at":"2026-07-20T09:00:00.001000+08:00","symbol":"SYNTH-FUT","trades":[{"price":-1,"quantity":1}],"type":"trade"}"#;
+    let error = normalizer("SYNTH-FUT")
+        .normalize_json_lines([line])
+        .unwrap_err();
+    assert!(matches!(
+        error.kind(),
+        NormalizationErrorKind::InvalidPrice {
+            error: market_types::PriceError::NonPositive,
+            ..
+        }
     ));
 }
 

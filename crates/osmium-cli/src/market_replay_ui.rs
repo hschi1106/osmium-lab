@@ -10,7 +10,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, enable_raw_mode},
 };
-use market_types::{BookLevel, MatchTime, Price};
+use market_types::{BookLevel, MatchTime, Price, UtcOffsetMinutes};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
@@ -273,10 +273,13 @@ fn draw_order_book(frame: &mut Frame<'_>, area: Rect, replay: &MarketReplay) {
     let book = replay
         .selected_state()
         .and_then(|state| state.book().known());
-    let mut rows = Vec::with_capacity(13);
+    let mut rows = Vec::with_capacity(15);
     if let Some(book) = book {
         for (index, level) in book.asks().slots().iter().enumerate().rev() {
             rows.push(book_row(format!("Ask{}", index + 1), *level));
+        }
+        if let Some(quantity) = book.asks().market_order_quantity() {
+            rows.push(market_order_row("AskMkt", quantity.value()));
         }
     }
     rows.push(Row::new(vec!["────", "────────", "──────"]));
@@ -291,6 +294,9 @@ fn draw_order_book(frame: &mut Frame<'_>, area: Rect, replay: &MarketReplay) {
     }
     rows.push(Row::new(vec!["────", "────────", "──────"]));
     if let Some(book) = book {
+        if let Some(quantity) = book.bids().market_order_quantity() {
+            rows.push(market_order_row("BidMkt", quantity.value()));
+        }
         for (index, level) in book.bids().slots().iter().enumerate() {
             rows.push(book_row(format!("Bid{}", index + 1), *level));
         }
@@ -357,6 +363,14 @@ fn book_row(label: String, level: Option<BookLevel>) -> Row<'static> {
     }
 }
 
+fn market_order_row(label: &'static str, quantity: u64) -> Row<'static> {
+    Row::new(vec![
+        label.to_owned(),
+        "MKT".to_owned(),
+        quantity.to_string(),
+    ])
+}
+
 fn price_bounds(points: &[(f64, f64)]) -> (f64, f64) {
     let Some((first, rest)) = points.split_first() else {
         return (0.0, 1.0);
@@ -382,12 +396,21 @@ fn replay_seconds(start: MatchTime, end: MatchTime) -> f64 {
 }
 
 fn format_datetime(value: MatchTime) -> String {
-    let formatted = value.to_iso8601(480);
+    let Some(formatted) = format_iso8601_taipei(value) else {
+        return "out-of-range".to_owned();
+    };
     format!("{} {}", &formatted[0..10], &formatted[11..23])
 }
 
 fn format_time(value: MatchTime) -> String {
-    value.to_iso8601(480)[11..23].to_owned()
+    format_iso8601_taipei(value)
+        .map(|formatted| formatted[11..23].to_owned())
+        .unwrap_or_else(|| "out-of-range".to_owned())
+}
+
+fn format_iso8601_taipei(value: MatchTime) -> Option<String> {
+    let offset = UtcOffsetMinutes::new(480).expect("480 minutes is a valid ISO-8601 UTC offset");
+    value.to_iso8601(offset).ok()
 }
 
 fn format_time_of_day(value: MatchTime) -> String {
@@ -395,28 +418,5 @@ fn format_time_of_day(value: MatchTime) -> String {
 }
 
 fn format_price(value: Price) -> String {
-    format_decimal_atoms(value.atoms())
-}
-
-fn format_decimal_atoms(atoms: i128) -> String {
-    let negative = atoms.is_negative();
-    let absolute = atoms.unsigned_abs();
-    let whole = absolute / market_types::Decimal::SCALE_FACTOR as u128;
-    let fraction = absolute % market_types::Decimal::SCALE_FACTOR as u128;
-    if fraction == 0 {
-        return if negative {
-            format!("-{whole}")
-        } else {
-            whole.to_string()
-        };
-    }
-    let mut fractional = format!("{fraction:018}");
-    while fractional.ends_with('0') {
-        fractional.pop();
-    }
-    if negative {
-        format!("-{whole}.{fractional}")
-    } else {
-        format!("{whole}.{fractional}")
-    }
+    value.as_decimal().to_string()
 }

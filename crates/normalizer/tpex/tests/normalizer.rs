@@ -1,6 +1,6 @@
 use market_types::{
-    EventPayload, InstrumentId, MarketId, MatchTime, Observation, QuantityUnit, Symbol,
-    TradePrintKind, TradingDate,
+    EventPayload, IndicativeAuctionKind, InstantTrend, InstrumentId, MarketAnnotations, MarketId,
+    MatchTime, Observation, QuantityUnit, Symbol, TradeObservationKind, TradingDate,
 };
 use tpex_normalizer::{
     InstrumentProfile, KnownSkipReason, NormalizationErrorKind, NormalizerConfig,
@@ -100,6 +100,71 @@ fn snapshot_maps_exact_numeric_lexemes_and_null_deal() {
 }
 
 #[test]
+fn market_order_book_quantity_is_not_treated_as_zero_price() {
+    let line = quote(
+        "STOCK_REALTIME",
+        "2026-07-20T09:00:01+08:00",
+        false,
+        (
+            r#"[{"price":0,"quantity":7},{"price":100,"quantity":2}]"#,
+            r#"[{"price":101,"quantity":3}]"#,
+        ),
+        "null",
+        0,
+        (16, 0),
+    );
+    let report = normalizer().normalize_json_lines([line]).unwrap();
+    let EventPayload::QuoteSnapshot(snapshot) = report.events()[0].payload() else {
+        panic!("expected quote snapshot")
+    };
+    assert_eq!(
+        snapshot
+            .book()
+            .bids()
+            .market_order_quantity()
+            .unwrap()
+            .value(),
+        7
+    );
+    assert_eq!(
+        snapshot
+            .book()
+            .bids()
+            .levels()
+            .next()
+            .unwrap()
+            .price()
+            .atoms(),
+        100_000_000_000_000_000_000
+    );
+}
+
+#[test]
+fn zero_price_market_order_must_be_the_first_book_entry() {
+    let line = quote(
+        "STOCK_REALTIME",
+        "2026-07-20T09:00:01+08:00",
+        false,
+        (
+            r#"[{"price":100,"quantity":2},{"price":0,"quantity":7}]"#,
+            "[]",
+        ),
+        "null",
+        0,
+        (16, 0),
+    );
+    assert!(matches!(
+        normalizer()
+            .normalize_json_lines([line])
+            .unwrap_err()
+            .kind(),
+        NormalizationErrorKind::InvalidPayload(
+            "zero-price market-order level must be the first book entry"
+        )
+    ));
+}
+
+#[test]
 fn warrant_profile_uses_tpex_warrant_quote_contract_and_rejects_other_formats() {
     assert_eq!(
         warrant_normalizer().config().profile(),
@@ -167,14 +232,206 @@ fn trial_quotes_become_opening_and_closing_auction_events() {
     let report = normalizer()
         .normalize_json_lines([opening, closing])
         .unwrap();
+    let EventPayload::IndicativeAuction(opening) = report.events()[0].payload() else {
+        panic!("expected opening indicative auction")
+    };
+    let EventPayload::IndicativeAuction(closing) = report.events()[1].payload() else {
+        panic!("expected closing indicative auction")
+    };
+    assert_eq!(opening.kind(), IndicativeAuctionKind::Opening);
+    assert_eq!(closing.kind(), IndicativeAuctionKind::Closing);
+}
+
+#[test]
+fn delayed_open_trial_is_typed_as_opening_and_keeps_delayed_flag() {
+    let (bids, asks) = complete_book();
+    for (match_time, status) in [
+        ("2026-07-20T08:59:58+08:00", 0xc8),
+        ("2026-07-20T09:01:00+08:00", 0xc0),
+    ] {
+        let report = normalizer()
+            .normalize_json_lines([quote(
+                "STOCK_REALTIME",
+                match_time,
+                false,
+                (bids, asks),
+                r#"{"price":100,"quantity":2}"#,
+                10,
+                (status, 0),
+            )])
+            .unwrap();
+        let EventPayload::IndicativeAuction(auction) = report.events()[0].payload() else {
+            panic!("delayed opening trial must not become a firm quote")
+        };
+        assert_eq!(auction.kind(), IndicativeAuctionKind::Opening);
+        let market_types::MarketAnnotations::TpexQuote(annotations) = auction.annotations() else {
+            panic!("TPEx source annotations must be preserved")
+        };
+        assert!(annotations.status().delayed_open());
+    }
+}
+
+#[test]
+fn conflicting_delayed_open_and_delayed_close_flags_are_rejected() {
+    let (bids, asks) = complete_book();
+    let error = normalizer()
+        .normalize_json_lines([quote(
+            "STOCK_REALTIME",
+            "2026-07-20T09:01:00+08:00",
+            false,
+            (bids, asks),
+            r#"{"price":100,"quantity":2}"#,
+            10,
+            (0xe0, 0),
+        )])
+        .unwrap_err();
     assert!(matches!(
-        report.events()[0].payload(),
-        EventPayload::IndicativeOpeningAuction(_)
+        error.kind(),
+        NormalizationErrorKind::InvalidPayload(_)
     ));
-    assert!(matches!(
-        report.events()[1].payload(),
-        EventPayload::IndicativeClosingAuction(_)
-    ));
+}
+
+#[test]
+fn intraday_trials_are_unclassified_and_preserve_trend_annotations() {
+    let (bids, asks) = complete_book();
+    let stability = quote(
+        "STOCK_SNAPSHOT",
+        "2026-07-20T09:04:43+08:00",
+        false,
+        (bids, asks),
+        r#"{"price":100,"quantity":2}"#,
+        10,
+        (128, 2),
+    );
+    let (bids, asks) = complete_book();
+    let unclassified = quote(
+        "STOCK_SNAPSHOT",
+        "2026-07-20T09:04:48+08:00",
+        false,
+        (bids, asks),
+        r#"{"price":101,"quantity":3}"#,
+        10,
+        (128, 0),
+    );
+    let report = normalizer()
+        .normalize_json_lines([stability, unclassified])
+        .unwrap();
+    let EventPayload::IndicativeAuction(stability) = report.events()[0].payload() else {
+        panic!("stability trial must be indicative")
+    };
+    let EventPayload::IndicativeAuction(unclassified) = report.events()[1].payload() else {
+        panic!("unclassified trial must be indicative")
+    };
+    assert_eq!(
+        stability.kind(),
+        IndicativeAuctionKind::IntradayUnclassified
+    );
+    assert_eq!(
+        unclassified.kind(),
+        IndicativeAuctionKind::IntradayUnclassified
+    );
+    let MarketAnnotations::TpexQuote(annotations) = stability.annotations() else {
+        panic!("expected TPEx source annotations")
+    };
+    assert_eq!(
+        annotations.limits().instant_trend(),
+        InstantTrend::VolatilityInterruptionUp
+    );
+}
+
+#[test]
+fn non_trial_volatility_pause_without_book_becomes_status_observation() {
+    let pause = quote(
+        "STOCK_SNAPSHOT",
+        "2026-07-20T09:04:43+08:00",
+        false,
+        ("[]", "[]"),
+        "null",
+        10,
+        (0x10, 0x01),
+    );
+    let report = normalizer().normalize_json_lines([pause]).unwrap();
+    let EventPayload::MarketStatus(status) = report.events()[0].payload() else {
+        panic!("non-trial pause without a disclosed book is a status observation")
+    };
+    assert_eq!(status.cumulative_volume().as_set().unwrap().value(), 10);
+    let MarketAnnotations::TpexQuote(annotations) = status.annotations() else {
+        panic!("expected TPEx source annotations")
+    };
+    assert_eq!(
+        annotations.limits().instant_trend(),
+        InstantTrend::VolatilityInterruptionDown
+    );
+}
+
+#[test]
+fn zero_quantity_volatility_pause_is_a_status_observation() {
+    for format in ["STOCK_REALTIME", "STOCK_SNAPSHOT"] {
+        let pause = quote(
+            format,
+            "2026-07-20T09:01:43.199692+08:00",
+            false,
+            ("[]", "[]"),
+            r#"{"price":100,"quantity":0}"#,
+            3,
+            (0x10, 0x02),
+        );
+        let report = normalizer().normalize_json_lines([pause]).unwrap();
+        let EventPayload::MarketStatus(status) = report.events()[0].payload() else {
+            panic!("a non-trial volatility pause must become a status observation")
+        };
+
+        assert_eq!(status.cumulative_volume().as_set().unwrap().value(), 3);
+        let MarketAnnotations::TpexQuote(annotations) = status.annotations() else {
+            panic!("expected TPEx source annotations")
+        };
+        assert_eq!(
+            annotations.limits().instant_trend(),
+            InstantTrend::VolatilityInterruptionUp
+        );
+    }
+}
+
+#[test]
+fn zero_quantity_deal_is_rejected_without_pause_flags_or_with_a_book() {
+    let invalid_cases = [
+        quote(
+            "STOCK_REALTIME",
+            "2026-07-20T09:01:43.199692+08:00",
+            false,
+            ("[]", "[]"),
+            r#"{"price":100,"quantity":0}"#,
+            3,
+            (0x10, 0),
+        ),
+        quote(
+            "STOCK_SNAPSHOT",
+            "2026-07-20T09:01:43.199692+08:00",
+            false,
+            complete_book(),
+            r#"{"price":100,"quantity":0}"#,
+            3,
+            (0x10, 0x01),
+        ),
+        quote(
+            "STOCK_REALTIME",
+            "2026-07-20T09:01:43.199692+08:00",
+            true,
+            ("[]", "[]"),
+            r#"{"price":100,"quantity":0}"#,
+            3,
+            (0x10, 0x01),
+        ),
+    ];
+
+    for invalid in invalid_cases {
+        let error = normalizer().normalize_json_lines([invalid]).unwrap_err();
+        assert!(matches!(
+            error.kind(),
+            NormalizationErrorKind::InvalidPayload(message)
+                if *message == "zero-quantity deal is only valid for a book-empty volatility-pause quote"
+        ));
+    }
 }
 
 #[test]
@@ -209,7 +466,10 @@ fn realtime_pair_is_grouped_by_match_time_and_emits_trade_then_quote() {
         panic!("expected intermediate trade batch first")
     };
     assert_eq!(batch.trades().len(), 1);
-    assert_eq!(batch.trades()[0].print_kind(), TradePrintKind::Intermediate);
+    assert_eq!(
+        batch.trades()[0].observation_kind(),
+        TradeObservationKind::Intermediate
+    );
     assert_eq!(batch.cumulative_volume().as_set().unwrap().value(), 10);
 
     let EventPayload::QuoteSnapshot(snapshot) = report.events()[1].payload() else {

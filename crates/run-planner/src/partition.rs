@@ -13,6 +13,16 @@ pub enum SourceId {
     TeralionFeedArchive = 1,
 }
 
+impl SourceId {
+    /// Stable storage namespace for artifacts produced by this source adapter.
+    #[must_use]
+    pub const fn storage_namespace(self) -> &'static str {
+        match self {
+            Self::TeralionFeedArchive => "teralion",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SessionPlanIdentity([u8; 32]);
 

@@ -6,7 +6,8 @@ use std::{
 };
 
 use market_types::{
-    EventPayload, InstrumentId, MarketId, MatchTime, Observation, QuantityUnit, Symbol, TradingDate,
+    EventPayload, IndicativeAuctionKind, InstrumentId, MarketId, MatchTime, Observation,
+    QuantityUnit, Symbol, TradingDate,
 };
 use taifex_normalizer::{
     InstrumentProfile, KnownSkipReason, NormalizationErrorKind, NormalizerConfig, TaifexNormalizer,
@@ -94,12 +95,16 @@ fn synthetic_option_fixture_normalizes_cross_session_events() {
                 payloads.1 += 1;
                 assert_eq!(batch.trades()[0].quantity().unit(), QuantityUnit::Contract);
             }
-            EventPayload::IndicativeOpeningAuction(auction) => {
+            EventPayload::IndicativeAuction(auction) => {
                 payloads.2 += 1;
+                assert_eq!(auction.kind(), IndicativeAuctionKind::Opening);
                 assert_eq!(auction.quantity(), &Observation::NoObservation);
             }
-            EventPayload::QuoteSnapshot(_) | EventPayload::IndicativeClosingAuction(_) => {
+            EventPayload::QuoteSnapshot(_) => {
                 payloads.3 += 1;
+            }
+            EventPayload::MarketStatus(_) => {
+                panic!("TAIFEX option fixture must not produce MarketStatus")
             }
         }
     }

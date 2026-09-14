@@ -6,10 +6,15 @@ use std::{error::Error, fmt, str::FromStr};
 pub struct TradingDate(i32);
 
 impl TradingDate {
+    pub const MIN_EPOCH_DAYS: i32 = -719_528;
+    pub const MAX_EPOCH_DAYS: i32 = 2_932_896;
+
     /// Constructs a trading date from its canonical signed epoch-day value.
-    #[must_use]
-    pub const fn from_epoch_days(epoch_days: i32) -> Self {
-        Self(epoch_days)
+    pub const fn from_epoch_days(epoch_days: i32) -> Result<Self, TradingDateError> {
+        if epoch_days < Self::MIN_EPOCH_DAYS || epoch_days > Self::MAX_EPOCH_DAYS {
+            return Err(TradingDateError::OutOfRange);
+        }
+        Ok(Self(epoch_days))
     }
 
     /// Returns signed days from 1970-01-01.
@@ -36,7 +41,7 @@ impl TradingDate {
         let day = parse_digits(bytes, 8, 2).ok_or(TradingDateError::InvalidFormat)?;
         validate_date(year, month, day)?;
 
-        Ok(Self::from_epoch_days(days_from_civil(year, month, day)))
+        Self::from_epoch_days(days_from_civil(year, month, day))
     }
 }
 
@@ -65,13 +70,7 @@ impl TryFrom<&str> for TradingDate {
 impl fmt::Display for TradingDate {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (year, month, day) = civil_from_days(self.0);
-        if (0..=9999).contains(&year) {
-            write!(formatter, "{year:04}-{month:02}-{day:02}")
-        } else if year < 0 {
-            write!(formatter, "-{:04}-{month:02}-{day:02}", year.unsigned_abs())
-        } else {
-            write!(formatter, "+{year:04}-{month:02}-{day:02}")
-        }
+        write!(formatter, "{year:04}-{month:02}-{day:02}")
     }
 }
 
@@ -80,6 +79,7 @@ impl fmt::Display for TradingDate {
 pub enum TradingDateError {
     InvalidFormat,
     InvalidDate,
+    OutOfRange,
 }
 
 impl fmt::Display for TradingDateError {
@@ -87,6 +87,7 @@ impl fmt::Display for TradingDateError {
         let message = match self {
             Self::InvalidFormat => "trading date must use the exact YYYY-MM-DD format",
             Self::InvalidDate => "trading date is not a valid Gregorian date",
+            Self::OutOfRange => "trading date is outside 0000-01-01..=9999-12-31",
         };
 
         formatter.write_str(message)

@@ -6,9 +6,9 @@ use market_state::{
 };
 use market_types::{
     BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventPayload,
-    InstrumentId, MarketAnnotations, MarketId, MatchTime, Observation, Price, Quantity,
-    QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol, TradeBatch, TradeOrder, TradePrint,
-    TradePrintKind, TradingDate, TwseQuoteAnnotations, Volume,
+    InstrumentId, MarketAnnotations, MarketId, MatchTime, Observation, ObservedTrade, Price,
+    Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol, TradeBatch, TradeBatchOrdering,
+    TradeObservationKind, TradingDate, TwseQuoteAnnotations, Volume,
 };
 use replay_engine::{
     EventStream, OrderingError, OrderingKey, ReplayClock, ReplayContextWindow, ReplayCore,
@@ -48,8 +48,8 @@ fn book() -> CompleteBookSnapshot {
     .unwrap()
 }
 
-fn trade(price: &str, quantity: u64, kind: TradePrintKind) -> TradePrint {
-    TradePrint::new(
+fn trade(price: &str, quantity: u64, kind: TradeObservationKind) -> ObservedTrade {
+    ObservedTrade::new(
         Price::parse(price).unwrap(),
         Quantity::new(quantity, QuantityUnit::TradingUnit).unwrap(),
         kind,
@@ -77,7 +77,7 @@ fn quote_for(
         EventPayload::QuoteSnapshot(
             QuoteSnapshot::new(
                 book(),
-                Observation::Set(trade("100", 1, TradePrintKind::Regular)),
+                Observation::Set(trade("100", 1, TradeObservationKind::Regular)),
                 Observation::Set(Volume::new(cumulative, QuantityUnit::TradingUnit)),
                 MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(16, 0)),
             )
@@ -95,8 +95,8 @@ fn intermediate(micros: i64, cumulative: u64) -> DomainEvent {
         None,
         EventPayload::TradeBatch(
             TradeBatch::new(
-                vec![trade("99.5", 1, TradePrintKind::Intermediate)],
-                TradeOrder::SourceOrdered,
+                vec![trade("99.5", 1, TradeObservationKind::Intermediate)],
+                TradeBatchOrdering::SourceSequencePreserved,
                 Observation::Set(Volume::new(cumulative, QuantityUnit::TradingUnit)),
                 MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(16, 0)),
             )
@@ -112,6 +112,26 @@ fn core() -> ReplayCore {
         context(),
     )
     .unwrap()
+}
+
+#[test]
+fn replay_state_views_iterate_and_lookup_without_materializing_a_slice() {
+    let replay = core();
+    let views = replay.state_views();
+
+    assert_eq!(views.len(), 1);
+    assert!(!views.is_empty());
+    assert_eq!(
+        views.get(&instrument()).unwrap().instrument(),
+        &instrument()
+    );
+    assert_eq!(
+        views
+            .iter()
+            .map(|state| state.instrument().clone())
+            .collect::<Vec<_>>(),
+        vec![instrument()]
+    );
 }
 
 struct EmptyStream;
@@ -492,8 +512,8 @@ fn invalid_twse_realtime_trade_shape_is_rejected() {
         None,
         EventPayload::TradeBatch(
             TradeBatch::new(
-                vec![trade("100", 1, TradePrintKind::Regular)],
-                TradeOrder::SourceOrdered,
+                vec![trade("100", 1, TradeObservationKind::Regular)],
+                TradeBatchOrdering::SourceSequencePreserved,
                 Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
                 MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(16, 0)),
             )
@@ -614,9 +634,9 @@ fn empty_selected_event_sequence_has_a_framed_checksum_and_initial_state() {
     let mut canonical = Vec::new();
     canonical.extend_from_slice(b"OSRS");
     canonical.extend_from_slice(&1_u16.to_be_bytes());
-    canonical.extend_from_slice(&3_u16.to_be_bytes());
-    canonical.extend_from_slice(&3_u16.to_be_bytes());
-    canonical.extend_from_slice(&3_u16.to_be_bytes());
+    canonical.extend_from_slice(&market_types::EVENT_SCHEMA_VERSION.to_be_bytes());
+    canonical.extend_from_slice(&market_types::CANONICAL_EVENT_VERSION.to_be_bytes());
+    canonical.extend_from_slice(&4_u16.to_be_bytes());
     canonical.push(0);
     canonical.extend_from_slice(&0_u64.to_be_bytes());
     assert_eq!(

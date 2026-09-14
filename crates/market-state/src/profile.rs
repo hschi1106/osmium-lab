@@ -1,7 +1,7 @@
 use std::{error::Error, fmt};
 
 use market_types::{
-    DomainEvent, EventKind, EventPayload, MarketAnnotations, MarketId, QuantityUnit, SourceFormatId,
+    DomainEvent, EventKind, MarketAnnotations, MarketId, QuantityUnit, SourceFormatId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,8 +99,8 @@ impl MarketStateProfile {
                     vec![
                         EventKind::QuoteSnapshot,
                         EventKind::TradeBatch,
-                        EventKind::IndicativeOpeningAuction,
-                        EventKind::IndicativeClosingAuction,
+                        EventKind::IndicativeAuction,
+                        EventKind::MarketStatus,
                     ],
                 )
                 .expect("TWSE realtime profile has accepted event kinds"),
@@ -109,8 +109,8 @@ impl MarketStateProfile {
                         .expect("TWSE source format constant is non-empty"),
                     vec![
                         EventKind::QuoteSnapshot,
-                        EventKind::IndicativeOpeningAuction,
-                        EventKind::IndicativeClosingAuction,
+                        EventKind::IndicativeAuction,
+                        EventKind::MarketStatus,
                     ],
                 )
                 .expect("TWSE snapshot profile has accepted event kinds"),
@@ -134,8 +134,8 @@ impl MarketStateProfile {
                     vec![
                         EventKind::QuoteSnapshot,
                         EventKind::TradeBatch,
-                        EventKind::IndicativeOpeningAuction,
-                        EventKind::IndicativeClosingAuction,
+                        EventKind::IndicativeAuction,
+                        EventKind::MarketStatus,
                     ],
                 )
                 .expect("TWSE warrant realtime profile has accepted event kinds"),
@@ -144,8 +144,8 @@ impl MarketStateProfile {
                         .expect("TWSE warrant format is non-empty"),
                     vec![
                         EventKind::QuoteSnapshot,
-                        EventKind::IndicativeOpeningAuction,
-                        EventKind::IndicativeClosingAuction,
+                        EventKind::IndicativeAuction,
+                        EventKind::MarketStatus,
                     ],
                 )
                 .expect("TWSE warrant snapshot profile has accepted event kinds"),
@@ -170,7 +170,7 @@ impl MarketStateProfile {
                 .expect("TAIFEX trade profile has accepted event kinds"),
                 SourceFormatRule::new(
                     SourceFormatId::new("I022").expect("TAIFEX format is non-empty"),
-                    vec![EventKind::IndicativeOpeningAuction],
+                    vec![EventKind::IndicativeAuction],
                 )
                 .expect("TAIFEX opening profile has accepted event kinds"),
                 SourceFormatRule::new(
@@ -202,7 +202,7 @@ impl MarketStateProfile {
                 .expect("TAIFEX option trade profile has accepted event kinds"),
                 SourceFormatRule::new(
                     SourceFormatId::new("I022").expect("TAIFEX option format is non-empty"),
-                    vec![EventKind::IndicativeOpeningAuction],
+                    vec![EventKind::IndicativeAuction],
                 )
                 .expect("TAIFEX option opening profile has accepted event kinds"),
                 SourceFormatRule::new(
@@ -241,8 +241,8 @@ impl MarketStateProfile {
                     vec![
                         EventKind::QuoteSnapshot,
                         EventKind::TradeBatch,
-                        EventKind::IndicativeOpeningAuction,
-                        EventKind::IndicativeClosingAuction,
+                        EventKind::IndicativeAuction,
+                        EventKind::MarketStatus,
                     ],
                 )
                 .expect("TPEx realtime profile has accepted event kinds"),
@@ -251,8 +251,8 @@ impl MarketStateProfile {
                         .expect("TPEx source format constant is non-empty"),
                     vec![
                         EventKind::QuoteSnapshot,
-                        EventKind::IndicativeOpeningAuction,
-                        EventKind::IndicativeClosingAuction,
+                        EventKind::IndicativeAuction,
+                        EventKind::MarketStatus,
                     ],
                 )
                 .expect("TPEx snapshot profile has accepted event kinds"),
@@ -296,13 +296,7 @@ impl MarketStateProfile {
             return Err(ProfileError::UnsupportedEventKind);
         }
 
-        let annotations = match event.payload() {
-            EventPayload::QuoteSnapshot(snapshot) => snapshot.annotations(),
-            EventPayload::BookSnapshot(snapshot) => snapshot.annotations(),
-            EventPayload::TradeBatch(batch) => batch.annotations(),
-            EventPayload::IndicativeOpeningAuction(auction)
-            | EventPayload::IndicativeClosingAuction(auction) => auction.annotations(),
-        };
+        let annotations = event.payload().annotations();
         let compatible = matches!(
             (self.annotation_policy, annotations),
             (AnnotationPolicy::NoneOnly, MarketAnnotations::None)

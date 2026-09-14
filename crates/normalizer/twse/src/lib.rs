@@ -2,18 +2,19 @@ use std::{collections::BTreeMap, error::Error, fmt};
 
 use market_types::{
     BookError, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventError,
-    EventPayload, IndicativeAuction, InstantTrend, InstrumentId, LimitPosition, MarketAnnotations,
-    MarketId, MatchTime, MatchTimeError, Observation, Price, PriceError, Quantity, QuantityError,
-    QuantityUnit, QuoteSnapshot, SourceFormatId, TradeBatch, TradeOrder, TradePrint,
-    TradePrintKind, TradingDate, TwseQuoteAnnotations, Volume,
+    EventPayload, IndicativeAuction, IndicativeAuctionKind, InstantTrend, InstrumentId,
+    LimitPosition, MarketAnnotations, MarketId, MarketStatusObservation, MatchTime, MatchTimeError,
+    Observation, ObservedTrade, Price, PriceError, Quantity, QuantityError, QuantityUnit,
+    QuoteSnapshot, SourceFormatId, TradeBatch, TradeBatchOrdering, TradeObservationKind,
+    TradingDate, TwseQuoteAnnotations, Volume,
 };
 use serde::Deserialize;
 use serde_json::value::RawValue;
 
 pub const MAPPING_NAME: &str = "TeralionTwseQuote";
-pub const MAPPING_VERSION: u16 = 4;
+pub const MAPPING_VERSION: u16 = 9;
 pub const WARRANT_MAPPING_NAME: &str = "TeralionTwseWarrant";
-pub const WARRANT_MAPPING_VERSION: u16 = 1;
+pub const WARRANT_MAPPING_VERSION: u16 = 6;
 
 const STOCK_SNAPSHOT: &str = "STOCK_SNAPSHOT";
 const STOCK_REALTIME: &str = "STOCK_REALTIME";
@@ -301,7 +302,26 @@ impl TwseNormalizer {
         let annotations = TwseQuoteAnnotations::new(wire.status_flags, wire.limit_flags);
         let record_warnings = annotation_warnings(&context, annotations);
         let cumulative_volume = Volume::new(wire.cum_volume, QuantityUnit::TradingUnit);
-        let deal = parse_deal(record_number, &context, wire.deal)?;
+        let (deal, deal_zero_quantity) = parse_deal(record_number, &context, wire.deal)?;
+        if deal_zero_quantity {
+            let is_pause = matches!(
+                annotations.limits().instant_trend(),
+                InstantTrend::VolatilityInterruptionDown | InstantTrend::VolatilityInterruptionUp
+            );
+            if !is_pause
+                || wire.intermediate_print
+                || !wire.bids.is_empty()
+                || !wire.asks.is_empty()
+            {
+                return Err(NormalizationError::new(
+                    record_number,
+                    context,
+                    NormalizationErrorKind::InvalidPayload(
+                        "zero-quantity deal is only valid for a book-empty volatility-pause quote",
+                    ),
+                ));
+            }
+        }
 
         let book = if wire.intermediate_print {
             if format != WireFormat::StockRealtime {
@@ -348,6 +368,7 @@ impl TwseNormalizer {
                 intermediate: wire.intermediate_print,
                 book,
                 deal,
+                deal_zero_quantity,
                 cumulative_volume,
                 annotations,
             }),
@@ -401,12 +422,11 @@ impl TwseNormalizer {
         indices: &[usize],
     ) -> Result<Vec<DomainEvent>, NormalizationError> {
         let first = &records[indices[0]];
-        let mut intermediates = indices
+        let intermediates = indices
             .iter()
             .map(|index| &records[*index])
             .filter(|record| record.intermediate);
-        let intermediate = intermediates.next();
-        let extra_intermediate = intermediates.next().is_some();
+        let intermediates = intermediates.collect::<Vec<_>>();
         let mut finals = indices
             .iter()
             .map(|index| &records[*index])
@@ -414,7 +434,7 @@ impl TwseNormalizer {
         let final_record = finals.next();
         let extra_final = finals.next().is_some();
 
-        let (Some(intermediate), Some(final_record)) = (intermediate, final_record) else {
+        let Some(final_record) = final_record else {
             return Err(group_error(
                 first,
                 RealtimeGroupError::ExpectedOneIntermediateAndOneFinal {
@@ -422,7 +442,7 @@ impl TwseNormalizer {
                 },
             ));
         };
-        if indices.len() != 2 || extra_intermediate || extra_final {
+        if intermediates.is_empty() || extra_final {
             return Err(group_error(
                 first,
                 RealtimeGroupError::ExpectedOneIntermediateAndOneFinal {
@@ -431,8 +451,16 @@ impl TwseNormalizer {
             ));
         }
 
-        let intermediate_phase = self.auction_phase(intermediate)?;
+        let intermediate_phase = self.auction_phase(intermediates[0])?;
         let final_phase = self.auction_phase(final_record)?;
+        for intermediate in &intermediates {
+            if self.auction_phase(intermediate)? != intermediate_phase {
+                return Err(group_error(
+                    first,
+                    RealtimeGroupError::MixedAuctionTrialState,
+                ));
+            }
+        }
         if intermediate_phase != final_phase {
             return Err(group_error(
                 first,
@@ -441,19 +469,25 @@ impl TwseNormalizer {
         }
 
         if intermediate_phase.is_some() {
-            return Ok(vec![
-                self.intermediate_event(intermediate)?,
-                self.final_event(final_record)?,
-            ]);
+            let mut events = Vec::with_capacity(indices.len());
+            for intermediate in &intermediates {
+                events.push(self.intermediate_event(intermediate)?);
+            }
+            events.push(self.final_event(final_record)?);
+            return Ok(events);
         }
 
-        let final_trade = final_record
-            .deal
-            .ok_or_else(|| group_error(first, RealtimeGroupError::FinalDealMissing))?;
-        let expected_final = intermediate
-            .cumulative_volume
-            .checked_add(Volume::from(final_trade.quantity()))
-            .map_err(|_| group_error(first, RealtimeGroupError::CumulativeVolumeMismatch))?;
+        let last_intermediate = intermediates
+            .last()
+            .expect("validated intermediate group is non-empty");
+        let expected_final = match final_record.deal {
+            Some(final_trade) => last_intermediate
+                .cumulative_volume
+                .checked_add(Volume::from(final_trade.quantity()))
+                .map_err(|_| group_error(first, RealtimeGroupError::CumulativeVolumeMismatch))?,
+            None if final_record.deal_zero_quantity => last_intermediate.cumulative_volume,
+            None => return Err(group_error(first, RealtimeGroupError::FinalDealMissing)),
+        };
         if final_record.cumulative_volume != expected_final {
             return Err(group_error(
                 first,
@@ -462,7 +496,7 @@ impl TwseNormalizer {
         }
 
         Ok(vec![
-            self.intermediate_event(intermediate)?,
+            self.intermediate_batch_event(&intermediates)?,
             self.final_event(final_record)?,
         ])
     }
@@ -473,6 +507,13 @@ impl TwseNormalizer {
                 record,
                 RealtimeGroupError::ExpectedOneIntermediateAndOneFinal { records: 1 },
             ));
+        }
+        if is_status_only_pause(record) {
+            let status = MarketStatusObservation::new(
+                Observation::Set(record.cumulative_volume),
+                MarketAnnotations::TwseQuote(record.annotations),
+            );
+            return Ok(self.domain_event(record, EventPayload::MarketStatus(status)));
         }
         let book = record.book.clone().ok_or_else(|| {
             NormalizationError::new(
@@ -508,14 +549,14 @@ impl TwseNormalizer {
         if let Some(phase) = self.auction_phase(record)? {
             return self.auction_event(record, phase, Observation::NoObservation);
         }
-        let trade = TradePrint::new(
+        let trade = ObservedTrade::new(
             trade.price(),
             trade.quantity(),
-            TradePrintKind::Intermediate,
+            TradeObservationKind::Intermediate,
         );
         let batch = TradeBatch::new(
             vec![trade],
-            TradeOrder::SourceOrdered,
+            TradeBatchOrdering::SourceSequencePreserved,
             Observation::Set(record.cumulative_volume),
             MarketAnnotations::TwseQuote(record.annotations),
         )
@@ -523,10 +564,43 @@ impl TwseNormalizer {
         Ok(self.domain_event(record, EventPayload::TradeBatch(batch)))
     }
 
+    fn intermediate_batch_event(
+        &self,
+        records: &[&ValidatedRecord],
+    ) -> Result<DomainEvent, NormalizationError> {
+        let first = records
+            .first()
+            .expect("validated intermediate group is non-empty");
+        let last = records
+            .last()
+            .expect("validated intermediate group is non-empty");
+        let trades = records
+            .iter()
+            .map(|record| {
+                let trade = record.deal.ok_or_else(|| {
+                    group_error(record, RealtimeGroupError::IntermediateDealMissing)
+                })?;
+                Ok(ObservedTrade::new(
+                    trade.price(),
+                    trade.quantity(),
+                    TradeObservationKind::Intermediate,
+                ))
+            })
+            .collect::<Result<Vec<_>, NormalizationError>>()?;
+        let batch = TradeBatch::new(
+            trades,
+            TradeBatchOrdering::SourceSequencePreserved,
+            Observation::Set(last.cumulative_volume),
+            MarketAnnotations::TwseQuote(first.annotations),
+        )
+        .map_err(|error| event_error(first, error))?;
+        Ok(self.domain_event(first, EventPayload::TradeBatch(batch)))
+    }
+
     fn auction_event(
         &self,
         record: &ValidatedRecord,
-        phase: AuctionPhase,
+        kind: IndicativeAuctionKind,
         book: Observation<CompleteBookSnapshot>,
     ) -> Result<DomainEvent, NormalizationError> {
         let (price, quantity) = match record.deal {
@@ -537,6 +611,7 @@ impl TwseNormalizer {
             None => (Observation::NoObservation, Observation::NoObservation),
         };
         let auction = IndicativeAuction::new(
+            kind,
             price,
             quantity,
             book,
@@ -544,20 +619,32 @@ impl TwseNormalizer {
             MarketAnnotations::TwseQuote(record.annotations),
         )
         .map_err(|error| event_error(record, error))?;
-        let payload = match phase {
-            AuctionPhase::Opening => EventPayload::IndicativeOpeningAuction(auction),
-            AuctionPhase::Closing => EventPayload::IndicativeClosingAuction(auction),
-        };
-        Ok(self.domain_event(record, payload))
+        Ok(self.domain_event(record, EventPayload::IndicativeAuction(auction)))
     }
 
     fn auction_phase(
         &self,
         record: &ValidatedRecord,
-    ) -> Result<Option<AuctionPhase>, NormalizationError> {
+    ) -> Result<Option<IndicativeAuctionKind>, NormalizationError> {
         let status = record.annotations.status();
         if !status.trial() {
             return Ok(None);
+        }
+
+        if status.delayed_open() && status.delayed_close() {
+            return Err(NormalizationError::new(
+                record.record_number,
+                record.context.clone(),
+                NormalizationErrorKind::InvalidPayload(
+                    "trial quote cannot set delayed-open and delayed-close together",
+                ),
+            ));
+        }
+        if status.delayed_open() {
+            return Ok(Some(IndicativeAuctionKind::Opening));
+        }
+        if status.delayed_close() {
+            return Ok(Some(IndicativeAuctionKind::Closing));
         }
 
         let opening_window_start = self.session_time("08:30:00");
@@ -571,12 +658,13 @@ impl TwseNormalizer {
         let opening = status.delayed_open() || status.opening_marker() || in_opening_window;
         let closing = status.delayed_close() || status.closing_marker() || in_closing_window;
         match (opening, closing) {
-            (true, false) => Ok(Some(AuctionPhase::Opening)),
-            (false, true) => Ok(Some(AuctionPhase::Closing)),
-            // TWSE can carry an in-session volatility trial without an
-            // opening/closing marker. Preserve it as an annotated quote; a
-            // consumer can correlate it with the explicit instant-trend pulse.
-            (false, false) => Ok(None),
+            (true, false) => Ok(Some(IndicativeAuctionKind::Opening)),
+            (false, true) => Ok(Some(IndicativeAuctionKind::Closing)),
+            // Instant-trend proves a pause direction, not that Teralion's
+            // deal/book fields are simulated-auction values. Preserve the
+            // annotation and keep the indicative observation unclassified
+            // until a real source fixture verifies that mapping.
+            (false, false) => Ok(Some(IndicativeAuctionKind::IntradayUnclassified)),
             (true, true) => Err(NormalizationError::new(
                 record.record_number,
                 record.context.clone(),
@@ -874,7 +962,7 @@ impl fmt::Display for RealtimeGroupError {
         match self {
             Self::ExpectedOneIntermediateAndOneFinal { records } => write!(
                 formatter,
-                "expected exactly one intermediate and one final record, got {records} records"
+                "expected at least one intermediate and exactly one final record, got {records} records"
             ),
             Self::IntermediateDealMissing => {
                 formatter.write_str("intermediate record has no deal")
@@ -896,12 +984,6 @@ enum WireFormat {
     StockRealtime,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AuctionPhase {
-    Opening,
-    Closing,
-}
-
 #[derive(Debug)]
 enum ClassifiedRecord {
     Accepted {
@@ -921,7 +1003,8 @@ struct ValidatedRecord {
     match_time: MatchTime,
     intermediate: bool,
     book: Option<CompleteBookSnapshot>,
-    deal: Option<TradePrint>,
+    deal: Option<ObservedTrade>,
+    deal_zero_quantity: bool,
     cumulative_volume: Volume,
     annotations: TwseQuoteAnnotations,
 }
@@ -1011,8 +1094,8 @@ fn parse_side(
     wire_levels: Vec<WireLevel<'_>>,
 ) -> Result<BookSide, NormalizationError> {
     let mut levels = Vec::with_capacity(wire_levels.len());
-    for wire in wire_levels {
-        let price = parse_price(record_number, context, "book level price", wire.price)?;
+    let mut market_order_quantity = None;
+    for (index, wire) in wire_levels.into_iter().enumerate() {
         let quantity =
             Quantity::new(wire.quantity, QuantityUnit::TradingUnit).map_err(|error| {
                 NormalizationError::new(
@@ -1024,9 +1107,21 @@ fn parse_side(
                     },
                 )
             })?;
-        levels.push(BookLevel::new(price, quantity));
+        match parse_book_price(record_number, context, wire.price)? {
+            Some(price) => levels.push(BookLevel::new(price, quantity)),
+            None if index == 0 => market_order_quantity = Some(quantity),
+            None => {
+                return Err(NormalizationError::new(
+                    record_number,
+                    context.clone(),
+                    NormalizationErrorKind::InvalidPayload(
+                        "zero-price market-order level must be the first book entry",
+                    ),
+                ));
+            }
+        }
     }
-    BookSide::new(kind, levels).map_err(|error| {
+    BookSide::with_market_order_quantity(kind, market_order_quantity, levels).map_err(|error| {
         NormalizationError::new(
             record_number,
             context.clone(),
@@ -1035,13 +1130,60 @@ fn parse_side(
     })
 }
 
+fn parse_book_price(
+    record_number: usize,
+    context: &RecordContext,
+    raw: &RawValue,
+) -> Result<Option<Price>, NormalizationError> {
+    let price = Price::parse(raw.get()).map_err(|error| {
+        NormalizationError::new(
+            record_number,
+            context.clone(),
+            NormalizationErrorKind::InvalidPrice {
+                field: "book level price",
+                error,
+            },
+        )
+    })?;
+    if price.atoms() == 0 {
+        return Ok(None);
+    }
+    Price::positive(price.as_decimal())
+        .map(Some)
+        .map_err(|error| {
+            NormalizationError::new(
+                record_number,
+                context.clone(),
+                NormalizationErrorKind::InvalidPrice {
+                    field: "book level price",
+                    error,
+                },
+            )
+        })
+}
+
+fn is_status_only_pause(record: &ValidatedRecord) -> bool {
+    !record.annotations.status().trial()
+        && matches!(
+            record.annotations.limits().instant_trend(),
+            InstantTrend::VolatilityInterruptionDown | InstantTrend::VolatilityInterruptionUp
+        )
+        && record.deal.is_none()
+        && record.book.as_ref().is_some_and(|book| {
+            book.bids().market_order_quantity().is_none()
+                && book.asks().market_order_quantity().is_none()
+                && book.bids().levels().next().is_none()
+                && book.asks().levels().next().is_none()
+        })
+}
+
 fn parse_deal(
     record_number: usize,
     context: &RecordContext,
     raw: &RawValue,
-) -> Result<Option<TradePrint>, NormalizationError> {
+) -> Result<(Option<ObservedTrade>, bool), NormalizationError> {
     if raw.get() == "null" {
-        return Ok(None);
+        return Ok((None, false));
     }
     let wire: WireDeal<'_> = serde_json::from_str(raw.get()).map_err(|error| {
         NormalizationError::new(
@@ -1051,6 +1193,9 @@ fn parse_deal(
         )
     })?;
     let price = parse_price(record_number, context, "deal price", wire.price)?;
+    if wire.quantity == 0 {
+        return Ok((None, true));
+    }
     let quantity = Quantity::new(wire.quantity, QuantityUnit::TradingUnit).map_err(|error| {
         NormalizationError::new(
             record_number,
@@ -1061,11 +1206,14 @@ fn parse_deal(
             },
         )
     })?;
-    Ok(Some(TradePrint::new(
-        price,
-        quantity,
-        TradePrintKind::Regular,
-    )))
+    Ok((
+        Some(ObservedTrade::new(
+            price,
+            quantity,
+            TradeObservationKind::Regular,
+        )),
+        false,
+    ))
 }
 
 fn parse_price(
@@ -1074,7 +1222,7 @@ fn parse_price(
     field: &'static str,
     raw: &RawValue,
 ) -> Result<Price, NormalizationError> {
-    Price::parse(raw.get()).map_err(|error| {
+    Price::parse_positive(raw.get()).map_err(|error| {
         NormalizationError::new(
             record_number,
             context.clone(),

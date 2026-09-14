@@ -5,19 +5,19 @@ use std::{
 
 use execution_sim::{
     AuctionMatchEvidence, MultiLedger, MultiPerformanceSummary, ScheduledDepthSimulator,
-    ScheduledOrderStatus, VisibleBookEvidence,
+    ScheduledOrderStatus, VisibleBookEvidence, VisibleTradingStateEvidence,
 };
-use market_state::MarketState;
 use market_types::{DomainEvent, MatchTime};
 use replay_engine::{
     CompletedReplay, EventOccurrence, EventStream, OrderingKey, ReplayCore, ReplayPlan,
     ReplayStreamFactory,
 };
 use strategy_api::{
-    ExecutionFillFeedback, MarketTradingContextEvaluator, OrderFeedback, OrderId,
-    ScheduledExecutionPolicy, Strategy, StrategyEventContext, StrategyFeedbackContext,
-    StrategyFinalizeContext, StrategyInitializationContext, StrategyOutput, StrategyOutputSink,
-    StrategyTimerContext, StrategyTimerId, StrategyTimerRequest, TradingContext,
+    ExecutionFillFeedback, IndicativeReason, MarketTradingContextEvaluator, MatchingState,
+    OrderFeedback, OrderId, ScheduledExecutionPolicy, Strategy, StrategyEventContext,
+    StrategyFeedbackContext, StrategyFinalizeContext, StrategyInitializationContext,
+    StrategyOutput, StrategyOutputSink, StrategyTimerContext, StrategyTimerId,
+    StrategyTimerRequest, TradingContext,
 };
 
 use crate::{
@@ -482,15 +482,42 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
                 "visible replay occurrence differs from committed replay".to_owned(),
             ));
         }
-        let views = self
-            .visible_core
-            .states()
-            .map(MarketState::view)
-            .collect::<Vec<_>>();
+        if matches!(
+            observation.trading.matching(),
+            MatchingState::Indicative(
+                IndicativeReason::VolatilityInterruptionDown
+                    | IndicativeReason::VolatilityInterruptionUp
+            )
+        ) {
+            let feedback = self
+                .simulator
+                .cancel_active_market_orders_for_volatility_interruption(event.instrument())
+                .map_err(|error| MultiBacktestError::Simulation(error.to_string()))?;
+            if !feedback.is_empty() {
+                self.schedule_feedback(
+                    observation.visible_at,
+                    feedback,
+                    [],
+                    occurrence.event_fingerprint().as_bytes(),
+                    control_sequence,
+                )?;
+            }
+        }
+        self.simulator
+            .publish_visible_trading_state(
+                VisibleTradingStateEvidence::new(
+                    event.instrument().clone(),
+                    event.match_time(),
+                    observation.visible_at,
+                    observation.trading.matching(),
+                    observation.trading.new_order_entry(),
+                )
+                .map_err(|error| MultiBacktestError::Simulation(error.to_string()))?,
+            )
+            .map_err(|error| MultiBacktestError::Simulation(error.to_string()))?;
+        let views = self.visible_core.state_views();
         let state = views
-            .iter()
-            .copied()
-            .find(|state| state.instrument() == event.instrument())
+            .get(event.instrument())
             .ok_or(MultiBacktestError::Declaration)?;
         if let Some(mark) = final_mark(state, self.allow_midpoint_fallback) {
             self.last_visible_marks
@@ -526,7 +553,7 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
                     occurrence,
                     &event,
                     state,
-                    &views,
+                    views,
                     &observation.trading,
                     observation.visible_at,
                 ),
@@ -889,20 +916,22 @@ mod tests {
         InstrumentLedgerConfig, RoundingPolicy, ScheduledDepthModel, ScheduledInstrumentConfig,
     };
     use market_state::{
-        MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
+        MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
     };
     use market_types::{
         BookLevel, BookSide, BookSideKind, BookSnapshot, CompleteBookSnapshot, Decimal,
-        EventPayload, MarketAnnotations, MarketId, Observation, Price, Quantity, QuantityUnit,
-        QuoteSnapshot, SourceFormatId, Symbol, TpexQuoteAnnotations, TradePrint, TradePrintKind,
+        EventPayload, IndicativeAuction, IndicativeAuctionKind, MarketAnnotations, MarketId,
+        MarketStatusObservation, Observation, ObservedTrade, Price, Quantity, QuantityUnit,
+        QuoteSnapshot, SourceFormatId, Symbol, TpexQuoteAnnotations, TradeObservationKind,
         TradingDate, TwseQuoteAnnotations, Volume,
     };
     use replay_engine::{ReplayStreamBinding, StableStreamDescriptorId};
     use strategy_api::{
-        BinaryIdentity, CanonicalParamsChecksum, ClientOrderId, IndicatorValue, OrderIntent,
-        OrderSide, OrderType, ScheduledExecutionPolicy, ScheduledOrderRequest, SessionKind,
-        SessionSegment, StrategyDeclaration, StrategyExecutionError, StrategyIdentity,
-        StrategyOutputRecord, StrategyTimerId, StrategyTimerRequest,
+        BinaryIdentity, CanonicalParamsChecksum, ClientOrderId, ExecutionFailureReason,
+        IndicatorValue, OrderFeedback, OrderIntent, OrderSide, OrderType, ScheduledExecutionPolicy,
+        ScheduledOrderRequest, SessionKind, SessionSegment, StrategyDeclaration,
+        StrategyExecutionError, StrategyFeedbackContext, StrategyIdentity, StrategyOutputRecord,
+        StrategyTimerId, StrategyTimerRequest,
     };
 
     use super::*;
@@ -970,10 +999,10 @@ mod tests {
         };
 
         assert_eq!(
-            auction_clearing_price(&event(Observation::Set(TradePrint::new(
+            auction_clearing_price(&event(Observation::Set(ObservedTrade::new(
                 Price::parse("100").unwrap(),
                 quantity,
-                TradePrintKind::Regular,
+                TradeObservationKind::Regular,
             ))))
             .unwrap(),
             Some(Price::parse("100").unwrap())
@@ -1073,6 +1102,236 @@ mod tests {
             output.emit_scheduled_order(request)?;
             Ok(())
         }
+    }
+
+    struct StabilityFeedbackObserver {
+        identity: StrategyIdentity,
+        declaration: StrategyDeclaration,
+        emitted: bool,
+    }
+
+    impl Strategy for StabilityFeedbackObserver {
+        fn identity(&self) -> &StrategyIdentity {
+            &self.identity
+        }
+
+        fn canonical_params_checksum(&self) -> CanonicalParamsChecksum {
+            CanonicalParamsChecksum::for_empty_params()
+        }
+
+        fn declaration(&self) -> StrategyDeclaration {
+            self.declaration.clone()
+        }
+
+        fn on_event(
+            &mut self,
+            context: StrategyEventContext<'_>,
+            output: &mut StrategyOutputSink,
+        ) -> Result<(), StrategyExecutionError> {
+            if self.emitted {
+                return Ok(());
+            }
+            self.emitted = true;
+            let activation = MatchTime::from_unix_microseconds(
+                context.decision_time().as_unix_microseconds() + 150_000,
+            );
+            let expiry = MatchTime::from_unix_microseconds(
+                context.decision_time().as_unix_microseconds() + 2_000_000,
+            );
+            output.emit_scheduled_order(
+                ScheduledOrderRequest::new(
+                    ClientOrderId::new("stability-market").unwrap(),
+                    None,
+                    activation,
+                    Some(expiry),
+                    OrderIntent::new(
+                        context.event().instrument().clone(),
+                        OrderSide::Buy,
+                        Quantity::new(1, QuantityUnit::TradingUnit).unwrap(),
+                        OrderType::Market,
+                    ),
+                    ScheduledExecutionPolicy::VisibleDepthUntilExpiryV1,
+                )
+                .map_err(|error| StrategyExecutionError::new(error.to_string()))?,
+            )?;
+            Ok(())
+        }
+
+        fn on_feedback(
+            &mut self,
+            context: StrategyFeedbackContext<'_>,
+            output: &mut StrategyOutputSink,
+        ) -> Result<(), StrategyExecutionError> {
+            if context.feedback().iter().any(|feedback| {
+                matches!(
+                    feedback,
+                    OrderFeedback::ExecutionFailed {
+                        reason: ExecutionFailureReason::NewOrderEntryBlocked,
+                        ..
+                    }
+                )
+            }) {
+                output.emit_indicator("stability_block_feedback", IndicatorValue::Bool(true))?;
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn status_only_stability_pause_blocks_later_activation_in_runner() {
+        let instrument =
+            market_types::InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap());
+        let date = TradingDate::parse("2026-07-27").unwrap();
+        let event_time = MatchTime::parse("2026-07-27T09:00:00+08:00").unwrap();
+        let pause_time =
+            MatchTime::from_unix_microseconds(event_time.as_unix_microseconds() + 100_000);
+        let quantity = Quantity::new(2, QuantityUnit::TradingUnit).unwrap();
+        let book = CompleteBookSnapshot::new(
+            BookSide::new(
+                BookSideKind::Bid,
+                vec![BookLevel::new(Price::parse("99").unwrap(), quantity)],
+            )
+            .unwrap(),
+            BookSide::new(
+                BookSideKind::Ask,
+                vec![BookLevel::new(Price::parse("101").unwrap(), quantity)],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let quote_event = |match_time, limit_flags| {
+            DomainEvent::new(
+                instrument.clone(),
+                date,
+                SourceFormatId::new("STOCK_REALTIME").unwrap(),
+                match_time,
+                None,
+                EventPayload::QuoteSnapshot(
+                    QuoteSnapshot::new(
+                        book.clone(),
+                        Observation::NoObservation,
+                        Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
+                        MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0x10, limit_flags)),
+                    )
+                    .unwrap(),
+                ),
+            )
+        };
+        let pause_event = DomainEvent::new(
+            instrument.clone(),
+            date,
+            SourceFormatId::new("STOCK_REALTIME").unwrap(),
+            pause_time,
+            None,
+            EventPayload::MarketStatus(MarketStatusObservation::new(
+                Observation::NoObservation,
+                MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0x10, 0x01)),
+            )),
+        );
+        let core = ReplayCore::new_multi(
+            vec![MarketState::new(instrument.clone(), date)],
+            vec![(instrument.clone(), MarketStateReducer::twse_regular())],
+            vec![(
+                instrument.clone(),
+                ReducerContext::new(
+                    date,
+                    SessionSegmentId::new("regular").unwrap(),
+                    SegmentBoundaryPolicy::Carry,
+                    1,
+                ),
+            )],
+        )
+        .unwrap();
+        let plan = ReplayPlan::new_multi(
+            [11; 32],
+            vec![ReplayStreamBinding::new(
+                StableStreamDescriptorId::from_bytes([12; 32]),
+                instrument.clone(),
+                date,
+                [13; 32],
+                [14; 32],
+            )],
+        )
+        .unwrap();
+        let strategy = StabilityFeedbackObserver {
+            identity: StrategyIdentity::new(
+                "stability-feedback-observer",
+                "1",
+                BinaryIdentity::new("test", [15; 32]).unwrap(),
+            )
+            .unwrap(),
+            declaration: StrategyDeclaration::new([instrument.clone()], [SessionKind::Regular])
+                .unwrap(),
+            emitted: false,
+        };
+        let segment = SessionSegment::new(
+            SessionSegmentId::new("regular").unwrap(),
+            SessionKind::Regular,
+            date,
+            event_time,
+            MatchTime::parse("2026-07-27T13:30:00+08:00").unwrap(),
+        )
+        .unwrap();
+        let simulator = ScheduledDepthSimulator::new([ScheduledInstrumentConfig::new(
+            instrument.clone(),
+            QuantityUnit::TradingUnit,
+            ScheduledDepthModel::new(5, 1_000, Decimal::ZERO).unwrap(),
+        )])
+        .unwrap();
+        let zero_charge = ChargeModel {
+            basis: ChargeBasis::NotionalRate,
+            rate: Decimal::ZERO,
+            sides: ChargeSides::Both,
+            minimum: Decimal::ZERO,
+            precision: 0,
+            rounding: RoundingPolicy::Down,
+        };
+        let ledger = MultiLedger::new(
+            Decimal::parse("1000000").unwrap(),
+            [InstrumentLedgerConfig::new(
+                instrument.clone(),
+                QuantityUnit::TradingUnit,
+                AccountingModel::EquityV1,
+                InstrumentEconomics {
+                    units_per_trading_unit: 1,
+                    multiplier: Decimal::parse("1").unwrap(),
+                    provenance: "test".into(),
+                },
+                zero_charge,
+                zero_charge,
+            )],
+        )
+        .unwrap();
+
+        let completed = run_scheduled_multi_backtest(
+            core,
+            strategy,
+            &plan,
+            &mut Factory(vec![quote_event(event_time, 0), pause_event]),
+            &MultiSessionSchedule::new([(instrument, vec![segment])]).unwrap(),
+            0,
+            simulator,
+            ledger,
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(completed.simulator.orders().len(), 1);
+        assert_eq!(
+            completed.simulator.orders()[0].status(),
+            ScheduledOrderStatus::Failed(ExecutionFailureReason::NewOrderEntryBlocked)
+        );
+        assert!(completed.simulator.fills().is_empty());
+        assert!(completed.strategy_output.records().iter().any(|record| {
+            matches!(
+                record,
+                StrategyOutputRecord::ControlIndicator {
+                    indicator_name,
+                    value: IndicatorValue::Bool(true),
+                    ..
+                } if indicator_name.as_ref() == "stability_block_feedback"
+            )
+        }));
     }
 
     #[test]
@@ -1392,21 +1651,37 @@ mod tests {
                 .unwrap(),
             )
             .unwrap();
+            let annotations = TpexQuoteAnnotations::new(status, 0);
+            let payload = if annotations.status().trial() {
+                EventPayload::IndicativeAuction(
+                    IndicativeAuction::new(
+                        IndicativeAuctionKind::Opening,
+                        Observation::Set(Price::parse("100").unwrap()),
+                        Observation::Set(quantity),
+                        Observation::Set(book),
+                        Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
+                        MarketAnnotations::TpexQuote(annotations),
+                    )
+                    .unwrap(),
+                )
+            } else {
+                EventPayload::QuoteSnapshot(
+                    QuoteSnapshot::new(
+                        book,
+                        trade,
+                        Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
+                        MarketAnnotations::TpexQuote(annotations),
+                    )
+                    .unwrap(),
+                )
+            };
             DomainEvent::new(
                 instrument.clone(),
                 date,
                 SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
                 at,
                 None,
-                EventPayload::QuoteSnapshot(
-                    QuoteSnapshot::new(
-                        book,
-                        trade,
-                        Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
-                        MarketAnnotations::TpexQuote(TpexQuoteAnnotations::new(status, 0)),
-                    )
-                    .unwrap(),
-                ),
+                payload,
             )
         };
         let events = vec![
@@ -1414,10 +1689,10 @@ mod tests {
             make_event(
                 match_time,
                 0x08,
-                Observation::Set(TradePrint::new(
+                Observation::Set(ObservedTrade::new(
                     Price::parse("100").unwrap(),
                     quantity,
-                    TradePrintKind::Regular,
+                    TradeObservationKind::Regular,
                 )),
             ),
         ];

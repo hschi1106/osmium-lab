@@ -2,6 +2,45 @@ use std::{error::Error, fmt, str::FromStr};
 
 const MICROS_PER_SECOND: i64 = 1_000_000;
 const SECONDS_PER_DAY: i64 = 86_400;
+const MAX_UTC_OFFSET_MINUTES: i32 = 23 * 60 + 59;
+const MIN_SUPPORTED_UNIX_MICROSECONDS: i64 = -62_167_219_200_000_000;
+const MAX_SUPPORTED_UNIX_MICROSECONDS: i64 = 253_402_300_799_999_999;
+
+/// A validated ISO-8601 UTC offset represented in whole minutes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct UtcOffsetMinutes(i16);
+
+impl UtcOffsetMinutes {
+    pub const UTC: Self = Self(0);
+
+    /// Constructs an offset in the ISO-8601 `-23:59..=+23:59` range.
+    pub const fn new(minutes: i32) -> Result<Self, UtcOffsetMinutesError> {
+        if minutes < -MAX_UTC_OFFSET_MINUTES || minutes > MAX_UTC_OFFSET_MINUTES {
+            return Err(UtcOffsetMinutesError::OutOfRange);
+        }
+        Ok(Self(minutes as i16))
+    }
+
+    #[must_use]
+    pub const fn as_minutes(self) -> i16 {
+        self.0
+    }
+}
+
+/// Error returned when a UTC offset cannot be represented by ISO-8601.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UtcOffsetMinutesError {
+    OutOfRange,
+}
+
+impl fmt::Display for UtcOffsetMinutesError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("UTC offset must be between -23:59 and +23:59")
+    }
+}
+
+impl Error for UtcOffsetMinutesError {}
 
 /// The sole replay-time value, represented as Unix microseconds in UTC.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -21,24 +60,36 @@ impl MatchTime {
         self.0
     }
 
+    pub(crate) const fn is_utc_iso8601_representable(self) -> bool {
+        self.0 >= MIN_SUPPORTED_UNIX_MICROSECONDS && self.0 <= MAX_SUPPORTED_UNIX_MICROSECONDS
+    }
+
     /// Formats this UTC instant as an offset-aware ISO-8601 timestamp.
-    pub fn to_iso8601(self, offset_minutes: i32) -> String {
-        let local_microseconds = self.0 + i64::from(offset_minutes) * 60 * MICROS_PER_SECOND;
+    pub fn to_iso8601(self, offset: UtcOffsetMinutes) -> Result<String, MatchTimeFormatError> {
+        let offset_minutes = i32::from(offset.as_minutes());
+        let offset_microseconds = i64::from(offset_minutes) * 60 * MICROS_PER_SECOND;
+        let local_microseconds = self
+            .0
+            .checked_add(offset_microseconds)
+            .ok_or(MatchTimeFormatError::OutOfRange)?;
         let local_seconds = local_microseconds.div_euclid(MICROS_PER_SECOND);
         let microseconds = local_microseconds.rem_euclid(MICROS_PER_SECOND);
         let days = local_seconds.div_euclid(SECONDS_PER_DAY);
         let seconds = local_seconds.rem_euclid(SECONDS_PER_DAY);
         let (year, month, day) = civil_from_days(days);
+        if !(0..=9999).contains(&year) {
+            return Err(MatchTimeFormatError::OutOfRange);
+        }
         let hour = seconds / 3_600;
         let minute = (seconds % 3_600) / 60;
         let second = seconds % 60;
         let sign = if offset_minutes < 0 { '-' } else { '+' };
         let absolute_offset = offset_minutes.unsigned_abs();
-        format!(
+        Ok(format!(
             "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{microseconds:06}{sign}{:02}:{:02}",
             absolute_offset / 60,
             absolute_offset % 60,
-        )
+        ))
     }
 
     /// Parses `YYYY-MM-DDTHH:MM:SS[.fraction](Z|±HH:MM)` without rounding.
@@ -90,6 +141,20 @@ impl fmt::Display for MatchTimeError {
 }
 
 impl Error for MatchTimeError {}
+
+/// Error returned when a [`MatchTime`] cannot be rendered as supported ISO-8601 text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchTimeFormatError {
+    OutOfRange,
+}
+
+impl fmt::Display for MatchTimeFormatError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("match_time is outside the supported four-digit ISO-8601 range")
+    }
+}
+
+impl Error for MatchTimeFormatError {}
 
 fn parse_match_time(input: &str) -> Result<MatchTime, MatchTimeError> {
     let bytes = input.as_bytes();
@@ -260,25 +325,4 @@ fn days_from_civil(year: u32, month: u32, day: u32) -> i64 {
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
 
     era * 146_097 + day_of_era - 719_468
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn iso8601_format_round_trips_with_positive_offset() {
-        let value = MatchTime::parse("2026-07-17T14:55:00.123456+08:00").unwrap();
-        let formatted = value.to_iso8601(480);
-        assert_eq!(formatted, "2026-07-17T14:55:00.123456+08:00");
-        assert_eq!(MatchTime::parse(&formatted).unwrap(), value);
-    }
-
-    #[test]
-    fn iso8601_format_handles_cross_midnight_negative_offset() {
-        let value = MatchTime::parse("2026-07-01T00:00:00Z").unwrap();
-        let formatted = value.to_iso8601(-300);
-        assert_eq!(formatted, "2026-06-30T19:00:00.000000-05:00");
-        assert_eq!(MatchTime::parse(&formatted).unwrap(), value);
-    }
 }

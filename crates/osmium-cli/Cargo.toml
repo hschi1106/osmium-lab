@@ -23,9 +23,8 @@ run-planner = { path = "../run-planner" }
 ratatui = "0.29"
 serde_json = "1"
 strategy-api = { path = "../strategy-api" }
-taifex-normalizer = { path = "../normalizer/taifex" }
-tpex-normalizer = { path = "../normalizer/tpex" }
-twse-normalizer = { path = "../normalizer/twse" }
+[dev-dependencies]
+tempfile = "3"
 
 [lints]
 workspace = true

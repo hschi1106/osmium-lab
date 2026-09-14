@@ -4,7 +4,9 @@ use std::{
     fmt,
 };
 
-use market_types::{Decimal, InstrumentId, MarketId, QuantityUnit, TradingDate};
+use market_types::{
+    Decimal, InstrumentId, MarketId, Price, PricePolicy, QuantityUnit, TradingDate,
+};
 use strategy_api::{OrderId, OrderSide};
 
 use crate::FillRecord;
@@ -33,6 +35,7 @@ pub struct InstrumentLedgerConfig {
     instrument: InstrumentId,
     quantity_unit: QuantityUnit,
     model: AccountingModel,
+    price_policy: PricePolicy,
     economics: InstrumentEconomics,
     fee: ChargeModel,
     tax: ChargeModel,
@@ -200,6 +203,7 @@ impl InstrumentLedgerConfig {
             instrument,
             quantity_unit,
             model,
+            price_policy: PricePolicy::PositiveOnly,
             economics,
             fee,
             tax,
@@ -211,6 +215,12 @@ impl InstrumentLedgerConfig {
     pub fn with_day_trade_tax(mut self, model: DayTradeTaxModel) -> Self {
         self.tax = model.ordinary;
         self.day_trade_tax = Some(model);
+        self
+    }
+
+    #[must_use]
+    pub fn with_price_policy(mut self, policy: PricePolicy) -> Self {
+        self.price_policy = policy;
         self
     }
 
@@ -227,6 +237,11 @@ impl InstrumentLedgerConfig {
     #[must_use]
     pub const fn model(&self) -> AccountingModel {
         self.model
+    }
+
+    #[must_use]
+    pub const fn price_policy(&self) -> PricePolicy {
+        self.price_policy
     }
 
     #[must_use]
@@ -630,7 +645,7 @@ fn trading_date(
         .ok_or(AccountingError::InvalidTradingDate)?;
     let epoch_days = i32::try_from(local.div_euclid(MICROS_PER_DAY))
         .map_err(|_| AccountingError::InvalidTradingDate)?;
-    Ok(TradingDate::from_epoch_days(epoch_days))
+    TradingDate::from_epoch_days(epoch_days).map_err(|_| AccountingError::InvalidTradingDate)
 }
 
 fn split_sell_tax(
@@ -763,7 +778,10 @@ fn charge(
         return Ok(Decimal::ZERO);
     }
     let mut left = match model.basis {
-        ChargeBasis::NotionalRate => notional.atoms(),
+        ChargeBasis::NotionalRate => notional
+            .atoms()
+            .checked_abs()
+            .ok_or(AccountingError::Overflow)?,
         ChargeBasis::FixedPerUnit => i128::from(quantity)
             .checked_mul(Decimal::SCALE_FACTOR)
             .ok_or(AccountingError::Overflow)?,
@@ -1027,6 +1045,7 @@ impl MultiPerformanceSummary {
 struct InstrumentLedger {
     quantity_unit: QuantityUnit,
     model: AccountingModel,
+    price_policy: PricePolicy,
     ledger: Ledger,
 }
 
@@ -1137,6 +1156,7 @@ impl MultiLedger {
             let entry = InstrumentLedger {
                 quantity_unit: config.quantity_unit(),
                 model: config.model(),
+                price_policy: config.price_policy(),
                 ledger: Ledger::new_with_model(
                     Decimal::ZERO,
                     config.economics().clone(),
@@ -1202,6 +1222,9 @@ impl MultiLedger {
                 expected: entry.quantity_unit,
                 actual: fill.quantity().unit(),
             });
+        }
+        if !entry.price_policy.accepts(fill.price()) {
+            return Err(AccountingError::InvalidPriceForInstrument);
         }
         let mut next = entry.ledger.clone();
         next.apply_fill(fill)?;
@@ -1335,6 +1358,9 @@ impl MultiLedger {
             .get(instrument)
             .ok_or_else(|| AccountingError::UnknownInstrument(instrument.clone()))?;
         let position = entry.ledger.position();
+        if !entry.price_policy.accepts(Price::new(mark)) {
+            return Err(AccountingError::InvalidPriceForInstrument);
+        }
         if position == 0 {
             return Ok(Decimal::ZERO);
         }
@@ -1377,6 +1403,7 @@ fn model_matches_market(instrument: &InstrumentId, model: AccountingModel) -> bo
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AccountingError {
     InvalidModel,
+    InvalidPriceForInstrument,
     Overflow,
     PrecisionLoss,
     MissingCostBasis,
@@ -1844,6 +1871,116 @@ mod tests {
         assert_eq!(
             ledger.performance(None).unwrap().unrealized_pnl,
             Some(Decimal::ZERO)
+        );
+        ledger.reconcile().unwrap();
+    }
+
+    #[test]
+    fn notional_rate_charges_use_absolute_signed_spread_notional() {
+        let economics = InstrumentEconomics {
+            units_per_trading_unit: 1,
+            multiplier: Decimal::parse("1").unwrap(),
+            provenance: "calendar spread fixture".into(),
+        };
+        let fee = ChargeModel {
+            basis: ChargeBasis::NotionalRate,
+            rate: Decimal::parse("0.1").unwrap(),
+            sides: ChargeSides::Both,
+            minimum: Decimal::ZERO,
+            precision: 2,
+            rounding: RoundingPolicy::Down,
+        };
+        let amount = assess_fill_charge(
+            Price::parse("-100").unwrap(),
+            Quantity::new(1, QuantityUnit::Contract).unwrap(),
+            OrderSide::Buy,
+            &economics,
+            fee,
+        )
+        .unwrap();
+
+        assert_eq!(amount, Decimal::parse("10").unwrap());
+    }
+
+    #[test]
+    fn multi_ledger_accounts_signed_and_zero_spread_prices_but_rejects_negative_equity() {
+        let stock = InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap());
+        let spread = InstrumentId::new(MarketId::Taifex, Symbol::new("TXFH6/TXFM6").unwrap());
+        let zero = model(ChargeSides::Both);
+        let mut ledger = MultiLedger::new(
+            "10000".parse().unwrap(),
+            [
+                InstrumentLedgerConfig::new(
+                    stock.clone(),
+                    QuantityUnit::TradingUnit,
+                    AccountingModel::EquityV1,
+                    InstrumentEconomics {
+                        units_per_trading_unit: 1000,
+                        multiplier: Decimal::parse("1").unwrap(),
+                        provenance: "TWSE equity fixture".into(),
+                    },
+                    zero,
+                    zero,
+                ),
+                InstrumentLedgerConfig::new(
+                    spread.clone(),
+                    QuantityUnit::Contract,
+                    AccountingModel::FuturesV1,
+                    InstrumentEconomics {
+                        units_per_trading_unit: 1,
+                        multiplier: Decimal::parse("200").unwrap(),
+                        provenance: "TAIFEX calendar spread fixture".into(),
+                    },
+                    zero,
+                    zero,
+                )
+                .with_price_policy(PricePolicy::Signed),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            ledger.apply_fill(
+                &stock,
+                fill_in(OrderSide::Buy, "-10", 1, QuantityUnit::TradingUnit),
+            ),
+            Err(AccountingError::InvalidPriceForInstrument)
+        );
+        ledger
+            .apply_fill(
+                &spread,
+                fill_in(OrderSide::Buy, "-10", 1, QuantityUnit::Contract),
+            )
+            .unwrap();
+        assert_eq!(
+            ledger
+                .mark_to_market_adjustment(&spread, Decimal::parse("-8").unwrap())
+                .unwrap(),
+            Decimal::parse("400").unwrap()
+        );
+        ledger
+            .apply_fill(
+                &spread,
+                fill_in(OrderSide::Sell, "-8", 1, QuantityUnit::Contract),
+            )
+            .unwrap();
+
+        // Zero is a valid spread price, not a missing-value sentinel.
+        ledger
+            .apply_fill(
+                &spread,
+                fill_in(OrderSide::Buy, "0", 1, QuantityUnit::Contract),
+            )
+            .unwrap();
+        let marks = BTreeMap::from([
+            (stock, None),
+            (spread.clone(), Some(Decimal::parse("-2").unwrap())),
+        ]);
+        let performance = ledger.performance(&marks).unwrap();
+        assert_eq!(performance.realized_pnl(), Decimal::parse("400").unwrap());
+        assert_eq!(
+            performance.unrealized_pnl(),
+            Decimal::parse("-400").unwrap()
         );
         ledger.reconcile().unwrap();
     }

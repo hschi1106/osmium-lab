@@ -55,4 +55,4 @@ pub use strategy::{
 };
 pub use timer::{StrategyTimerContext, StrategyTimerError, StrategyTimerId, StrategyTimerRequest};
 
-pub const STRATEGY_API_VERSION: u16 = 2;
+pub const STRATEGY_API_VERSION: u16 = 4;

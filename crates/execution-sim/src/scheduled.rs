@@ -1,8 +1,8 @@
 use std::{collections::BTreeMap, error::Error, fmt};
 
 use market_types::{
-    BOOK_DEPTH, CompleteBookSnapshot, Decimal, InstrumentId, MatchTime, Price, Quantity,
-    QuantityUnit,
+    BOOK_DEPTH, CompleteBookSnapshot, Decimal, InstrumentId, MatchTime, Price, PricePolicy,
+    Quantity, QuantityUnit,
 };
 use strategy_api::{
     CancellationReason, ClientOrderId, ExecutionFailureReason, ExecutionFillFeedback, FillId,
@@ -62,6 +62,7 @@ pub struct ScheduledInstrumentConfig {
     instrument: InstrumentId,
     quantity_unit: QuantityUnit,
     model: ScheduledDepthModel,
+    price_policy: PricePolicy,
 }
 
 impl ScheduledInstrumentConfig {
@@ -75,7 +76,14 @@ impl ScheduledInstrumentConfig {
             instrument,
             quantity_unit,
             model,
+            price_policy: PricePolicy::PositiveOnly,
         }
+    }
+
+    #[must_use]
+    pub const fn with_price_policy(mut self, price_policy: PricePolicy) -> Self {
+        self.price_policy = price_policy;
+        self
     }
 }
 
@@ -87,6 +95,41 @@ pub struct VisibleBookEvidence {
     visible_at: MatchTime,
     matching: MatchingState,
     new_order_entry: NewOrderEntry,
+}
+
+/// The latest market-observed execution eligibility visible to the strategy.
+///
+/// This is intentionally independent from [`VisibleBookEvidence`]: a status-only
+/// or indicative observation can disable matching without replacing or refreshing
+/// the last firm book.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VisibleTradingStateEvidence {
+    instrument: InstrumentId,
+    match_time: MatchTime,
+    visible_at: MatchTime,
+    matching: MatchingState,
+    new_order_entry: NewOrderEntry,
+}
+
+impl VisibleTradingStateEvidence {
+    pub fn new(
+        instrument: InstrumentId,
+        match_time: MatchTime,
+        visible_at: MatchTime,
+        matching: MatchingState,
+        new_order_entry: NewOrderEntry,
+    ) -> Result<Self, ScheduledSimulationError> {
+        if visible_at < match_time {
+            return Err(ScheduledSimulationError::VisibilityBeforeMatchTime);
+        }
+        Ok(Self {
+            instrument,
+            match_time,
+            visible_at,
+            matching,
+            new_order_entry,
+        })
+    }
 }
 
 impl VisibleBookEvidence {
@@ -278,8 +321,9 @@ struct VisibleBookState {
 
 #[derive(Debug)]
 pub struct ScheduledDepthSimulator {
-    configs: BTreeMap<InstrumentId, (QuantityUnit, ScheduledDepthModel)>,
+    configs: BTreeMap<InstrumentId, (QuantityUnit, ScheduledDepthModel, PricePolicy)>,
     books: BTreeMap<InstrumentId, VisibleBookState>,
+    trading_states: BTreeMap<InstrumentId, VisibleTradingStateEvidence>,
     orders: Vec<ScheduledOrder>,
     client_orders: BTreeMap<ClientOrderId, OrderId>,
     fills: Vec<FillRecord>,
@@ -295,7 +339,10 @@ impl ScheduledDepthSimulator {
         for config in configs {
             let instrument = config.instrument;
             if indexed
-                .insert(instrument.clone(), (config.quantity_unit, config.model))
+                .insert(
+                    instrument.clone(),
+                    (config.quantity_unit, config.model, config.price_policy),
+                )
                 .is_some()
             {
                 return Err(ScheduledSimulationError::DuplicateInstrument(instrument));
@@ -307,6 +354,7 @@ impl ScheduledDepthSimulator {
         Ok(Self {
             configs: indexed,
             books: BTreeMap::new(),
+            trading_states: BTreeMap::new(),
             orders: Vec::new(),
             client_orders: BTreeMap::new(),
             fills: Vec::new(),
@@ -319,7 +367,7 @@ impl ScheduledDepthSimulator {
         &mut self,
         evidence: VisibleBookEvidence,
     ) -> Result<(), ScheduledSimulationError> {
-        let Some((quantity_unit, _)) = self.configs.get(&evidence.instrument) else {
+        let Some((quantity_unit, _, price_policy)) = self.configs.get(&evidence.instrument) else {
             return Err(ScheduledSimulationError::InstrumentOutsideUniverse(
                 evidence.instrument,
             ));
@@ -332,6 +380,15 @@ impl ScheduledDepthSimulator {
                 actual,
             });
         }
+        if evidence
+            .book
+            .bids()
+            .levels()
+            .chain(evidence.book.asks().levels())
+            .any(|level| !price_policy.accepts(level.price()))
+        {
+            return Err(ScheduledSimulationError::PriceNotAllowedByInstrumentProfile);
+        }
         if self
             .books
             .get(&evidence.instrument)
@@ -342,6 +399,13 @@ impl ScheduledDepthSimulator {
         {
             return Err(ScheduledSimulationError::RegressingBookTime);
         }
+        self.publish_visible_trading_state(VisibleTradingStateEvidence {
+            instrument: evidence.instrument.clone(),
+            match_time: evidence.match_time,
+            visible_at: evidence.visible_at,
+            matching: evidence.matching,
+            new_order_entry: evidence.new_order_entry,
+        })?;
         self.books.insert(
             evidence.instrument.clone(),
             VisibleBookState {
@@ -350,6 +414,30 @@ impl ScheduledDepthSimulator {
                 consumed_asks: [0; BOOK_DEPTH],
             },
         );
+        Ok(())
+    }
+
+    pub fn publish_visible_trading_state(
+        &mut self,
+        evidence: VisibleTradingStateEvidence,
+    ) -> Result<(), ScheduledSimulationError> {
+        if !self.configs.contains_key(&evidence.instrument) {
+            return Err(ScheduledSimulationError::InstrumentOutsideUniverse(
+                evidence.instrument,
+            ));
+        }
+        if self
+            .trading_states
+            .get(&evidence.instrument)
+            .is_some_and(|previous| {
+                evidence.visible_at < previous.visible_at
+                    || evidence.match_time < previous.match_time
+            })
+        {
+            return Err(ScheduledSimulationError::RegressingTradingStateTime);
+        }
+        self.trading_states
+            .insert(evidence.instrument.clone(), evidence);
         Ok(())
     }
 
@@ -363,7 +451,9 @@ impl ScheduledDepthSimulator {
         if request.activate_at() < context.decision_time {
             return Err(ScheduledSimulationError::ActivationBeforeDecision);
         }
-        let Some((quantity_unit, _)) = self.configs.get(request.intent().instrument()) else {
+        let Some((quantity_unit, _, price_policy)) =
+            self.configs.get(request.intent().instrument())
+        else {
             return Err(ScheduledSimulationError::InstrumentOutsideUniverse(
                 request.intent().instrument().clone(),
             ));
@@ -373,6 +463,10 @@ impl ScheduledDepthSimulator {
                 expected: *quantity_unit,
                 actual: request.intent().quantity().unit(),
             });
+        }
+        if matches!(request.intent().order_type(), OrderType::Limit { limit_price } if !price_policy.accepts(limit_price))
+        {
+            return Err(ScheduledSimulationError::PriceNotAllowedByInstrumentProfile);
         }
 
         let replaced = if let Some(previous_id) = self.client_orders.get(request.client_order_id())
@@ -488,6 +582,19 @@ impl ScheduledDepthSimulator {
             return Err(ScheduledSimulationError::ActivationOutOfOrder);
         }
 
+        let request = self.orders[order_index].request.clone();
+        let instrument = request.intent().instrument().clone();
+        if self.trading_states.get(&instrument).is_some_and(|state| {
+            state.visible_at <= at
+                && !entry_allowed(state.new_order_entry, request.intent().order_type())
+        }) {
+            return Ok(self.fail_activation(
+                order_index,
+                ExecutionFailureReason::NewOrderEntryBlocked,
+                None,
+            ));
+        }
+
         if matches!(
             self.orders[order_index].request.execution_policy(),
             ScheduledExecutionPolicy::VisibleDepthUntilExpiryV1
@@ -508,9 +615,7 @@ impl ScheduledDepthSimulator {
             return self.settle_at_activation(order_index, control_sequence, at);
         }
 
-        let request = self.orders[order_index].request.clone();
-        let instrument = request.intent().instrument().clone();
-        let (_, model) = self
+        let (_, model, price_policy) = self
             .configs
             .get(&instrument)
             .copied()
@@ -543,17 +648,26 @@ impl ScheduledDepthSimulator {
                 None,
             ));
         }
-        if !matches!(book_state.evidence.matching, MatchingState::Enabled(_)) {
+        if !self
+            .trading_states
+            .get(&instrument)
+            .filter(|state| state.visible_at <= at)
+            .is_some_and(|state| matches!(state.matching, MatchingState::Enabled(_)))
+        {
             return Ok(self.fail_activation(
                 order_index,
                 ExecutionFailureReason::MatchingDisabled,
                 None,
             ));
         }
-        if !entry_allowed(
-            book_state.evidence.new_order_entry,
-            request.intent().order_type(),
-        ) {
+        if !self
+            .trading_states
+            .get(&instrument)
+            .filter(|state| state.visible_at <= at)
+            .is_some_and(|state| {
+                entry_allowed(state.new_order_entry, request.intent().order_type())
+            })
+        {
             return Ok(self.fail_activation(
                 order_index,
                 ExecutionFailureReason::NewOrderEntryBlocked,
@@ -574,6 +688,13 @@ impl ScheduledDepthSimulator {
             model.adverse_price_delta,
             consumed,
         )?;
+        if sweep
+            .fills()
+            .iter()
+            .any(|fill| !price_policy.accepts(fill.price()))
+        {
+            return Err(ScheduledSimulationError::PriceNotAllowedByInstrumentProfile);
+        }
         let mut cumulative = 0_u64;
         let mut execution_fills = Vec::with_capacity(sweep.fills().len());
         for level_fill in sweep.fills() {
@@ -675,14 +796,49 @@ impl ScheduledDepthSimulator {
         Ok(results)
     }
 
+    pub fn cancel_active_market_orders_for_volatility_interruption(
+        &mut self,
+        instrument: &InstrumentId,
+    ) -> Result<Vec<OrderFeedback>, ScheduledSimulationError> {
+        if !self.configs.contains_key(instrument) {
+            return Err(ScheduledSimulationError::InstrumentOutsideUniverse(
+                instrument.clone(),
+            ));
+        }
+        Ok(self
+            .orders
+            .iter_mut()
+            .filter(|order| {
+                order.request.intent().instrument() == instrument
+                    && matches!(order.request.intent().order_type(), OrderType::Market)
+                    && matches!(
+                        order.status,
+                        ScheduledOrderStatus::Active
+                            | ScheduledOrderStatus::PartiallyFilled
+                            | ScheduledOrderStatus::MatchAttempted
+                    )
+            })
+            .map(|order| {
+                order.status = ScheduledOrderStatus::Cancelled;
+                OrderFeedback::Cancelled {
+                    order_id: order.id,
+                    reason: CancellationReason::VolatilityInterruption,
+                }
+            })
+            .collect())
+    }
+
     pub fn evaluate_auction_match(
         &mut self,
         evidence: &AuctionMatchEvidence,
     ) -> Result<Vec<ScheduledActivation>, ScheduledSimulationError> {
-        if !self.configs.contains_key(&evidence.instrument) {
+        let Some((_, _, price_policy)) = self.configs.get(&evidence.instrument) else {
             return Err(ScheduledSimulationError::InstrumentOutsideUniverse(
                 evidence.instrument.clone(),
             ));
+        };
+        if !price_policy.accepts(evidence.clearing_price) {
+            return Err(ScheduledSimulationError::PriceNotAllowedByInstrumentProfile);
         }
         let mut indices = self
             .orders
@@ -776,7 +932,7 @@ impl ScheduledDepthSimulator {
         let request = self.orders[order_index].request.clone();
         let order_id = self.orders[order_index].id;
         let instrument = request.intent().instrument().clone();
-        let (_, model) = self
+        let (_, model, price_policy) = self
             .configs
             .get(&instrument)
             .copied()
@@ -799,7 +955,11 @@ impl ScheduledDepthSimulator {
             .ok_or(ScheduledSimulationError::StalenessOverflow)?;
         if age < 0
             || age > max_stale_micros
-            || !matches!(book_state.evidence.matching, MatchingState::Enabled(_))
+            || !self
+                .trading_states
+                .get(&instrument)
+                .filter(|state| state.visible_at <= at)
+                .is_some_and(|state| matches!(state.matching, MatchingState::Enabled(_)))
         {
             return Ok(None);
         }
@@ -820,6 +980,13 @@ impl ScheduledDepthSimulator {
             model.adverse_price_delta,
             consumed,
         )?;
+        if sweep
+            .fills()
+            .iter()
+            .any(|fill| !price_policy.accepts(fill.price()))
+        {
+            return Err(ScheduledSimulationError::PriceNotAllowedByInstrumentProfile);
+        }
         let starting_filled = self.orders[order_index].filled_value;
         let mut cumulative = starting_filled;
         let mut execution_fills = Vec::with_capacity(sweep.fills().len());
@@ -1058,10 +1225,12 @@ pub enum ScheduledSimulationError {
     InvalidDepthLevels(usize),
     ZeroStalenessWindow,
     InvalidAdversePriceDelta,
+    PriceNotAllowedByInstrumentProfile,
     VisibilityBeforeMatchTime,
     InvalidAuctionMatchEvidence,
     InvalidSettlementOrderType,
     RegressingBookTime,
+    RegressingTradingStateTime,
     ActivationBeforeDecision,
     ActivationTimeMismatch,
     ActivationOutOfOrder,
@@ -1109,6 +1278,9 @@ impl fmt::Display for ScheduledSimulationError {
             Self::InvalidAdversePriceDelta => {
                 formatter.write_str("scheduled adverse price delta must be non-negative")
             }
+            Self::PriceNotAllowedByInstrumentProfile => {
+                formatter.write_str("price is not allowed by the instrument profile")
+            }
             Self::VisibilityBeforeMatchTime => {
                 formatter.write_str("book visibility time is earlier than match time")
             }
@@ -1118,6 +1290,9 @@ impl fmt::Display for ScheduledSimulationError {
             Self::InvalidSettlementOrderType => formatter
                 .write_str("settlement execution requires a limit order carrying its fixed price"),
             Self::RegressingBookTime => formatter.write_str("visible book time regressed"),
+            Self::RegressingTradingStateTime => {
+                formatter.write_str("visible trading state time regressed")
+            }
             Self::ActivationBeforeDecision => {
                 formatter.write_str("order activation is earlier than strategy decision")
             }
@@ -1203,6 +1378,14 @@ mod tests {
         .unwrap()
     }
 
+    fn negative_book() -> CompleteBookSnapshot {
+        CompleteBookSnapshot::new(
+            BookSide::new(BookSideKind::Bid, vec![level("-2", 2), level("-3", 3)]).unwrap(),
+            BookSide::new(BookSideKind::Ask, vec![level("-1", 1), level("0", 4)]).unwrap(),
+        )
+        .unwrap()
+    }
+
     fn simulator(depth_levels: usize, max_stale_ms: u64) -> ScheduledDepthSimulator {
         let model = ScheduledDepthModel::new(depth_levels, max_stale_ms, Decimal::ZERO).unwrap();
         ScheduledDepthSimulator::new([ScheduledInstrumentConfig::new(
@@ -1211,6 +1394,200 @@ mod tests {
             model,
         )])
         .unwrap()
+    }
+
+    #[test]
+    fn scheduled_depth_enforces_instrument_price_policy() {
+        let model = ScheduledDepthModel::new(5, 1_000, Decimal::ZERO).unwrap();
+        let time = MatchTime::from_unix_microseconds(1_000);
+        let evidence = |book| {
+            VisibleBookEvidence::new(
+                instrument(),
+                book,
+                time,
+                time,
+                MatchingState::Enabled(MatchingMethod::Continuous),
+                NewOrderEntry::Allowed,
+            )
+            .unwrap()
+        };
+
+        let mut positive_only = ScheduledDepthSimulator::new([ScheduledInstrumentConfig::new(
+            instrument(),
+            QuantityUnit::Contract,
+            model,
+        )])
+        .unwrap();
+        assert_eq!(
+            positive_only
+                .publish_visible_book(evidence(negative_book()))
+                .unwrap_err(),
+            ScheduledSimulationError::PriceNotAllowedByInstrumentProfile
+        );
+
+        let mut signed = ScheduledDepthSimulator::new([ScheduledInstrumentConfig::new(
+            instrument(),
+            QuantityUnit::Contract,
+            model,
+        )
+        .with_price_policy(PricePolicy::Signed)])
+        .unwrap();
+        signed
+            .publish_visible_book(evidence(negative_book()))
+            .unwrap();
+        assert_eq!(signed.books.len(), 1);
+
+        let negative_limit = ScheduledOrderRequest::new(
+            ClientOrderId::new("negative-limit").unwrap(),
+            None,
+            time,
+            None,
+            OrderIntent::new(
+                instrument(),
+                OrderSide::Buy,
+                quantity(1),
+                OrderType::Limit {
+                    limit_price: Price::parse("-1").unwrap(),
+                },
+            ),
+            ScheduledExecutionPolicy::VisibleDepthAtActivationV1,
+        )
+        .unwrap();
+        assert_eq!(
+            positive_only
+                .submit(
+                    "test-strategy",
+                    ScheduledSubmissionContext::new([7; 32], time),
+                    1,
+                    negative_limit,
+                )
+                .unwrap_err(),
+            ScheduledSimulationError::PriceNotAllowedByInstrumentProfile
+        );
+        assert_eq!(
+            positive_only
+                .evaluate_auction_match(&auction_evidence("-1", 1_000, 1))
+                .unwrap_err(),
+            ScheduledSimulationError::PriceNotAllowedByInstrumentProfile
+        );
+    }
+
+    #[test]
+    fn scheduled_depth_revalidates_slipped_fill_price_against_instrument_policy() {
+        let activation = MatchTime::from_unix_microseconds(2_000);
+        let config = |price_policy| {
+            ScheduledInstrumentConfig::new(
+                instrument(),
+                QuantityUnit::Contract,
+                ScheduledDepthModel::new(5, 10, Decimal::parse("100").unwrap()).unwrap(),
+            )
+            .with_price_policy(price_policy)
+        };
+        let sell_request = || {
+            ScheduledOrderRequest::new(
+                ClientOrderId::new("sell-at-zero").unwrap(),
+                None,
+                activation,
+                None,
+                OrderIntent::new(
+                    instrument(),
+                    OrderSide::Sell,
+                    quantity(1),
+                    OrderType::Market,
+                ),
+                ScheduledExecutionPolicy::VisibleDepthAtActivationV1,
+            )
+            .unwrap()
+        };
+
+        let mut positive_only =
+            ScheduledDepthSimulator::new([config(PricePolicy::PositiveOnly)]).unwrap();
+        publish(&mut positive_only, 1_000, 1_000);
+        let positive_order = submit(&mut positive_only, sell_request(), 1);
+        assert_eq!(
+            positive_only.activate(positive_order, 1, activation),
+            Err(ScheduledSimulationError::PriceNotAllowedByInstrumentProfile)
+        );
+        assert!(positive_only.fills().is_empty());
+        assert_eq!(
+            positive_only.orders()[0].status(),
+            ScheduledOrderStatus::Scheduled
+        );
+
+        let mut signed = ScheduledDepthSimulator::new([config(PricePolicy::Signed)]).unwrap();
+        publish(&mut signed, 1_000, 1_000);
+        let signed_order = submit(&mut signed, sell_request(), 1);
+        assert_eq!(
+            signed
+                .activate(signed_order, 1, activation)
+                .unwrap()
+                .status(),
+            ScheduledOrderStatus::Filled
+        );
+        assert_eq!(signed.fills()[0].price(), Price::parse("0").unwrap());
+    }
+
+    #[test]
+    fn invalid_later_slipped_level_leaves_activation_and_depth_unmodified() {
+        let activation = MatchTime::from_unix_microseconds(2_000);
+        let model = ScheduledDepthModel::new(5, 10, Decimal::parse("2").unwrap()).unwrap();
+        let mut simulator = ScheduledDepthSimulator::new([ScheduledInstrumentConfig::new(
+            instrument(),
+            QuantityUnit::Contract,
+            model,
+        )])
+        .unwrap();
+        let two_level_book = CompleteBookSnapshot::new(
+            BookSide::new(BookSideKind::Bid, vec![level("100", 1), level("1", 1)]).unwrap(),
+            BookSide::new(BookSideKind::Ask, vec![level("101", 2)]).unwrap(),
+        )
+        .unwrap();
+        simulator
+            .publish_visible_book(
+                VisibleBookEvidence::new(
+                    instrument(),
+                    two_level_book,
+                    MatchTime::from_unix_microseconds(1_000),
+                    MatchTime::from_unix_microseconds(1_000),
+                    MatchingState::Enabled(MatchingMethod::Continuous),
+                    NewOrderEntry::Allowed,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let order_id = submit(
+            &mut simulator,
+            ScheduledOrderRequest::new(
+                ClientOrderId::new("two-level-sell").unwrap(),
+                None,
+                activation,
+                None,
+                OrderIntent::new(
+                    instrument(),
+                    OrderSide::Sell,
+                    quantity(2),
+                    OrderType::Market,
+                ),
+                ScheduledExecutionPolicy::VisibleDepthAtActivationV1,
+            )
+            .unwrap(),
+            1,
+        );
+
+        assert_eq!(
+            simulator.activate(order_id, 1, activation),
+            Err(ScheduledSimulationError::PriceNotAllowedByInstrumentProfile)
+        );
+        assert!(simulator.fills().is_empty());
+        assert!(simulator.execution_fills().is_empty());
+        assert_eq!(
+            simulator.orders()[0].status(),
+            ScheduledOrderStatus::Scheduled
+        );
+        assert_eq!(
+            simulator.books[&instrument()].consumed_bids,
+            [0; BOOK_DEPTH]
+        );
     }
 
     fn request(
@@ -1325,6 +1702,152 @@ mod tests {
             )
             .unwrap()
             .order_id()
+    }
+
+    #[test]
+    fn status_only_stability_pause_cancels_active_market_rods_and_blocks_activation() {
+        let mut simulator = simulator(5, 1_000);
+        let initial = MatchTime::from_unix_microseconds(1_000);
+        simulator
+            .publish_visible_book(
+                VisibleBookEvidence::new(
+                    instrument(),
+                    book(),
+                    initial,
+                    initial,
+                    MatchingState::Enabled(MatchingMethod::Continuous),
+                    NewOrderEntry::Allowed,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let active_id = submit(
+            &mut simulator,
+            ScheduledOrderRequest::new(
+                ClientOrderId::new("active-market").unwrap(),
+                None,
+                MatchTime::from_unix_microseconds(1_100),
+                Some(MatchTime::from_unix_microseconds(3_000)),
+                OrderIntent::new(instrument(), OrderSide::Buy, quantity(1), OrderType::Market),
+                ScheduledExecutionPolicy::VisibleDepthUntilExpiryV1,
+            )
+            .unwrap(),
+            1,
+        );
+        assert_eq!(
+            simulator
+                .activate(active_id, 1, MatchTime::from_unix_microseconds(1_100))
+                .unwrap()
+                .status(),
+            ScheduledOrderStatus::Active
+        );
+        assert_eq!(
+            simulator
+                .cancel_active_market_orders_for_volatility_interruption(&instrument())
+                .unwrap(),
+            vec![OrderFeedback::Cancelled {
+                order_id: active_id,
+                reason: CancellationReason::VolatilityInterruption,
+            }]
+        );
+        assert_eq!(
+            simulator.orders()[0].status(),
+            ScheduledOrderStatus::Cancelled
+        );
+
+        let delayed_id = submit(
+            &mut simulator,
+            request(
+                "activation-during-pause",
+                1,
+                MatchTime::from_unix_microseconds(2_000),
+            ),
+            2,
+        );
+        let pause_time = MatchTime::from_unix_microseconds(1_500);
+        simulator
+            .publish_visible_trading_state(
+                VisibleTradingStateEvidence::new(
+                    instrument(),
+                    pause_time,
+                    pause_time,
+                    MatchingState::Indicative(
+                        strategy_api::IndicativeReason::VolatilityInterruptionDown,
+                    ),
+                    NewOrderEntry::Restricted(OrderRestrictionReason::IndicativeMarket),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            simulator.books[&instrument()].evidence.match_time,
+            initial,
+            "status-only observations must not refresh firm depth"
+        );
+        let activation = simulator
+            .activate(delayed_id, 2, MatchTime::from_unix_microseconds(2_000))
+            .unwrap();
+        assert_eq!(
+            activation.status(),
+            ScheduledOrderStatus::Failed(ExecutionFailureReason::NewOrderEntryBlocked)
+        );
+        assert!(matches!(
+            activation.feedback(),
+            OrderFeedback::ExecutionFailed {
+                reason: ExecutionFailureReason::NewOrderEntryBlocked,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn normal_status_reenables_unexpired_firm_depth_without_refreshing_it() {
+        let mut simulator = simulator(5, 1);
+        publish(&mut simulator, 1_000, 1_000);
+        let activation_time = MatchTime::from_unix_microseconds(1_500);
+        let order_id = submit(
+            &mut simulator,
+            request("resume-on-status", 1, activation_time),
+            1,
+        );
+        for (micros, matching, entry) in [
+            (
+                1_200,
+                MatchingState::Indicative(
+                    strategy_api::IndicativeReason::VolatilityInterruptionDown,
+                ),
+                NewOrderEntry::Restricted(OrderRestrictionReason::IndicativeMarket),
+            ),
+            (
+                1_300,
+                MatchingState::Enabled(MatchingMethod::Continuous),
+                NewOrderEntry::Allowed,
+            ),
+        ] {
+            simulator
+                .publish_visible_trading_state(
+                    VisibleTradingStateEvidence::new(
+                        instrument(),
+                        MatchTime::from_unix_microseconds(micros),
+                        MatchTime::from_unix_microseconds(micros),
+                        matching,
+                        entry,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+
+        let activation = simulator.activate(order_id, 1, activation_time).unwrap();
+
+        assert_eq!(activation.status(), ScheduledOrderStatus::Filled);
+        assert_eq!(simulator.fills().len(), 1);
+        assert_eq!(
+            simulator.books[&instrument()].evidence.match_time,
+            MatchTime::from_unix_microseconds(1_000),
+            "status observations must not refresh the depth staleness clock"
+        );
     }
 
     #[test]

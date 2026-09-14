@@ -10,8 +10,8 @@ use std::{
 use data_sync::{CacheReader, LocalCacheFactory};
 use market_state::MarketState;
 use market_types::{
-    DomainEvent, EventPayload, InstrumentId, MatchTime, Observation, Price, Quantity, TradeOrder,
-    TradePrint,
+    DomainEvent, EventPayload, InstrumentId, MatchTime, Observation, ObservedTrade, Price,
+    Quantity, TradeBatchOrdering,
 };
 use osmium_config::{RunConfig, plan};
 use replay_engine::{EventStream, OrderingKey, ReplayCore, ReplayError, ReplayStreamFactory};
@@ -420,12 +420,12 @@ impl MarketReplay {
                     self.replay_start,
                     event.match_time(),
                     batch.trades(),
-                    batch.trade_order() == TradeOrder::SourceOrdered,
+                    batch.trade_order() == TradeBatchOrdering::SourceSequencePreserved,
                 )?;
             }
             EventPayload::BookSnapshot(_)
-            | EventPayload::IndicativeOpeningAuction(_)
-            | EventPayload::IndicativeClosingAuction(_) => {}
+            | EventPayload::IndicativeAuction(_)
+            | EventPayload::MarketStatus(_) => {}
         }
         Ok(())
     }
@@ -435,7 +435,7 @@ fn record_trades(
     history: &mut ReplayHistory,
     replay_start: MatchTime,
     match_time: MatchTime,
-    trades: &[TradePrint],
+    trades: &[ObservedTrade],
     source_ordered: bool,
 ) -> Result<(), MarketReplayError> {
     if trades.is_empty() {
@@ -525,7 +525,10 @@ fn prepare_replay(
             exit_code: error.exit_code(),
         }
     })?;
-    let mut factory = LocalCacheFactory::new_partitioned(config.effective().data_root());
+    let mut factory = LocalCacheFactory::new_partitioned(
+        config.effective().data_root(),
+        config.effective().source(),
+    );
     let mut streams = Vec::with_capacity(replay_plan.bindings().len());
     for binding in replay_plan.bindings() {
         streams.push(
@@ -665,7 +668,7 @@ impl From<std::io::Error> for MarketReplayError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use market_types::{QuantityUnit, TradePrintKind};
+    use market_types::{QuantityUnit, TradeObservationKind};
 
     #[test]
     fn playback_speed_uses_the_fixed_rates_and_saturates() {
@@ -703,10 +706,10 @@ mod tests {
         let replay_start = MatchTime::parse("2026-07-20T08:40:00+08:00").unwrap();
         let mut history = ReplayHistory::default();
         let trade = |quantity| {
-            TradePrint::new(
+            ObservedTrade::new(
                 Price::parse("100").unwrap(),
                 Quantity::new(quantity, QuantityUnit::TradingUnit).unwrap(),
-                TradePrintKind::Regular,
+                TradeObservationKind::Regular,
             )
         };
 

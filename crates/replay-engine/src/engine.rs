@@ -107,6 +107,36 @@ pub struct EventOccurrence {
     instrument_state_version: u64,
 }
 
+/// Allocation-free read-only access to the replay core's instrument states.
+///
+/// The iterator follows the core's deterministic instrument ordering and only
+/// creates a lightweight `MarketStateView` as each item is visited.
+#[derive(Debug, Clone, Copy)]
+pub struct ReplayStateViews<'a> {
+    states: &'a BTreeMap<InstrumentId, MarketState>,
+}
+
+impl<'a> ReplayStateViews<'a> {
+    #[must_use]
+    pub fn len(self) -> usize {
+        self.states.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(self) -> bool {
+        self.len() == 0
+    }
+
+    #[must_use]
+    pub fn get(self, instrument: &InstrumentId) -> Option<market_state::MarketStateView<'a>> {
+        self.states.get(instrument).map(MarketState::view)
+    }
+
+    pub fn iter(self) -> impl Iterator<Item = market_state::MarketStateView<'a>> + 'a {
+        self.states.values().map(MarketState::view)
+    }
+}
+
 impl EventOccurrence {
     #[must_use]
     pub const fn run_event_ordinal(&self) -> u64 {
@@ -295,6 +325,14 @@ impl ReplayCore {
         self.states.values()
     }
 
+    /// Provides allocation-free read-only views of every instrument state.
+    #[must_use]
+    pub fn state_views(&self) -> ReplayStateViews<'_> {
+        ReplayStateViews {
+            states: &self.states,
+        }
+    }
+
     #[must_use]
     pub fn processed_prefix_checksum(&self) -> ReplayEventStreamChecksum {
         self.event_stream.checksum()
@@ -385,30 +423,32 @@ impl ReplayCore {
 
         let mut heads = (0..streams.len())
             .map(|_| None)
-            .collect::<Vec<Option<DomainEvent>>>();
+            .collect::<Vec<Option<(DomainEvent, Vec<u8>)>>>();
         let mut pending = BinaryHeap::with_capacity(streams.len());
         for (index, stream) in streams.iter_mut().enumerate() {
             let event = stream
                 .next_event()
                 .map_err(|error| ReplayError::Stream(error.to_string().into_boxed_str()))?;
             if let Some(event) = event {
-                let key = OrderingKey::for_event(&event).map_err(ReplayError::Ordering)?;
-                heads[index] = Some(event);
+                let (key, canonical) =
+                    OrderingKey::for_event_and_canonical(&event).map_err(ReplayError::Ordering)?;
+                heads[index] = Some((event, canonical));
                 pending.push(Reverse((key, index)));
             }
         }
-        while let Some(Reverse((_, selected_index))) = pending.pop() {
-            let event = heads[selected_index]
+        while let Some(Reverse((key, selected_index))) = pending.pop() {
+            let (event, canonical) = heads[selected_index]
                 .take()
                 .expect("selected merge head is present");
-            let commit = self.apply_ordered(&event)?;
+            let commit = self.apply_prepared_ordered(&event, key, canonical)?;
             callback(self, &event, &commit).map_err(ReplayError::Callback)?;
             let next = streams[selected_index]
                 .next_event()
                 .map_err(|error| ReplayError::Stream(error.to_string().into_boxed_str()))?;
             if let Some(next) = next {
-                let key = OrderingKey::for_event(&next).map_err(ReplayError::Ordering)?;
-                heads[selected_index] = Some(next);
+                let (key, canonical) =
+                    OrderingKey::for_event_and_canonical(&next).map_err(ReplayError::Ordering)?;
+                heads[selected_index] = Some((next, canonical));
                 pending.push(Reverse((key, selected_index)));
             }
         }
@@ -417,10 +457,20 @@ impl ReplayCore {
 
     /// Applies one already-ordered event. Any failure leaves this event uncommitted.
     pub fn apply_ordered(&mut self, event: &DomainEvent) -> Result<CoreCommit, ReplayError> {
-        let ordering_key = OrderingKey::for_event(event).map_err(ReplayError::Ordering)?;
+        let (ordering_key, canonical) =
+            OrderingKey::for_event_and_canonical(event).map_err(ReplayError::Ordering)?;
+        self.apply_prepared_ordered(event, ordering_key, canonical)
+    }
+
+    fn apply_prepared_ordered(
+        &mut self,
+        event: &DomainEvent,
+        ordering_key: OrderingKey,
+        canonical: Vec<u8>,
+    ) -> Result<CoreCommit, ReplayError> {
         let prepared_checksum = self
             .event_stream
-            .prepare_event(event)
+            .prepare_canonical(canonical)
             .map_err(ReplayError::CanonicalEncoding)?;
         self.validate_global_order(&ordering_key, prepared_checksum.canonical())?;
 

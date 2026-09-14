@@ -8,11 +8,11 @@ use std::{
 };
 
 use data_sync::{
-    ArchiveKind, ArchiveTimestamp, CacheBuilder, PartitionNormalizerConfig, StagingRevision,
+    ArchiveKind, ArchiveMarket, ArchiveTimestamp, CacheBuilder, StagingRevision,
     TeralionCredential, TeralionQuery, TeralionRequest, TeralionSync, TeralionTransport,
-    TransportError,
+    TransportError, normalizer_config_for,
 };
-use market_types::{InstrumentId, InstrumentKind, MarketId};
+use market_types::{InstrumentClass, InstrumentId, MarketId, UtcOffsetMinutes};
 use osmium_config::{RunConfig, load};
 use run_planner::SourcePartitionKey;
 use strategy_api::{AcceptanceStrategyFactory, SessionKind, StrategyRegistry};
@@ -210,9 +210,10 @@ fn replay_window(
         .map(|window| window.replay_end_exclusive())
         .max()
         .ok_or("session plan has no replay windows")?;
+    let taipei_offset = UtcOffsetMinutes::new(480)?;
     Ok((
-        ArchiveTimestamp::parse(start.to_iso8601(480))?,
-        ArchiveTimestamp::parse(end.to_iso8601(480))?,
+        ArchiveTimestamp::parse(start.to_iso8601(taipei_offset)?)?,
+        ArchiveTimestamp::parse(end.to_iso8601(taipei_offset)?)?,
     ))
 }
 
@@ -223,17 +224,23 @@ fn prepare_partition(
     key: &SourcePartitionKey,
 ) -> Result<(), Box<dyn Error>> {
     let (start, end) = replay_window(config, key)?;
-    let kind = config.instrument_kind_for(key.instrument());
-    let query = match kind {
-        InstrumentKind::Warrant | InstrumentKind::Option => TeralionQuery::ticks_for_market(
+    let selection = config
+        .selection_for(key.instrument())
+        .ok_or("fixture partition has no instrument selection")?;
+    let class = selection.class();
+    let query = match class {
+        InstrumentClass::Warrant | InstrumentClass::Option => TeralionQuery::ticks_for_market(
             key.instrument().clone(),
             start,
             end,
             kinds_for(key.instrument()).iter().copied(),
             5_000,
-            config.archive_market_for(key.instrument()),
+            match class {
+                InstrumentClass::Option => ArchiveMarket::TaifexOptions,
+                _ => ArchiveMarket::for_instrument(key.instrument()),
+            },
         )?,
-        _ => TeralionQuery::ticks(
+        InstrumentClass::Equity | InstrumentClass::Future => TeralionQuery::ticks(
             key.instrument().clone(),
             start,
             end,
@@ -256,68 +263,14 @@ fn prepare_partition(
     )?;
     staging.stage_daily_instrument(daily_query.identity(), &daily)?;
     let published = staging.publish(query.identity(), report.terminal)?;
-    let normalizer = match (key.instrument().market(), kind) {
-        (MarketId::Twse, InstrumentKind::Warrant) => {
-            let (start, end) = replay_window(config, key)?;
-            PartitionNormalizerConfig::Warrant(twse_normalizer::NormalizerConfig::new_warrant(
-                key.instrument().clone(),
-                key.trading_date(),
-                start.utc(),
-                end.utc(),
-            )?)
-        }
-        (MarketId::Twse, _) => {
-            let (start, end) = replay_window(config, key)?;
-            PartitionNormalizerConfig::Twse(twse_normalizer::NormalizerConfig::new(
-                key.instrument().clone(),
-                key.trading_date(),
-                start.utc(),
-                end.utc(),
-            )?)
-        }
-        (MarketId::Tpex, InstrumentKind::Warrant) => {
-            let (start, end) = replay_window(config, key)?;
-            PartitionNormalizerConfig::TpexWarrant(tpex_normalizer::NormalizerConfig::new_warrant(
-                key.instrument().clone(),
-                key.trading_date(),
-                start.utc(),
-                end.utc(),
-            )?)
-        }
-        (MarketId::Tpex, _) => {
-            let (start, end) = replay_window(config, key)?;
-            PartitionNormalizerConfig::Tpex(tpex_normalizer::NormalizerConfig::new(
-                key.instrument().clone(),
-                key.trading_date(),
-                start.utc(),
-                end.utc(),
-            )?)
-        }
-        (MarketId::Taifex, InstrumentKind::Option) => {
-            let plan = config.session_plan_for(key)?;
-            let windows = plan
-                .windows()
-                .iter()
-                .map(|window| (window.replay_start(), window.replay_end_exclusive()));
-            PartitionNormalizerConfig::TaifexOption(
-                taifex_normalizer::NormalizerConfig::for_profile(
-                    key.instrument().clone(),
-                    key.trading_date(),
-                    taifex_normalizer::InstrumentProfile::IndexOptions,
-                    windows,
-                )?,
-            )
-        }
-        (MarketId::Taifex, _) => {
-            let (start, end) = replay_window(config, key)?;
-            PartitionNormalizerConfig::Taifex(taifex_normalizer::NormalizerConfig::new(
-                key.instrument().clone(),
-                key.trading_date(),
-                start.utc(),
-                end.utc(),
-            )?)
-        }
-    };
+    let session_plan = config.session_plan_for(key)?;
+    let normalizer = normalizer_config_for(
+        key.source(),
+        key,
+        class,
+        selection.contract_shape(),
+        &session_plan,
+    )?;
     let cache = CacheBuilder::new(data_root).build_partition(key, normalizer)?;
     println!(
         "partition={:?}/{}@{} pages={} records={} source_revision={} cache_identity={}",

@@ -2,7 +2,7 @@ use std::{error::Error, fmt};
 
 use market_state::MarketStateView;
 use market_types::{DomainEvent, MatchTime};
-use replay_engine::{EventOccurrence, ReplayClock};
+use replay_engine::{EventOccurrence, ReplayClock, ReplayStateViews};
 
 use crate::{
     CanonicalParamsChecksum, SessionCallbackContext, StrategyDeclaration, StrategyFeedbackContext,
@@ -48,27 +48,18 @@ pub struct StrategyEventContext<'event> {
     occurrence: &'event EventOccurrence,
     event: &'event DomainEvent,
     market_state: MarketStateView<'event>,
-    market_states: &'event [MarketStateView<'event>],
+    market_states: ReplayStateViews<'event>,
     trading: &'event TradingContext,
     session: &'event SessionCallbackContext,
     decision_time: MatchTime,
 }
 
 impl<'event> StrategyEventContext<'event> {
-    pub const fn new(
-        occurrence: &'event EventOccurrence,
-        event: &'event DomainEvent,
-        market_state: MarketStateView<'event>,
-        trading: &'event TradingContext,
-    ) -> Self {
-        Self::new_with_states(occurrence, event, market_state, &[], trading)
-    }
-
     pub const fn new_with_states(
         occurrence: &'event EventOccurrence,
         event: &'event DomainEvent,
         market_state: MarketStateView<'event>,
-        market_states: &'event [MarketStateView<'event>],
+        market_states: ReplayStateViews<'event>,
         trading: &'event TradingContext,
     ) -> Self {
         Self::new_visible_with_states(
@@ -85,7 +76,7 @@ impl<'event> StrategyEventContext<'event> {
         occurrence: &'event EventOccurrence,
         event: &'event DomainEvent,
         market_state: MarketStateView<'event>,
-        market_states: &'event [MarketStateView<'event>],
+        market_states: ReplayStateViews<'event>,
         trading: &'event TradingContext,
         decision_time: MatchTime,
     ) -> Self {
@@ -117,7 +108,7 @@ impl<'event> StrategyEventContext<'event> {
 
     /// Returns the post-event views for every instrument in deterministic order.
     #[must_use]
-    pub const fn market_states(self) -> &'event [MarketStateView<'event>] {
+    pub const fn market_states(self) -> ReplayStateViews<'event> {
         self.market_states
     }
 

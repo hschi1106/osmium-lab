@@ -22,11 +22,30 @@ fn trading_date_parses_and_formats_valid_gregorian_dates() {
     assert_eq!(leap_day.as_epoch_days(), 11_016);
     assert_eq!(leap_day.to_string(), "2000-02-29");
 
-    let epoch = TradingDate::from_epoch_days(0);
+    let epoch = TradingDate::from_epoch_days(0).unwrap();
     assert_eq!(epoch.to_string(), "1970-01-01");
     assert_eq!(
         TradingDate::parse(&epoch.to_string()).unwrap(),
-        TradingDate::from_epoch_days(0)
+        TradingDate::from_epoch_days(0).unwrap()
+    );
+}
+
+#[test]
+fn trading_date_epoch_constructor_enforces_four_digit_years() {
+    let minimum = TradingDate::from_epoch_days(TradingDate::MIN_EPOCH_DAYS).unwrap();
+    let maximum = TradingDate::from_epoch_days(TradingDate::MAX_EPOCH_DAYS).unwrap();
+    assert_eq!(minimum.to_string(), "0000-01-01");
+    assert_eq!(maximum.to_string(), "9999-12-31");
+    assert_eq!(TradingDate::parse(&minimum.to_string()).unwrap(), minimum);
+    assert_eq!(TradingDate::parse(&maximum.to_string()).unwrap(), maximum);
+
+    assert_eq!(
+        TradingDate::from_epoch_days(TradingDate::MIN_EPOCH_DAYS - 1),
+        Err(TradingDateError::OutOfRange)
+    );
+    assert_eq!(
+        TradingDate::from_epoch_days(TradingDate::MAX_EPOCH_DAYS + 1),
+        Err(TradingDateError::OutOfRange)
     );
 }
 

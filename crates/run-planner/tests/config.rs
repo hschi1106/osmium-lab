@@ -2,11 +2,15 @@ mod support;
 
 use std::path::Path;
 
-use market_types::Decimal;
+use market_types::{
+    ContractShape, Decimal, InstrumentClass, InstrumentId, MarketId, OptionSide, QuantityUnit,
+    Symbol,
+};
 use run_planner::{
-    CachePolicy, ConfigError, DayTradeMatchingConfig, DayTradeTaxConfig, EffectiveRunConfig,
-    InstrumentChargeConfig, LEGACY_EFFECTIVE_CONFIG_VERSION, LatencyConfig, ReplayDataPolicy,
-    ScheduledExecutionConfig, SlippageModelConfig, SourcePolicy,
+    CachePolicy, ConfigError, Currency, DayTradeMatchingConfig, DayTradeTaxConfig,
+    EFFECTIVE_CONFIG_VERSION, EffectiveRunConfig, InstrumentChargeConfig, InstrumentContractConfig,
+    InstrumentEconomicsConfig, InstrumentReferenceConfig, LatencyConfig, ReplayDataPolicy,
+    ScheduledExecutionConfig, SessionProfileId, SlippageModelConfig, SourcePolicy,
 };
 use strategy_api::SessionKind;
 
@@ -37,10 +41,7 @@ fn effective_config_applies_defaults_and_canonicalizes_sets() {
     assert_eq!(effective.replay_data_policy(), ReplayDataPolicy::Strict);
     assert_eq!(effective.data_root(), Path::new("target/test-data"));
     assert!(effective.canonical_semantics().starts_with(b"OSECFG01"));
-    assert_eq!(
-        effective.canonical_version(),
-        LEGACY_EFFECTIVE_CONFIG_VERSION
-    );
+    assert_eq!(effective.canonical_version(), EFFECTIVE_CONFIG_VERSION);
 }
 
 #[test]
@@ -61,6 +62,235 @@ fn semantic_checksum_excludes_data_root() {
 
     assert_eq!(left.canonical_semantics(), right.canonical_semantics());
     assert_eq!(left.checksum(), right.checksum());
+}
+
+#[test]
+fn effective_identity_distinguishes_future_outright_from_calendar_spread() {
+    let date = date("2026-07-27");
+    let instrument = InstrumentId::new(MarketId::Taifex, Symbol::new("TXF/202609-202610").unwrap());
+    let outright = EffectiveRunConfig::resolve(run_config(
+        vec![date],
+        vec![instrument.clone()],
+        "target/test-data",
+    ))
+    .unwrap();
+    let mut spread_config = run_config(vec![date], vec![instrument.clone()], "target/test-data");
+    spread_config.instrument_contracts = vec![InstrumentContractConfig::new(
+        instrument,
+        InstrumentClass::Future,
+        Some(ContractShape::CalendarSpread),
+        SessionProfileId::TaifexCalendarSpreadRegularOnly,
+    )];
+    let spread = EffectiveRunConfig::resolve(spread_config).unwrap();
+
+    assert_ne!(outright.checksum(), spread.checksum());
+    assert_ne!(outright.canonical_semantics(), spread.canonical_semantics());
+}
+
+#[test]
+fn option_reference_is_required_consistent_and_bound_into_effective_identity() {
+    let instrument = InstrumentId::new(MarketId::Taifex, Symbol::new("TXO20261216000C").unwrap());
+    let trading_date = date("2026-07-27");
+    let make_config = |reference: InstrumentReferenceConfig| {
+        let reference_economics = (
+            reference.quantity_unit(),
+            reference.units_per_trading_unit(),
+            reference.currency(),
+            reference.multiplier(),
+        );
+        let mut config = run_config(
+            vec![trading_date],
+            vec![instrument.clone()],
+            "target/test-data",
+        );
+        config.instrument_contracts = vec![
+            InstrumentContractConfig::new(
+                instrument.clone(),
+                InstrumentClass::Option,
+                None,
+                SessionProfileId::TaifexIndexOptions,
+            )
+            .with_reference(reference),
+        ];
+        config.instrument_economics = vec![InstrumentEconomicsConfig::new(
+            instrument.clone(),
+            reference_economics.0,
+            reference_economics.1,
+            reference_economics.2,
+            reference_economics.3,
+            "verified option contract reference",
+        )];
+        config
+    };
+    let reference = |underlying: &str,
+                     expiry: &str,
+                     strike: &str,
+                     side: OptionSide,
+                     multiplier: &str,
+                     quantity_unit: QuantityUnit,
+                     units_per_trading_unit: u64,
+                     provenance: &str| {
+        InstrumentReferenceConfig::new(
+            underlying,
+            date(expiry),
+            Decimal::parse(strike).unwrap(),
+            side,
+            Currency::Twd,
+            Decimal::parse(multiplier).unwrap(),
+            quantity_unit,
+            units_per_trading_unit,
+            provenance,
+        )
+    };
+
+    let baseline = EffectiveRunConfig::resolve(make_config(reference(
+        "TXO",
+        "2026-12-16",
+        "24000",
+        OptionSide::Call,
+        "50",
+        QuantityUnit::Contract,
+        1,
+        "verified option contract reference",
+    )))
+    .unwrap();
+    let variants = [
+        reference(
+            "TXO2",
+            "2026-12-16",
+            "24000",
+            OptionSide::Call,
+            "50",
+            QuantityUnit::Contract,
+            1,
+            "verified option contract reference",
+        ),
+        reference(
+            "TXO",
+            "2026-12-17",
+            "24000",
+            OptionSide::Call,
+            "50",
+            QuantityUnit::Contract,
+            1,
+            "verified option contract reference",
+        ),
+        reference(
+            "TXO",
+            "2026-12-16",
+            "24500",
+            OptionSide::Call,
+            "50",
+            QuantityUnit::Contract,
+            1,
+            "verified option contract reference",
+        ),
+        reference(
+            "TXO",
+            "2026-12-16",
+            "24000",
+            OptionSide::Put,
+            "50",
+            QuantityUnit::Contract,
+            1,
+            "verified option contract reference",
+        ),
+        reference(
+            "TXO",
+            "2026-12-16",
+            "24000",
+            OptionSide::Call,
+            "100",
+            QuantityUnit::Contract,
+            1,
+            "verified option contract reference",
+        ),
+        reference(
+            "TXO",
+            "2026-12-16",
+            "24000",
+            OptionSide::Call,
+            "50",
+            QuantityUnit::TradingUnit,
+            1,
+            "verified option contract reference",
+        ),
+        reference(
+            "TXO",
+            "2026-12-16",
+            "24000",
+            OptionSide::Call,
+            "50",
+            QuantityUnit::Contract,
+            2,
+            "verified option contract reference",
+        ),
+        reference(
+            "TXO",
+            "2026-12-16",
+            "24000",
+            OptionSide::Call,
+            "50",
+            QuantityUnit::Contract,
+            1,
+            "updated reference provenance",
+        ),
+    ];
+    for variant in variants {
+        let different = EffectiveRunConfig::resolve(make_config(variant)).unwrap();
+        assert_ne!(baseline.checksum(), different.checksum());
+        assert_ne!(
+            baseline.canonical_semantics(),
+            different.canonical_semantics()
+        );
+    }
+
+    let mut mismatched = make_config(reference(
+        "TXO",
+        "2026-12-16",
+        "24000",
+        OptionSide::Call,
+        "50",
+        QuantityUnit::Contract,
+        1,
+        "verified option contract reference",
+    ));
+    mismatched.instrument_economics[0] = InstrumentEconomicsConfig::new(
+        instrument.clone(),
+        QuantityUnit::Contract,
+        1,
+        Currency::Twd,
+        Decimal::parse("40").unwrap(),
+        "mismatched multiplier",
+    );
+    assert!(matches!(
+        EffectiveRunConfig::resolve(mismatched),
+        Err(ConfigError::InvalidInstrumentContract(actual)) if actual == instrument
+    ));
+
+    assert_eq!(
+        baseline.instrument_contracts()[0]
+            .reference()
+            .unwrap()
+            .strike(),
+        Decimal::parse("24000").unwrap()
+    );
+
+    let mut missing_reference = run_config(
+        vec![trading_date],
+        vec![instrument.clone()],
+        "target/test-data",
+    );
+    missing_reference.instrument_contracts = vec![InstrumentContractConfig::new(
+        instrument.clone(),
+        InstrumentClass::Option,
+        None,
+        SessionProfileId::TaifexIndexOptions,
+    )];
+    assert!(matches!(
+        EffectiveRunConfig::resolve(missing_reference),
+        Err(ConfigError::InvalidInstrumentContract(actual)) if actual == instrument
+    ));
 }
 
 #[test]
@@ -196,7 +426,7 @@ fn scheduled_execution_is_explicit_validated_and_identity_bound() {
         .simulation
         .with_scheduled_execution(ScheduledExecutionConfig::new(5, 1_000));
     let scheduled = EffectiveRunConfig::resolve(scheduled_config).unwrap();
-    assert_eq!(scheduled.canonical_version(), 4);
+    assert_eq!(scheduled.canonical_version(), EFFECTIVE_CONFIG_VERSION);
     assert_eq!(
         scheduled.simulation().scheduled_execution(),
         Some(ScheduledExecutionConfig::new(5, 1_000))
@@ -279,7 +509,7 @@ fn instrument_day_trade_tax_is_canonical_and_requires_every_configured_date() {
         .simulation
         .with_instrument_charges([charges(dates)]);
     let configured = EffectiveRunConfig::resolve(configured).unwrap();
-    assert_eq!(configured.canonical_version(), 4);
+    assert_eq!(configured.canonical_version(), EFFECTIVE_CONFIG_VERSION);
     assert_ne!(configured.checksum(), baseline.checksum());
     assert!(
         configured

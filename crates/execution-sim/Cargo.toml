@@ -10,5 +10,8 @@ market-types = { path = "../market-types" }
 replay-engine = { path = "../replay-engine" }
 strategy-api = { path = "../strategy-api" }
 
+[dev-dependencies]
+market-state = { path = "../market-state" }
+
 [lints]
 workspace = true
