@@ -9,7 +9,7 @@ use std::{
 use run_planner::{CorruptReason, IncompleteReason, SourceRevisionIdentity, SourceState};
 use sha2::{Digest, Sha256};
 
-use crate::{ObjectKind, PageMetadata, SourceManifest};
+use crate::{ObjectKind, PageMetadata, SourceManifest, decode_hex_32, hex};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerificationReport {
@@ -300,35 +300,6 @@ fn hash_file(path: &Path) -> Result<[u8; 32], io::Error> {
         hasher.update(&buffer[..count]);
     }
     Ok(hasher.finalize().into())
-}
-
-fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(DIGITS[(byte >> 4) as usize] as char);
-        output.push(DIGITS[(byte & 0x0f) as usize] as char);
-    }
-    output
-}
-
-fn decode_hex_32(value: &str) -> Option<[u8; 32]> {
-    if value.len() != 64 {
-        return None;
-    }
-    let mut output = [0_u8; 32];
-    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
-        output[index] = decode_nibble(pair[0])? << 4 | decode_nibble(pair[1])?;
-    }
-    Some(output)
-}
-
-fn decode_nibble(value: u8) -> Option<u8> {
-    match value {
-        b'0'..=b'9' => Some(value - b'0'),
-        b'a'..=b'f' => Some(value - b'a' + 10),
-        _ => None,
-    }
 }
 
 #[derive(Debug)]

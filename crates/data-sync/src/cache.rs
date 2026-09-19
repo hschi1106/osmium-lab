@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     LocalSourceRepository, NormalizerMappingIdentity, PartitionRepositoryError, VerificationReport,
-    cache_instrument_root, cache_partition_root,
+    cache_instrument_root, cache_partition_root, hex,
 };
 use market_types::{
     CANONICAL_EVENT_VERSION, DomainEvent, EVENT_SCHEMA_VERSION, MARKET_TYPES_VERSION, MatchTime,
@@ -656,16 +656,6 @@ fn read_u64(reader: &mut impl Read) -> Result<u64, io::Error> {
     let mut bytes = [0; 8];
     reader.read_exact(&mut bytes)?;
     Ok(u64::from_be_bytes(bytes))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(DIGITS[(byte >> 4) as usize] as char);
-        output.push(DIGITS[(byte & 0x0f) as usize] as char);
-    }
-    output
 }
 
 #[derive(Debug)]

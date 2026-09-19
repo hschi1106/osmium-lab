@@ -8,9 +8,9 @@ use replay_engine::{
 };
 
 use crate::{
-    ContextError, MarketTradingContextEvaluator, SessionSegment, Strategy, StrategyDeclaration,
+    MarketTradingContextEvaluator, SessionSegment, Strategy, StrategyDeclaration,
     StrategyEventContext, StrategyFinalizeContext, StrategyInitializationContext, StrategyOutput,
-    StrategyOutputEncodingError, StrategyOutputSink,
+    StrategyOutputSink,
 };
 
 #[derive(Debug)]
@@ -340,14 +340,4 @@ fn failure_after_complete_error(
         processed_prefix_checksum,
         committed_output_count: output.records().len(),
     }))
-}
-
-#[allow(dead_code)]
-fn output_error_is_stable(error: StrategyOutputEncodingError) -> String {
-    error.to_string()
-}
-
-#[allow(dead_code)]
-fn context_error_is_stable(error: ContextError) -> String {
-    error.to_string()
 }

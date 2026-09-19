@@ -8,7 +8,7 @@ use market_types::{InstrumentId, MarketId};
 use run_planner::{SourceId, SourcePartitionKey};
 use serde::{Deserialize, Serialize};
 
-use crate::{LocalSourceRepository, SourceInspection};
+use crate::{LocalSourceRepository, SourceInspection, hex};
 
 pub const PARTITION_LAYOUT_VERSION: u16 = 2;
 pub const PARTITION_MANIFEST_FILE: &str = "partition.yaml";
@@ -220,16 +220,6 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), PartitionRepositoryErro
     fs::write(&temporary, bytes)?;
     fs::rename(temporary, path)?;
     Ok(())
-}
-
-fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(DIGITS[(byte >> 4) as usize] as char);
-        output.push(DIGITS[(byte & 0x0f) as usize] as char);
-    }
-    output
 }
 
 #[derive(Debug)]

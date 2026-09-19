@@ -61,7 +61,7 @@ pub fn publish_backtest(
         .strategy_output
         .to_canonical_bytes()
         .map_err(|error| ArtifactError::Encoding(error.to_string()))?;
-    let orders = encode_orders(completed)?;
+    let orders = encode_orders(completed.simulator.orders().iter())?;
     let fills = encode_fills(completed);
     let ledger = encode_ledger(completed);
     let event_checksum = hex(completed.replay.summary().event_checksum().as_bytes());
@@ -206,7 +206,7 @@ pub fn publish_multi_backtest(
         .strategy_output
         .to_canonical_bytes()
         .map_err(|error| ArtifactError::Encoding(error.to_string()))?;
-    let orders = encode_multi_orders(completed)?;
+    let orders = encode_orders(completed.simulator.orders().into_iter())?;
     let fills = encode_multi_fills(completed);
     let ledger = encode_multi_ledger(completed);
     let ledger_checksum = hash(&ledger);
@@ -567,10 +567,12 @@ pub struct InspectSummary {
     pub fill_count: u64,
 }
 
-fn encode_orders(completed: &CompletedBacktest) -> Result<Vec<u8>, ArtifactError> {
+fn encode_orders<'a>(
+    orders: impl ExactSizeIterator<Item = &'a execution_sim::SimOrder>,
+) -> Result<Vec<u8>, ArtifactError> {
     let mut bytes = b"OSORDERS1".to_vec();
-    bytes.extend_from_slice(&(completed.simulator.orders().len() as u64).to_be_bytes());
-    for order in completed.simulator.orders() {
+    bytes.extend_from_slice(&(orders.len() as u64).to_be_bytes());
+    for order in orders {
         bytes.extend_from_slice(order.id().as_bytes());
         let intent = order
             .intent()
@@ -603,25 +605,6 @@ fn encode_fills(completed: &CompletedBacktest) -> Vec<u8> {
         bytes.extend_from_slice(&fill.quantity().to_canonical_bytes());
     }
     bytes
-}
-
-fn encode_multi_orders(completed: &CompletedMultiBacktest) -> Result<Vec<u8>, ArtifactError> {
-    let orders = completed.simulator.orders();
-    let mut bytes = b"OSORDERS1".to_vec();
-    bytes.extend_from_slice(&(orders.len() as u64).to_be_bytes());
-    for order in orders {
-        bytes.extend_from_slice(order.id().as_bytes());
-        let intent = order
-            .intent()
-            .to_canonical_bytes()
-            .map_err(|error| ArtifactError::Encoding(error.to_string()))?;
-        bytes.extend_from_slice(&(intent.len() as u32).to_be_bytes());
-        bytes.extend_from_slice(&intent);
-        bytes.extend_from_slice(&order.filled().to_be_bytes());
-        bytes.extend_from_slice(&order.remaining().to_be_bytes());
-        bytes.push(order.status() as u8);
-    }
-    Ok(bytes)
 }
 
 fn encode_scheduled_orders(

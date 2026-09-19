@@ -9,7 +9,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::SourceRequestIdentity;
+use crate::{SourceRequestIdentity, decode_hex_32, hex};
 
 pub const ZSTD_COMPRESSION_LEVEL: i32 = 3;
 const SOURCE_MANIFEST_VERSION: u16 = 1;
@@ -562,37 +562,6 @@ fn write_atomic_file(path: &Path, bytes: &[u8]) -> Result<(), StagingError> {
 
 fn sync_directory(path: &Path) -> Result<(), io::Error> {
     File::open(path)?.sync_all()
-}
-
-fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(DIGITS[(byte >> 4) as usize] as char);
-        output.push(DIGITS[(byte & 0x0f) as usize] as char);
-    }
-    output
-}
-
-fn decode_hex_32(value: &str) -> Option<[u8; 32]> {
-    if value.len() != 64 {
-        return None;
-    }
-    let mut decoded = [0_u8; 32];
-    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
-        let high = decode_nibble(pair[0])?;
-        let low = decode_nibble(pair[1])?;
-        decoded[index] = high << 4 | low;
-    }
-    Some(decoded)
-}
-
-fn decode_nibble(value: u8) -> Option<u8> {
-    match value {
-        b'0'..=b'9' => Some(value - b'0'),
-        b'a'..=b'f' => Some(value - b'a' + 10),
-        _ => None,
-    }
 }
 
 fn validate_attempt_id(attempt_id: &str) -> Result<(), StagingError> {
