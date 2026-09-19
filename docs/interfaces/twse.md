@@ -86,7 +86,7 @@ TWSE annotations 由 market rule evaluator 轉成 new-order、matching 與 fill 
 
 warrant 使用獨立 mapping identity 與 source formats，不落入 equity branch。quote、完整 snapshot、annotations、auction 與 `match_time` 語意與已驗證的 TWSE quote contract一致；underlying、expiry、strike、option side、currency 與 multiplier 由 instrument reference／economics 明確提供。
 
-repository fixture 位於 [`fixtures/teralion/twse`](../../fixtures/teralion/twse)，僅代表合成契約案例，不代表特定上市商品或完整交易日。
+repository fixture 位於 [`fixtures/providers/teralion/twse`](../../fixtures/providers/teralion/twse)，僅代表合成契約案例，不代表特定上市商品或完整交易日。
 
 官方格式參考：[TWSE TCP/IP 證券交易資訊網路文件](https://dsp.twse.com.tw/tcpipTradingFiles/list)。共通 event/state 規則見 [回播模型](../architecture/replay-model.md)。
 ## 8. Stability 暫緩撮合

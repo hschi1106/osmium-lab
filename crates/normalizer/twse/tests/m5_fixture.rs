@@ -11,7 +11,7 @@ use twse_normalizer::{NormalizationErrorKind, NormalizerConfig, TwseNormalizer};
 
 fn fixture_lines() -> Vec<String> {
     let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../fixtures/teralion/twse/SYNTH-TWSE-W/2026-07-20/regular-quotes");
+        .join("../../../fixtures/providers/teralion/twse/SYNTH-TWSE-W/2026-07-20/regular-quotes");
     let mut paths = fs::read_dir(directory)
         .unwrap()
         .map(|entry| entry.unwrap().path())

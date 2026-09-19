@@ -14,7 +14,7 @@
 | `fetch_fixture_bundle.sh` | 從 local archive／directory 或 bearer-token HTTPS source 取得 bundle |
 | `osmium_fixture_data/` | 以 fixture transport 建立 local source/cache，供 offline acceptance 使用 |
 
-generator 不讀取外部資料；輸出的 `fixtures/teralion/` 只可標示
+generator 不讀取外部資料；輸出的 `fixtures/providers/teralion/` 只可標示
 `synthetic_scenario`／`complete_day: false`／`repository-owned-synthetic`。generator
 不會改變 production normalizer、replay 或 simulation code。
 

@@ -15,7 +15,7 @@ use taifex_normalizer::{
 
 fn fixture_lines() -> Vec<String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../fixtures/teralion/taifex/SYNTH-OPT/2026-07-20");
+        .join("../../../fixtures/providers/teralion/taifex/SYNTH-OPT/2026-07-20");
     let mut paths = ["after-hours", "regular"]
         .into_iter()
         .flat_map(|segment| {

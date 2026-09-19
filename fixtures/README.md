@@ -3,7 +3,7 @@
 本 repository 的 fixture 全部是自行建立的 synthetic scenarios：
 
 - `smoke/` 是最小的 CLI、cache 與 backtest smoke payload。
-- `teralion/` 是 Teralion wire shape 的 synthetic coverage matrix，涵蓋不同 market、
+- `providers/teralion/` 是 Teralion wire shape 的 synthetic coverage matrix，涵蓋不同 market、
   instrument kind、session 與 source state。
 
 兩者皆由 repository 擁有，可公開散布，不包含、抽樣或轉換任何真實市場行情。

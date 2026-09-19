@@ -840,7 +840,6 @@ dependencies = [
  "blake3",
  "market-state",
  "market-types",
- "twse-normalizer",
 ]
 
 [[package]]

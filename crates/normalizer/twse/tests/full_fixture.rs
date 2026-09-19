@@ -12,7 +12,7 @@ use twse_normalizer::{NormalizerConfig, TwseNormalizer};
 #[test]
 fn synthetic_regular_fixture_normalizes_offline() {
     let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../fixtures/teralion/twse/SYNTH-TWSE-EQ/2026-07-20/regular-quotes");
+        .join("../../../fixtures/providers/teralion/twse/SYNTH-TWSE-EQ/2026-07-20/regular-quotes");
     let mut shards = fs::read_dir(&fixture_dir)
         .unwrap()
         .map(|entry| entry.unwrap().path())

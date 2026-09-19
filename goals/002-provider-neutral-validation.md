@@ -1,6 +1,6 @@
 # 002：建立 provider-neutral 驗證邊界與 repo-contained fixtures
 
-Status: pending
+Status: done
 Depends on: 001-remove-tui.md
 
 ## 目標
@@ -79,25 +79,43 @@ synthetic Teralion wire
 
 ## 驗收
 
-- [ ] provider wire fixtures 位於 `fixtures/providers/teralion/`。
-- [ ] fixtures 全為 repo-owned synthetic。
-- [ ] core tests 不依賴 Teralion fixture 才能驗核心語義。
-- [ ] expected semantics 是 contract assertions。
-- [ ] `/data`/network 非 test dependency。
-- [ ] benchmark seed 可 deterministic 擴增。
-- [ ] generator/manifest/docs path 一致。
-- [ ] workspace fmt/test/clippy 通過。
-- [ ] cloc 已記錄。
-- [ ] 無新 fixture platform。
+- [x] provider wire fixtures 位於 `fixtures/providers/teralion/`。
+- [x] fixtures 全為 repo-owned synthetic。
+- [x] core tests 不依賴 Teralion fixture 才能驗核心語義。
+- [x] expected semantics 是 contract assertions。
+- [x] `/data`/network 非 test dependency。
+- [x] benchmark seed 可 deterministic 擴增。
+- [x] generator/manifest/docs path 一致。
+- [x] workspace fmt/test/clippy 通過。
+- [x] cloc 已記錄。
+- [x] 無新 fixture platform。
 
 ## 執行紀錄
 
-- Baseline revision / working tree：
-- Rust LOC before：
-- Fixture tree before/after：
-- `/data` research evidence：
-- Validation：
-- Benchmark seed：
-- Rust LOC after / delta：
-- 剩餘風險：
+- Baseline revision / working tree：`3ac3c21`（Goal 001 完成後 clean）。
+- Rust LOC before：108 files / 3,569 blank / 264 comment / 41,614 code。
+- Fixture tree before/after：一般 adapter coverage 從
+  `fixtures/teralion/{twse,tpex,taifex}` 搬至
+  `fixtures/providers/teralion/{twse,tpex,taifex}`；`fixtures/smoke/` 保持為獨立
+  end-to-end bundle；acceptance manifest、normalizer tests、benchmark include path、
+  interface docs 與 generator/verification scripts 已同步。
+- `/data` research evidence：本 goal 沒有讀取或提交 `/data` 內容；fixture generator
+  只建立 repository-owned synthetic wire payload。測試/fixture 搜尋沒有 `/data`、HTTP
+  client 或 API key 依賴；production `data-sync` transport 的 reqwest/Teralion URL
+  維持不變。
+- Validation：`cargo fmt --all --check`、`cargo test --workspace`
+  （317 passed / 56 suites）、`cargo clippy --workspace --all-targets --all-features
+  -- -D warnings`、`tools/acceptance/verify_compact_fixtures.sh` 通過；neutral
+  `replay-engine` contract test 通過，且移除其 `twse-normalizer` dev-dependency。
+  生成器重新執行後 manifest 與 fixture checksums 維持一致，沒有舊
+  `fixtures/teralion/` path 殘留。
+- Benchmark seed：沿用既有 Rust-native harness。`canonical_hot_path` 以固定
+  `fixture_event` 加 match-time/sequence offset 產生 50,000 events；
+  `multi_stream_merge` 以固定 payload、instrument offset、global sequence/time
+  interleave 產生 1/8/32 streams、49,152 events，並跨 rounds assertion event/final
+  state checksum；`full_multi_backtest` 沿用 8 instruments 的 deterministic seed。
+- Rust LOC after / delta：108 files / 3,569 blank / 264 comment / 41,649 code，
+  code `+35`。
+- 剩餘風險：目前仍只有 Teralion provider wire coverage；provider boundary 與
+  taxonomy 解耦留待 Goal 003/004，未在本 goal 預先改動 production architecture。
 - 下一步：003-decouple-teralion-provider.md

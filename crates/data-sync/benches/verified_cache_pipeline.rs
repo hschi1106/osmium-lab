@@ -18,7 +18,7 @@ const EVENTS: usize = 50_000;
 const PAGE_SIZE: usize = 5_000;
 const ROUNDS: usize = 5;
 const SOURCE_FIXTURE: &str = include_str!(
-    "../../../fixtures/teralion/twse/SYNTH-TWSE-EQ/2026-07-20/regular-quotes/0001.jsonl"
+    "../../../fixtures/providers/teralion/twse/SYNTH-TWSE-EQ/2026-07-20/regular-quotes/0001.jsonl"
 );
 
 struct FixtureTransport {

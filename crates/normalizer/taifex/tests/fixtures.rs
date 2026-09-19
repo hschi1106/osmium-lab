@@ -15,7 +15,7 @@ use taifex_normalizer::{
 
 fn fixture_root(symbol: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
-        "../../../fixtures/teralion/taifex/{symbol}/2026-07-20"
+        "../../../fixtures/providers/teralion/taifex/{symbol}/2026-07-20"
     ))
 }
 

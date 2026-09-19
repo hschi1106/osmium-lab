@@ -74,6 +74,6 @@ options 使用 options accounting model處理 premium cash 與 average-cost P&L�
 
 Calendar spread 設定必須明確指定 `contract_shape: calendar_spread` 與適用 session profile。含 `/` 的 symbol 保持 byte-exact identity；storage path 另做 reversible encoding。其限價比較與 slippage 保留 signed price，notional-rate fee basis 使用絕對名目金額，fixed-per-unit fee 依 contract quantity 計算。
 
-repository fixture 位於 [`fixtures/teralion/taifex`](../../fixtures/teralion/taifex)，只固定合成 futures/options contract，不代表完整交易日。
+repository fixture 位於 [`fixtures/providers/teralion/taifex`](../../fixtures/providers/teralion/taifex)，只固定合成 futures/options contract，不代表完整交易日。
 
 官方參考：[TAIFEX 逐筆行情資訊傳輸作業手冊](https://www.taifex.com.tw/cht/8/techDocsDetails?idx=67)。共通 event、session 與 ordering 規則見 [回播模型](../architecture/replay-model.md)。

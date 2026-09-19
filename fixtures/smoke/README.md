@@ -6,4 +6,4 @@ smoke test 與 quickstart verification；它不是 Teralion payload，也不代�
 
 資料內容刻意只包含兩筆虛構 `SYNTH-SMOKE` quote，並保留 book、`match_time`、
 `received_at`、format 與 flags。較大的 M1–M5 acceptance payload 仍依
-`fixtures/teralion/` 的 synthetic matrix 進行測試。
+`fixtures/providers/teralion/` 的 synthetic matrix 進行測試。

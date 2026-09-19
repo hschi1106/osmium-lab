@@ -70,7 +70,7 @@ normalizer 不產生 sequence、aggressor、queue、latency 或未經來源證�
 
 warrant profile 使用獨立 format registry 與 mapping identity，不套用 equity format 名稱。underlying、expiry、strike、option side、currency、quantity unit 與 multiplier 需由 reference／economics 明確提供。
 
-repository fixture 位於 [`fixtures/teralion/tpex`](../../fixtures/teralion/tpex)，只固定合成的 quote、auction、annotation 與 state mapping，不代表完整交易日。零價市價委託的 source contract 依 TPEx IP 行情格式固定；目前 2948 validation partition 未出現該形狀，故另以 adapter regression 驗證。
+repository fixture 位於 [`fixtures/providers/teralion/tpex`](../../fixtures/providers/teralion/tpex)，只固定合成的 quote、auction、annotation 與 state mapping，不代表完整交易日。零價市價委託的 source contract 依 TPEx IP 行情格式固定；目前 2948 validation partition 未出現該形狀，故另以 adapter regression 驗證。
 
 官方參考：[TPEx 上櫃股票 IP 行情網路規格書](https://dsp.tpex.org.tw/storage/regular_system/%E4%B8%8A%E6%AB%83%E8%82%A1%E7%A5%A8IP%E8%A1%8C%E6%83%85%E7%B6%B2%E8%B7%AF%E8%A6%8F%E6%A0%BC%E6%9B%B8%28V.12.18_TCPIP%29.pdf)。共通規則見 [回播模型](../architecture/replay-model.md)。
 ## 7. Stability 暫緩撮合
