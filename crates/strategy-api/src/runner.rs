@@ -8,9 +8,9 @@ use replay_engine::{
 };
 
 use crate::{
-    ContextError, SessionSegment, Strategy, StrategyDeclaration, StrategyEventContext,
-    StrategyFinalizeContext, StrategyInitializationContext, StrategyOutput,
-    StrategyOutputEncodingError, StrategyOutputSink, TwseTradingContextEvaluator,
+    ContextError, MarketTradingContextEvaluator, SessionSegment, Strategy, StrategyDeclaration,
+    StrategyEventContext, StrategyFinalizeContext, StrategyInitializationContext, StrategyOutput,
+    StrategyOutputEncodingError, StrategyOutputSink,
 };
 
 #[derive(Debug)]
@@ -197,7 +197,7 @@ pub fn run_strategy<S: Strategy>(
             .expect("replay commit guarantees instrument state")
             .view();
         let trading =
-            TwseTradingContextEvaluator::evaluate(event, commit.occurrence(), state, segment)
+            MarketTradingContextEvaluator::evaluate(event, commit.occurrence(), state, segment)
                 .map_err(|error| {
                     failure(
                         &core,

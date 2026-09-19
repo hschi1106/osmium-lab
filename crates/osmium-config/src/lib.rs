@@ -1323,7 +1323,7 @@ impl fmt::Display for ConfigError {
         match self {
             Self::UnsupportedVersion { expected, actual } => write!(
                 formatter,
-                "unsupported config_version {actual}; expected {expected}; legacy config_version 1 is not supported, upgrade the config"
+                "unsupported config_version {actual}; expected {expected}"
             ),
             Self::Strategy(error) => write!(formatter, "{error}"),
             _ => write!(formatter, "{self:?}"),
@@ -1668,9 +1668,9 @@ mod tests {
     }
 
     #[test]
-    fn run_config_rejects_legacy_schema_with_upgrade_error() {
+    fn run_config_rejects_unsupported_schema_version() {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("legacy.yaml");
+        let path = directory.path().join("unsupported.yaml");
         fs::write(&path, "config_version: 1\n").unwrap();
 
         let error = load(path, &registry()).unwrap_err();
@@ -1681,7 +1681,7 @@ mod tests {
                 actual: 1
             }
         ));
-        assert!(error.to_string().contains("upgrade the config"));
+        assert!(error.to_string().contains("expected 3"));
     }
 
     #[test]

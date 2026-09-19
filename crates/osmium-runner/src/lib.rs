@@ -11,7 +11,7 @@ use replay_engine::{
 use strategy_api::{
     MarketTradingContextEvaluator, OrderFeedback, SessionSegment, SessionSegmentId, Strategy,
     StrategyEventContext, StrategyFeedbackContext, StrategyFinalizeContext,
-    StrategyInitializationContext, StrategyOutput, StrategyOutputSink, TwseTradingContextEvaluator,
+    StrategyInitializationContext, StrategyOutput, StrategyOutputSink,
 };
 
 mod artifacts;
@@ -504,7 +504,7 @@ fn run_backtest_with_next<S: Strategy>(
             .ok_or(BacktestError::Declaration)?
             .view();
         let trading =
-            TwseTradingContextEvaluator::evaluate(&event, commit.occurrence(), state, segment)
+            MarketTradingContextEvaluator::evaluate(&event, commit.occurrence(), state, segment)
                 .map_err(|error| BacktestError::Context(error.to_string()))?;
         let mut sink = StrategyOutputSink::with_order_intents();
         strategy

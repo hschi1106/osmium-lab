@@ -734,12 +734,12 @@ mod tests {
     }
 
     #[test]
-    fn feedback_context_preserves_legacy_and_execution_channels() {
-        let legacy = [OrderFeedback::Accepted {
+    fn feedback_context_separates_order_and_execution_channels() {
+        let feedback = [OrderFeedback::Accepted {
             order_id: OrderId::from_bytes([3; 32]),
         }];
-        let context = StrategyFeedbackContext::new(&legacy);
-        assert_eq!(context.feedback(), &legacy);
+        let context = StrategyFeedbackContext::new(&feedback);
+        assert_eq!(context.feedback(), &feedback);
         assert!(context.execution_fills().is_empty());
     }
 

@@ -21,8 +21,8 @@ pub const FILL_MODEL_VERSION: u16 = 2;
 pub use accounting::{
     ACCOUNTING_VERSION, AccountingError, AccountingModel, CashChargeIdentity, CashChargeRecord,
     ChargeBasis, ChargeModel, ChargeSides, DayTradeTaxModel, FillCostRecord, InstrumentEconomics,
-    InstrumentLedgerConfig, InstrumentPerformance, LEGACY_ACCOUNTING_VERSION, Ledger, MultiLedger,
-    MultiPerformanceSummary, PerformanceSummary, RoundingPolicy, assess_fill_charge,
+    InstrumentLedgerConfig, InstrumentPerformance, Ledger, MultiLedger, MultiPerformanceSummary,
+    PerformanceSummary, RoundingPolicy, assess_fill_charge,
 };
 pub use depth::{
     AtomicDepthFill, AtomicDepthLeg, ConsumableDepth, DepthSweepError, DepthSweepResult, LevelFill,
@@ -966,7 +966,7 @@ mod tests {
 
         let normal_commit = core.apply_ordered(&normal_event).unwrap();
         let normal_state = core.state(&instrument).unwrap().view();
-        let normal_context = strategy_api::TwseTradingContextEvaluator::evaluate(
+        let normal_context = strategy_api::MarketTradingContextEvaluator::evaluate(
             &normal_event,
             normal_commit.occurrence(),
             normal_state,
@@ -1011,7 +1011,7 @@ mod tests {
 
         let pause_commit = core.apply_ordered(&pause_event).unwrap();
         let pause_state = core.state(&instrument).unwrap().view();
-        let pause_context = strategy_api::TwseTradingContextEvaluator::evaluate(
+        let pause_context = strategy_api::MarketTradingContextEvaluator::evaluate(
             &pause_event,
             pause_commit.occurrence(),
             pause_state,

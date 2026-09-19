@@ -50,7 +50,6 @@ impl CashChargeRequest {
 }
 
 pub const CANONICAL_STRATEGY_OUTPUT_VERSION: u16 = 3;
-pub const LEGACY_CANONICAL_STRATEGY_OUTPUT_VERSION: u16 = 1;
 const STRATEGY_OUTPUT_MAGIC: &[u8; 4] = b"OSSO";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -529,23 +528,7 @@ impl StrategyOutput {
 
     #[must_use]
     pub fn canonical_version(&self) -> u16 {
-        if self.records.iter().any(|record| {
-            matches!(
-                record,
-                StrategyOutputRecord::EventCashCharge { .. }
-                    | StrategyOutputRecord::ControlCashCharge { .. }
-            )
-        }) {
-            CANONICAL_STRATEGY_OUTPUT_VERSION
-        } else if self
-            .records
-            .iter()
-            .any(|record| matches!(record, StrategyOutputRecord::ControlIndicator { .. }))
-        {
-            2
-        } else {
-            LEGACY_CANONICAL_STRATEGY_OUTPUT_VERSION
-        }
+        CANONICAL_STRATEGY_OUTPUT_VERSION
     }
 
     pub fn checksum(&self) -> Result<StrategyOutputChecksum, StrategyOutputEncodingError> {
@@ -633,17 +616,17 @@ mod tests {
     }
 
     #[test]
-    fn event_only_output_keeps_version_one_bytes() {
+    fn event_only_output_uses_current_canonical_version() {
         let output = output();
         assert_eq!(
             output.canonical_version(),
-            LEGACY_CANONICAL_STRATEGY_OUTPUT_VERSION
+            CANONICAL_STRATEGY_OUTPUT_VERSION
         );
-        assert_eq!(&output.to_canonical_bytes().unwrap()[4..6], &[0, 1]);
+        assert_eq!(&output.to_canonical_bytes().unwrap()[4..6], &[0, 3]);
     }
 
     #[test]
-    fn control_indicator_selects_version_two_without_fake_occurrence() {
+    fn control_indicator_uses_current_version_without_fake_occurrence() {
         let mut sink = StrategyOutputSink::with_scheduled_orders();
         sink.emit_indicator("recovery", IndicatorValue::Bool(true))
             .unwrap();
@@ -653,8 +636,11 @@ mod tests {
                 .unwrap(),
         );
 
-        assert_eq!(output.canonical_version(), 2);
-        assert_eq!(&output.to_canonical_bytes().unwrap()[4..6], &[0, 2]);
+        assert_eq!(
+            output.canonical_version(),
+            CANONICAL_STRATEGY_OUTPUT_VERSION
+        );
+        assert_eq!(&output.to_canonical_bytes().unwrap()[4..6], &[0, 3]);
         assert!(matches!(
             output.records(),
             [StrategyOutputRecord::ControlIndicator {

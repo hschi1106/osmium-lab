@@ -260,11 +260,6 @@ impl TradingContext {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MarketTradingContextEvaluator;
 
-/// Compatibility aliases keep the market-specific entry points while sharing one
-/// provider-neutral evaluator and one signal taxonomy.
-pub type TwseTradingContextEvaluator = MarketTradingContextEvaluator;
-pub type TpexTradingContextEvaluator = MarketTradingContextEvaluator;
-
 impl MarketTradingContextEvaluator {
     pub fn evaluate(
         event: &DomainEvent,

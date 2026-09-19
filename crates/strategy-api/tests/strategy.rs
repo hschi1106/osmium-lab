@@ -474,7 +474,7 @@ fn session_phase_and_twse_indicative_rules_are_explicit() {
     for (event, phase, matching, order_entry) in cases {
         let commit = replay.apply_ordered(&event).unwrap();
         let state = replay.state(&instrument()).unwrap().view();
-        let context = strategy_api::TwseTradingContextEvaluator::evaluate(
+        let context = strategy_api::MarketTradingContextEvaluator::evaluate(
             &event,
             commit.occurrence(),
             state,

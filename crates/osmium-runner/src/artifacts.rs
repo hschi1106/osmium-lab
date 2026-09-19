@@ -1134,9 +1134,11 @@ mod tests {
     }
 
     #[test]
-    fn inspect_rejects_legacy_manifest_version() {
-        let path =
-            std::env::temp_dir().join(format!("osmium-legacy-manifest-{}", std::process::id()));
+    fn inspect_rejects_unsupported_manifest_version() {
+        let path = std::env::temp_dir().join(format!(
+            "osmium-unsupported-manifest-{}",
+            std::process::id()
+        ));
         if path.exists() {
             fs::remove_dir_all(&path).unwrap();
         }

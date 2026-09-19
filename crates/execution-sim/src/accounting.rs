@@ -12,7 +12,6 @@ use strategy_api::{OrderId, OrderSide};
 use crate::FillRecord;
 
 pub const ACCOUNTING_VERSION: u16 = 8;
-pub const LEGACY_ACCOUNTING_VERSION: u16 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]

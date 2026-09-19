@@ -178,8 +178,8 @@ mod tests {
     };
     use replay_engine::ReplayCore;
     use strategy_api::{
-        RawStrategyParameter, SessionSegment, StrategyOutputSink, StrategyRegistry,
-        TwseTradingContextEvaluator,
+        MarketTradingContextEvaluator, RawStrategyParameter, SessionSegment, StrategyOutputSink,
+        StrategyRegistry,
     };
 
     use super::*;
@@ -362,9 +362,13 @@ mod tests {
         for event in &events {
             let commit = core.apply_ordered(event).unwrap();
             let state = core.state(&twse).unwrap().view();
-            let trading =
-                TwseTradingContextEvaluator::evaluate(event, commit.occurrence(), state, &segment)
-                    .unwrap();
+            let trading = MarketTradingContextEvaluator::evaluate(
+                event,
+                commit.occurrence(),
+                state,
+                &segment,
+            )
+            .unwrap();
             let mut sink = StrategyOutputSink::with_order_intents();
             strategy
                 .on_event(

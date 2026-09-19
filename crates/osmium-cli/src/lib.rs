@@ -98,8 +98,7 @@ Non-interactive output options:
   --quiet               Suppress successful command output
   --no-color            Disable terminal color
 
-config_version 3 is required. Legacy config_version 1 is not supported. Output directories
-must not already exist.
+config_version 3 is required. Output directories must not already exist.
 ";
 
 /// Runs the complete Osmium CLI with additional compiled strategy factories.
