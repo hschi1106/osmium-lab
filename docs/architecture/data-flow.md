@@ -24,6 +24,17 @@
 
 plan 不寫入 source、cache 或 output，也不開啟 replay streams。
 
+`osmium-config::plan` 將 provider-neutral 的 `SessionPlan` 綁在對應的
+`PlannedPartition`，再產生 immutable `ExecutionPlan`。因此 replay、schedule、source sync
+與 cache prepare 都消費同一份 partition/session materialization；不會從 `RunConfig` 再次
+推導 session window 或 instrument class。`PlanBundle` 只保留 execution plan 與在所有 cache
+binding 可用時建立的 `ReplayPlan`，不另存平行的 session-plan 陣列。
+
+`InstrumentSelection` 留在 config layer，負責保留 YAML 選項與 strategy bootstrap 所需的
+輸入；`EffectiveRunConfig` 是 planner 的 validated immutable values；`ExecutionPlan` 則在
+相同 effective values 上加入本地 source/cache state 與 deterministic identity。CLI 只在
+composition root 注入 provider mapping resolver，runner 不解析 YAML 或重新驗證 config。
+
 ## 3. Source sync
 
 ```text

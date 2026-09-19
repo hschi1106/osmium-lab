@@ -1,6 +1,6 @@
 # 009：簡化 config → planner → runner 的資料流
 
-Status: pending
+Status: complete
 Depends on: 008-simplify-accounting-economics.md
 
 ## 目標
@@ -106,24 +106,24 @@ Goal-003 provider resolver 邊界必須保持。
 
 ## 驗收
 
-- [ ] YAML -> plan -> run 可順著追。
-- [ ] duplicate validation/DTO copy 減少。
-- [ ] provider neutrality 未倒退。
-- [ ] runner 只執行 frozen plan。
-- [ ] CLI 只做 composition/IO/presentation。
-- [ ] 無新 orchestration framework。
-- [ ] Goal-006 matrix 回歸通過。
-- [ ] fmt/test/clippy 通過。
-- [ ] cloc 已記錄。
+- [x] YAML -> plan -> run 可順著追。
+- [x] duplicate validation/DTO copy 減少。
+- [x] provider neutrality 未倒退。
+- [x] runner 只執行 frozen plan。
+- [x] CLI 只做 composition/IO/presentation。
+- [x] 無新 orchestration framework。
+- [x] Goal-006 matrix 回歸通過。
+- [x] fmt/test/clippy 通過。
+- [x] cloc 已記錄。
 
 ## 執行紀錄
 
-- Baseline revision / working tree：
-- Rust LOC before：
-- Data-flow duplication：
-- Removed / retained boundaries：
-- Validation：
-- Rust LOC after / delta：
-- Breaking changes：
-- 剩餘風險：
+- Baseline revision / working tree：`968fcab`；Goal 009 開始前 worktree clean。
+- Rust LOC before：`~/cloc/cloc --include-lang=Rust crates` = 114 files / 3,658 blank / 273 comment / 42,461 code。範圍分項：`osmium-config` 1 / 130 / 1 / 1,702，`run-planner` 9 / 366 / 6 / 3,594，`osmium-cli` 3 / 102 / 10 / 1,923，`osmium-runner` 6 / 238 / 0 / 4,767。
+- Data-flow duplication：`osmium-config::plan` 原本同時建立 `ExecutionPlan` 與未被消費的平行 `PlanBundle.session_plans`；CLI replay core、schedule、source sync、cache prepare 與 backtest 又以 `RunConfig` 重新推導 session plan、instrument class、contract shape。`execute run` 也重複 load config、建立 registry 與 plan，讓 source/cache mutation 後的 re-plan 與 final execution 不易沿同一條 flow 閱讀。
+- Removed / retained boundaries：`PlannedPartition` 現在攜帶並驗證與 `SourcePartitionKey` identity 對應的 `SessionPlan`，`PlanBundle` 僅保留 `ExecutionPlan` 與 optional `ReplayPlan`；`EffectiveRunConfig::contract_for` 成為 validated contract lookup。CLI 的 replay/schedule/sync/cache/backtest 改消費 frozen plan；`execute run` 只在 source/cache mutation 後重新 plan，不再重載 YAML／strategy registry。`RunConfig::partition_keys()` 保留給不需要 provider mapping 或 cache state 的 read-only `data verify`，`InstrumentSelection` 保留作 YAML/application parsing 與 strategy bootstrap input；Goal-003 的 provider mapping resolver 仍在 CLI composition root。
+- Validation：`rtk cargo fmt --all -- --check` 通過；`rtk cargo clippy --workspace --all-targets --all-features -- -D warnings` 通過；`rtk cargo test --workspace` = 328 passed（55 suites）；fixture generator、fixture diff、compact/bundle verifier、license verifier 與 Python acceptance tests（8 passed）通過；release `osmium` 與 fixture-data helper build 通過。fresh temporary-root smoke 通過 `config check`、`plan`、`data verify`、`cache prepare`（reused）、`replay`、`backtest`、`run`（output 與 replay-only）、`inspect` 及 compiled strategy smoke（1 order / 1 fill）。`git diff --check` 通過。
+- Rust LOC after / delta：`~/cloc/cloc --include-lang=Rust crates` = 114 files / 3,666 blank / 273 comment / 42,580 code；相對 baseline code `+119`。分項：`osmium-config` 1 / 128 / 1 / 1,672（code `-30`），`run-planner` 9 / 371 / 6 / 3,714（`+120`，含 frozen session regression tests），`osmium-cli` 3 / 107 / 10 / 1,952（`+29`），`osmium-runner` 維持 6 / 238 / 0 / 4,767。
+- Breaking changes：移除 `RunConfig::selection_for`、`instrument_class_for`、`session_plan_for` 與 `PlanBundle.session_plans`；workspace 內 CLI 與 acceptance fixture helper 已遷移至 frozen plan API。`PlannedPartition::classify`／`coverage_unavailable` 現在要求 matching `SessionPlan` 並回傳 validation result。
+- 剩餘風險：`osmium-runner` 維持 provider-neutral generic entrypoints，仍由 CLI 將 `ReplayPlan`、session schedule、simulator 與 ledger 組合後呼叫；`ExecutionPlan` identity 對應 session identity，但不把完整 session windows 另編碼進 canonical bytes。source verify 仍需由 config layer 產生 requested keys，因該 command 不應為驗證而觸發 provider mapping/cache inspection。
 - 下一步：010-remove-legacy-compatibility.md

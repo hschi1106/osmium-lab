@@ -5,7 +5,7 @@ use market_types::{InstrumentId, TradingDate};
 use crate::{
     CACHE_POLICY_VERSION, CONFIG_SCHEMA_VERSION, CacheIdentity, CacheState, CorruptReason,
     EFFECTIVE_CONFIG_VERSION, EffectiveConfigChecksum, EffectiveRunConfig, IncompleteReason,
-    REPLAY_DATA_POLICY_VERSION, SOURCE_PARTITION_KEY_VERSION, SOURCE_POLICY_VERSION,
+    REPLAY_DATA_POLICY_VERSION, SOURCE_PARTITION_KEY_VERSION, SOURCE_POLICY_VERSION, SessionPlan,
     SourcePartitionIdentity, SourcePartitionKey, SourcePolicy, SourceRevisionIdentity, SourceState,
     canonical::append_len,
 };
@@ -89,6 +89,7 @@ pub enum CacheAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlannedPartition {
     key: SourcePartitionKey,
+    session_plan: SessionPlan,
     source_state: SourceState,
     source_action: SourceAction,
     verification_action: VerificationAction,
@@ -96,12 +97,14 @@ pub struct PlannedPartition {
 }
 
 impl PlannedPartition {
-    #[must_use]
-    pub const fn classify(
+    #[must_use = "a planned partition must be validated before use"]
+    pub fn classify(
         key: SourcePartitionKey,
+        session_plan: SessionPlan,
         source_state: SourceState,
         cache_state: CacheState,
-    ) -> Self {
+    ) -> Result<Self, PlanError> {
+        validate_session_plan(&key, &session_plan)?;
         let (source_action, verification_action) = match source_state {
             SourceState::Missing => (
                 SourceAction::DownloadMissingSource,
@@ -131,29 +134,40 @@ impl PlannedPartition {
             (SourceState::Complete { .. }, _) => CacheAction::RebuildCacheFromCompleteSource,
             _ => CacheAction::AwaitCompleteSource,
         };
-        Self {
+        Ok(Self {
             key,
+            session_plan,
             source_state,
             source_action,
             verification_action,
             cache_action,
-        }
+        })
     }
 
-    #[must_use]
-    pub const fn coverage_unavailable(key: SourcePartitionKey) -> Self {
-        Self {
+    #[must_use = "a planned partition must be validated before use"]
+    pub fn coverage_unavailable(
+        key: SourcePartitionKey,
+        session_plan: SessionPlan,
+    ) -> Result<Self, PlanError> {
+        validate_session_plan(&key, &session_plan)?;
+        Ok(Self {
             key,
+            session_plan,
             source_state: SourceState::Missing,
             source_action: SourceAction::CoverageUnavailable,
             verification_action: VerificationAction::CoverageUnavailable,
             cache_action: CacheAction::AwaitCompleteSource,
-        }
+        })
     }
 
     #[must_use]
     pub const fn key(&self) -> &SourcePartitionKey {
         &self.key
+    }
+
+    #[must_use]
+    pub const fn session_plan(&self) -> &SessionPlan {
+        &self.session_plan
     }
 
     #[must_use]
@@ -464,6 +478,7 @@ pub enum PlanError {
     DegradedScopeWithStrictPolicy,
     UnknownDegradedScope(SourcePartitionIdentity),
     InvalidDegradedScope(SourcePartitionIdentity),
+    SessionPlanMismatch(SourcePartitionIdentity),
     CanonicalLengthOverflow,
 }
 
@@ -504,6 +519,12 @@ impl fmt::Display for PlanError {
                 formatter,
                 "degraded scope is not an incomplete source partition: {identity:?}"
             ),
+            Self::SessionPlanMismatch(identity) => {
+                write!(
+                    formatter,
+                    "session plan does not match source partition: {identity:?}"
+                )
+            }
             Self::CanonicalLengthOverflow => {
                 formatter.write_str("execution plan canonical field exceeds u32 length")
             }
@@ -512,3 +533,22 @@ impl fmt::Display for PlanError {
 }
 
 impl Error for PlanError {}
+
+fn validate_session_plan(
+    key: &SourcePartitionKey,
+    session_plan: &SessionPlan,
+) -> Result<(), PlanError> {
+    let session_kinds = session_plan
+        .windows()
+        .iter()
+        .map(|window| window.kind())
+        .collect::<Box<[_]>>();
+    if session_plan.instrument() != key.instrument()
+        || session_plan.trading_date() != key.trading_date()
+        || session_plan.identity() != key.session_plan_identity()
+        || session_kinds.as_ref() != key.session_kinds()
+    {
+        return Err(PlanError::SessionPlanMismatch(key.identity()));
+    }
+    Ok(())
+}

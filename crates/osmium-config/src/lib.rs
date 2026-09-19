@@ -215,53 +215,36 @@ impl RunConfig {
             .ok_or(ConfigError::StrategyAlreadyTaken)
     }
 
-    #[must_use]
-    pub fn selection_for(&self, instrument: &InstrumentId) -> Option<&InstrumentSelection> {
-        self.selections
-            .iter()
-            .find(|selection| selection.instrument() == instrument)
-    }
-
-    #[must_use]
-    pub fn instrument_class_for(&self, instrument: &InstrumentId) -> Option<InstrumentClass> {
-        self.selection_for(instrument)
-            .map(InstrumentSelection::class)
-    }
-
-    pub fn session_plan_for(&self, key: &SourcePartitionKey) -> Result<SessionPlan, ConfigError> {
-        if let Some(selection) = self.selection_for(key.instrument()) {
-            session_plan(
-                selection,
-                key.trading_date(),
-                key.session_kinds().iter().copied(),
-            )
-        } else {
-            Err(ConfigError::Invalid("universe.instruments"))
-        }
-    }
-
     pub fn partition_keys(&self) -> Result<Box<[SourcePartitionKey]>, ConfigError> {
         let mut keys = Vec::new();
         for selection in &self.selections {
             for trading_date in self.effective.trading_dates() {
-                let session_plan = session_plan(
-                    selection,
-                    *trading_date,
-                    selection.session_kinds.iter().copied(),
-                )?;
-                keys.push(
-                    SourcePartitionKey::new(
-                        self.effective.source(),
-                        selection.instrument.clone(),
-                        *trading_date,
-                        selection.session_kinds.iter().copied(),
-                        session_plan.identity(),
-                    )
-                    .map_err(|error| ConfigError::Value(error.to_string()))?,
-                );
+                let (key, _) = self.materialize_partition(selection, *trading_date)?;
+                keys.push(key);
             }
         }
         Ok(keys.into_boxed_slice())
+    }
+
+    fn materialize_partition(
+        &self,
+        selection: &InstrumentSelection,
+        trading_date: TradingDate,
+    ) -> Result<(SourcePartitionKey, SessionPlan), ConfigError> {
+        let session_plan = session_plan(
+            selection,
+            trading_date,
+            selection.session_kinds.iter().copied(),
+        )?;
+        let key = SourcePartitionKey::new(
+            self.effective.source(),
+            selection.instrument.clone(),
+            trading_date,
+            selection.session_kinds.iter().copied(),
+            session_plan.identity(),
+        )
+        .map_err(|error| ConfigError::Value(error.to_string()))?;
+        Ok((key, session_plan))
     }
 }
 
@@ -279,7 +262,6 @@ impl fmt::Debug for RunConfig {
 #[derive(Debug)]
 pub struct PlanBundle {
     pub execution: ExecutionPlan,
-    pub session_plans: Box<[SessionPlan]>,
     pub replay: Option<ReplayPlan>,
 }
 
@@ -345,25 +327,12 @@ where
     E: fmt::Display,
 {
     let mut partitions = Vec::new();
-    let mut session_plans = Vec::new();
     let mut replay_bindings = Vec::new();
     let mut replay_ready = true;
     let cache_catalog = PartitionCacheCatalog::new(config.effective.data_root());
     for selection in &config.selections {
         for trading_date in config.effective.trading_dates() {
-            let session_plan = session_plan(
-                selection,
-                *trading_date,
-                selection.session_kinds.iter().copied(),
-            )?;
-            let key = SourcePartitionKey::new(
-                config.effective.source(),
-                selection.instrument.clone(),
-                *trading_date,
-                selection.session_kinds.iter().copied(),
-                session_plan.identity(),
-            )
-            .map_err(|error| ConfigError::Value(error.to_string()))?;
+            let (key, session_plan) = config.materialize_partition(selection, *trading_date)?;
             let repository =
                 PartitionedSourceRepository::new(config.effective.data_root(), key.clone())
                     .map_err(|error| ConfigError::Value(error.to_string()))?;
@@ -392,12 +361,10 @@ where
             } else {
                 replay_ready = false;
             }
-            partitions.push(PlannedPartition::classify(
-                key,
-                inspection.state(),
-                cache_state,
-            ));
-            session_plans.push(session_plan);
+            partitions.push(
+                PlannedPartition::classify(key, session_plan, inspection.state(), cache_state)
+                    .map_err(|error| ConfigError::Value(error.to_string()))?,
+            );
         }
     }
     let execution = ExecutionPlan::new(config.effective.clone(), partitions, Vec::new())
@@ -410,11 +377,7 @@ where
     } else {
         None
     };
-    Ok(PlanBundle {
-        execution,
-        session_plans: session_plans.into_boxed_slice(),
-        replay,
-    })
+    Ok(PlanBundle { execution, replay })
 }
 
 fn cache_state(
@@ -1433,7 +1396,12 @@ mod tests {
         );
         let bundle = plan(&config, mapping_resolver).unwrap();
         assert_eq!(bundle.execution.partitions().len(), 1);
-        assert_eq!(bundle.session_plans.len(), 1);
+        assert_eq!(
+            bundle.execution.partitions()[0].session_plan().identity(),
+            bundle.execution.partitions()[0]
+                .key()
+                .session_plan_identity()
+        );
         assert!(
             bundle
                 .execution

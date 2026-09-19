@@ -949,6 +949,13 @@ impl EffectiveRunConfig {
     }
 
     #[must_use]
+    pub fn contract_for(&self, instrument: &InstrumentId) -> Option<&InstrumentContractConfig> {
+        self.instrument_contracts
+            .iter()
+            .find(|contract| contract.instrument() == instrument)
+    }
+
+    #[must_use]
     pub const fn session_kinds(&self) -> &[SessionKind] {
         &self.session_kinds
     }

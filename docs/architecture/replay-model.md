@@ -120,8 +120,10 @@ reducer 支援 carry 與 reset boundary policy；目前 CLI runner 對每個 pla
 | execution fill policy | effective `simulation`、instrument economics 與已驗證 contract 設定 | config 缺失或矛盾時在 config/planner 階段拒絕 | effective config／execution plan checksum |
 | strategy-visible metadata | event、`MarketStateView`、`TradingContext` 與 session context | 只呈現已觀察或已驗證值；不查 provider API | event、strategy 與 run artifact identity |
 
-production flow 是 `RunConfig` 的既有 contract/session/economics 初始化，加上 provider normalizer
-輸出的 neutral event，經由 `ReplayCore -> MarketState -> TradingContext -> execution` 完成。
+production flow 是 YAML 經 `RunConfig`、effective values 與 frozen `ExecutionPlan` 的既有
+contract/session/economics 初始化，加上 provider normalizer 輸出的 neutral event，經由
+`ReplayCore -> MarketState -> TradingContext -> execution` 完成。replay 與 backtest 直接使用
+`PlannedPartition` 已物化的 `SessionPlan` 與 contract；不在 runner path 重新從 YAML 推導。
 reserved 或無法解讀的 provider evidence 會映射為 `Unknown` 並保留 warning；profile、metadata DB、
 crawler 與 web lookup 不在 core path。這讓缺少 market background 的商品仍能回播無關事件，同時不把
 unknown 靜默降級成 false、`Continuous` 或可執行 order。

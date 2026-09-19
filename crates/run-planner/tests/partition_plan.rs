@@ -1,9 +1,10 @@
 mod support;
 
+use market_types::InstrumentClass;
 use run_planner::{
     CacheAction, CacheIdentity, CacheState, CompletionPolicy, CorruptReason, DegradedScope,
     EffectiveRunConfig, ExecutionPlan, IncompleteReason, NetworkRequirement, PlanError,
-    PlannedPartition, PlanningVersionSet, SessionPlanIdentity, SourceAction, SourceId,
+    PlannedPartition, PlanningVersionSet, SessionPlan, SessionPlanIdentity, SourceAction, SourceId,
     SourcePartitionKey, SourceRevisionIdentity, SourceState, SourceStateKind, VerificationAction,
 };
 use strategy_api::SessionKind;
@@ -24,6 +25,33 @@ fn partition(
         SessionPlanIdentity::from_bytes([session_identity; 32]),
     )
     .unwrap()
+}
+
+fn planned_partition(
+    symbol: &str,
+    date_value: &str,
+    sessions: Vec<SessionKind>,
+    source_state: SourceState,
+    cache_state: CacheState,
+) -> PlannedPartition {
+    let instrument = instrument(symbol);
+    let trading_date = date(date_value);
+    let session_plan = SessionPlan::for_instrument_class(
+        &instrument,
+        InstrumentClass::Equity,
+        trading_date,
+        sessions.clone(),
+    )
+    .unwrap();
+    let key = SourcePartitionKey::new(
+        SourceId::new("teralion").unwrap(),
+        instrument,
+        trading_date,
+        sessions,
+        session_plan.identity(),
+    )
+    .unwrap();
+    PlannedPartition::classify(key, session_plan, source_state, cache_state).unwrap()
 }
 
 #[test]
@@ -111,6 +139,22 @@ fn source_and_cache_states_classify_into_explicit_actions() {
 
     let complete = PlannedPartition::classify(
         key.clone(),
+        SessionPlan::for_instrument_class(
+            key.instrument(),
+            InstrumentClass::Equity,
+            key.trading_date(),
+            key.session_kinds().iter().copied(),
+        )
+        .unwrap(),
+        SourceState::Complete { revision },
+        CacheState::Valid { identity: cache },
+    );
+    assert!(complete.is_err());
+
+    let complete = planned_partition(
+        "2330",
+        "2026-07-27",
+        vec![SessionKind::Regular],
         SourceState::Complete { revision },
         CacheState::Valid { identity: cache },
     );
@@ -127,20 +171,32 @@ fn source_and_cache_states_classify_into_explicit_actions() {
         CacheAction::ReuseValidCache { identity: cache }
     );
 
-    let missing =
-        PlannedPartition::classify(key.clone(), SourceState::Missing, CacheState::Missing);
+    let missing = planned_partition(
+        "2330",
+        "2026-07-27",
+        vec![SessionKind::Regular],
+        SourceState::Missing,
+        CacheState::Missing,
+    );
     assert_eq!(missing.source_action(), SourceAction::DownloadMissingSource);
     assert_eq!(missing.cache_action(), CacheAction::AwaitCompleteSource);
 
-    let building =
-        PlannedPartition::classify(key.clone(), SourceState::Building, CacheState::Building);
+    let building = planned_partition(
+        "2330",
+        "2026-07-27",
+        vec![SessionKind::Regular],
+        SourceState::Building,
+        CacheState::Building,
+    );
     assert_eq!(
         building.source_action(),
         SourceAction::ResumeOrRestartBuilding
     );
 
-    let incomplete = PlannedPartition::classify(
-        key.clone(),
+    let incomplete = planned_partition(
+        "2330",
+        "2026-07-27",
+        vec![SessionKind::Regular],
         SourceState::Incomplete {
             reason: IncompleteReason::DailyInstrumentMissing,
         },
@@ -153,8 +209,10 @@ fn source_and_cache_states_classify_into_explicit_actions() {
         }
     );
 
-    let corrupt = PlannedPartition::classify(
-        key,
+    let corrupt = planned_partition(
+        "2330",
+        "2026-07-27",
+        vec![SessionKind::Regular],
         SourceState::Corrupt {
             reason: CorruptReason::CompressionFrameInvalid,
         },
@@ -170,12 +228,22 @@ fn source_and_cache_states_classify_into_explicit_actions() {
 
 #[test]
 fn coverage_unavailable_is_not_confused_with_missing_download() {
-    let planned = PlannedPartition::coverage_unavailable(partition(
-        "2330",
-        "2026-07-27",
-        vec![SessionKind::Regular],
-        1,
-    ));
+    let session_plan = SessionPlan::for_instrument_class(
+        &instrument("2330"),
+        InstrumentClass::Equity,
+        date("2026-07-27"),
+        [SessionKind::Regular],
+    )
+    .unwrap();
+    let key = SourcePartitionKey::new(
+        SourceId::new("teralion").unwrap(),
+        instrument("2330"),
+        date("2026-07-27"),
+        [SessionKind::Regular],
+        session_plan.identity(),
+    )
+    .unwrap();
+    let planned = PlannedPartition::coverage_unavailable(key, session_plan).unwrap();
 
     assert_eq!(planned.source_state(), SourceState::Missing);
     assert_eq!(planned.source_action(), SourceAction::CoverageUnavailable);
@@ -194,17 +262,19 @@ fn execution_plan_is_independent_of_partition_discovery_order() {
         "target/test-data",
     ))
     .unwrap();
-    let left_key = partition("2330", "2026-07-27", vec![SessionKind::Regular], 1);
-    let right_key = partition("2330", "2026-07-28", vec![SessionKind::Regular], 2);
-    let left = PlannedPartition::classify(
-        left_key,
+    let left = planned_partition(
+        "2330",
+        "2026-07-27",
+        vec![SessionKind::Regular],
         SourceState::Complete {
             revision: SourceRevisionIdentity::from_bytes([5; 32]),
         },
         CacheState::Missing,
     );
-    let right = PlannedPartition::classify(
-        right_key,
+    let right = planned_partition(
+        "2330",
+        "2026-07-28",
+        vec![SessionKind::Regular],
         SourceState::Complete {
             revision: SourceRevisionIdentity::from_bytes([6; 32]),
         },
@@ -234,8 +304,10 @@ fn execution_plan_requires_every_universe_date_partition() {
         "target/test-data",
     ))
     .unwrap();
-    let planned = PlannedPartition::classify(
-        partition("2330", "2026-07-27", vec![SessionKind::Regular], 1),
+    let planned = planned_partition(
+        "2330",
+        "2026-07-27",
+        vec![SessionKind::Regular],
         SourceState::Missing,
         CacheState::Missing,
     );
@@ -258,8 +330,10 @@ fn missing_partition_makes_network_requirement_explicit() {
         "target/test-data",
     ))
     .unwrap();
-    let planned = PlannedPartition::classify(
-        partition("2330", "2026-07-27", vec![SessionKind::Regular], 1),
+    let planned = planned_partition(
+        "2330",
+        "2026-07-27",
+        vec![SessionKind::Regular],
         SourceState::Missing,
         CacheState::Missing,
     );
@@ -277,8 +351,10 @@ fn strict_plan_rejects_degraded_scope() {
         "target/test-data",
     ))
     .unwrap();
-    let planned = PlannedPartition::classify(
-        partition("2330", "2026-07-27", vec![SessionKind::Regular], 1),
+    let planned = planned_partition(
+        "2330",
+        "2026-07-27",
+        vec![SessionKind::Regular],
         SourceState::Incomplete {
             reason: IncompleteReason::CursorNotTerminal,
         },
@@ -301,8 +377,10 @@ fn explicit_degraded_plan_only_accepts_incomplete_partition_scope() {
         "target/test-data",
     )))
     .unwrap();
-    let planned = PlannedPartition::classify(
-        partition("2330", "2026-07-27", vec![SessionKind::Regular], 1),
+    let planned = planned_partition(
+        "2330",
+        "2026-07-27",
+        vec![SessionKind::Regular],
         SourceState::Incomplete {
             reason: IncompleteReason::CoverageUnconfirmed,
         },
