@@ -172,8 +172,9 @@ mod tests {
     };
     use market_types::{
         AuctionObservation, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent,
-        EventPayload, IndicativeAuction, MarketAnnotations, MarketId, MatchTime, Observation,
-        QuoteSnapshot, SourceFormatId, Symbol, TradingDate, TwseQuoteAnnotations, Volume,
+        EventPayload, IndicativeAuction, MarketAnnotations, MarketId, MarketSignal, MatchTime,
+        Observation, QuoteSnapshot, SourceFormatId, Symbol, TradingDate, TwseQuoteAnnotations,
+        Volume,
     };
     use replay_engine::ReplayCore;
     use strategy_api::{
@@ -299,7 +300,8 @@ mod tests {
                     Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
                     MarketAnnotations::TwseQuote(annotations),
                 )
-                .unwrap(),
+                .unwrap()
+                .with_market_signal(Observation::Set(MarketSignal::Continuous)),
             )
         };
         DomainEvent::new(

@@ -588,6 +588,11 @@ fn window_skip_format_and_reserved_flags_are_explicitly_classified() {
         report.warnings()[0].kind(),
         WarningKind::ReservedStatusBits(3)
     );
+    assert!(matches!(
+        report.events()[0].payload(),
+        EventPayload::QuoteSnapshot(snapshot)
+            if matches!(snapshot.market_signal(), Observation::Unknown(_))
+    ));
 }
 
 #[test]

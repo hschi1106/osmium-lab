@@ -112,6 +112,12 @@ domain event 集合為：
 TWSE／TPEx raw status bits 只在 provider boundary 解碼，不進入 strategy 或 execution
 simulation。
 
+market matching、auction post-state、order-entry 與 disposal 不另依賴 instrument-day background
+或今日處置名單：前四者由 event evidence、reducer、session phase 依序產生，缺少 evidence 時保留
+`Unknown`／missing；來源未證實的處置欄位不由稀疏成交、時間間隔或 trial 頻率猜測。只有會影響
+帳務或 fill 的既有 simulation、instrument economics、contract 與 session 設定進入 effective
+config／execution identity。
+
 每個 event 包含 instrument、trading date、source format、`match_time`、可選 source sequence 與 payload。同一 source observation 的不可分割內容以單一 event 原子處理。
 
 ### REPLAY-02 排序

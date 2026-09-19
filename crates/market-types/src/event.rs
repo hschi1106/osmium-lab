@@ -9,7 +9,7 @@ use crate::{
     Volume, append_bytes, append_length, append_optional_u64, trade::validate_trade_units,
 };
 
-pub const MARKET_TYPES_VERSION: u16 = 8;
+pub const MARKET_TYPES_VERSION: u16 = 9;
 pub const EVENT_SCHEMA_VERSION: u16 = 7;
 pub const CANONICAL_EVENT_VERSION: u16 = 7;
 const CANONICAL_MAGIC: &[u8; 4] = b"OSME";
@@ -26,6 +26,7 @@ pub struct QuoteSnapshot {
 }
 
 impl QuoteSnapshot {
+    /// 建構子不替來源補上 `Continuous`；沒有 mapping evidence 時保留 `NoObservation`。
     pub fn new(
         book: CompleteBookSnapshot,
         trade: Observation<ObservedTrade>,
@@ -38,7 +39,7 @@ impl QuoteSnapshot {
             trade,
             cumulative_volume,
             annotations,
-            market_signal: Observation::Set(MarketSignal::Continuous),
+            market_signal: Observation::NoObservation,
         })
     }
 
@@ -82,12 +83,13 @@ pub struct BookSnapshot {
 }
 
 impl BookSnapshot {
+    /// 建構子不替來源補上 `Continuous`；沒有 mapping evidence 時保留 `NoObservation`。
     #[must_use]
     pub const fn new(book: CompleteBookSnapshot, annotations: MarketAnnotations) -> Self {
         Self {
             book,
             annotations,
-            market_signal: Observation::Set(MarketSignal::Continuous),
+            market_signal: Observation::NoObservation,
         }
     }
 
@@ -123,6 +125,7 @@ pub struct TradeBatch {
 }
 
 impl TradeBatch {
+    /// 建構子不替來源補上 `Continuous`；沒有 mapping evidence 時保留 `NoObservation`。
     pub fn new(
         trades: Vec<ObservedTrade>,
         trade_order: TradeBatchOrdering,
@@ -143,7 +146,7 @@ impl TradeBatch {
             trade_order,
             cumulative_volume,
             annotations,
-            market_signal: Observation::Set(MarketSignal::Continuous),
+            market_signal: Observation::NoObservation,
         })
     }
 

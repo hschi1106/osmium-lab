@@ -1210,7 +1210,8 @@ mod tests {
                         Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
                         MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0x10, limit_flags)),
                     )
-                    .unwrap(),
+                    .unwrap()
+                    .with_market_signal(Observation::Set(MarketSignal::Continuous)),
                 ),
             )
         };
@@ -1375,7 +1376,10 @@ mod tests {
             SourceFormatId::new("I080").unwrap(),
             event_time,
             None,
-            EventPayload::BookSnapshot(BookSnapshot::new(book, MarketAnnotations::None)),
+            EventPayload::BookSnapshot(
+                BookSnapshot::new(book, MarketAnnotations::None)
+                    .with_market_signal(Observation::Set(MarketSignal::Continuous)),
+            ),
         );
         let core = ReplayCore::new_multi(
             vec![MarketState::new(instrument.clone(), date)],
@@ -1527,7 +1531,8 @@ mod tests {
                         Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
                         MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0, 0)),
                     )
-                    .unwrap(),
+                    .unwrap()
+                    .with_market_signal(Observation::Set(MarketSignal::Continuous)),
                 ),
             )
         };

@@ -48,8 +48,7 @@ fn canonical_quote_frame_has_the_documented_field_order() {
     expected.push(0);
     expected.extend_from_slice(&0_u64.to_be_bytes());
     expected.push(0);
-    expected.push(1);
-    expected.push(1);
+    expected.push(0);
 
     let canonical = event.to_canonical_bytes().unwrap();
     assert_eq!(canonical, expected);

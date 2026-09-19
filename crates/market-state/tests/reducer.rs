@@ -83,7 +83,8 @@ fn quote_event(
                 cumulative_volume,
                 MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(16, 0)),
             )
-            .unwrap(),
+            .unwrap()
+            .with_market_signal(Observation::Set(MarketSignal::Continuous)),
         ),
     )
 }
@@ -866,7 +867,8 @@ fn tpex_normal_matching_event_clears_prior_indicative_observation() {
                         limit_flags,
                     )),
                 )
-                .unwrap(),
+                .unwrap()
+                .with_market_signal(Observation::Set(MarketSignal::Continuous)),
             ),
         )
     };

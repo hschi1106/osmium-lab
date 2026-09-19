@@ -873,7 +873,11 @@ mod tests {
             SourceFormatId::new("I080").unwrap(),
             match_time,
             None,
-            EventPayload::BookSnapshot(BookSnapshot::new(book, MarketAnnotations::None)),
+            EventPayload::BookSnapshot(
+                BookSnapshot::new(book, MarketAnnotations::None).with_market_signal(
+                    market_types::Observation::Set(market_types::MarketSignal::Continuous),
+                ),
+            ),
         )
     }
 

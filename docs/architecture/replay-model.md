@@ -107,6 +107,25 @@ reducer 先驗證整個 transition，再一次提交。非法價格、數量單�
 
 reducer 支援 carry 與 reset boundary policy；目前 CLI runner 對每個 planned segment 使用 `ResetObservableFields`，在下一 segment 首個 event 前重設 observable fields。
 
+### 4.1 Market background audit
+
+回播不建立額外的 `MarketBackground` 或 instrument-day profile。各欄位的 production source 如下：
+
+| 欄位 | production source | 缺少時的行為 | 是否進 run identity |
+| --- | --- | --- | --- |
+| intraday matching | 當前 `DomainEvent` 的 `MarketSignal`，再由 reducer 產生 `MarketPhase` | `NoObservation` 保留既有 state；初始或 `Unknown` 時 `TradingContext` 回傳 `MatchingState::Unknown`，不猜 `Continuous` | event/cache identity；不另存背景 |
+| disposal | `AuctionObservation` 的 neutral observation；provider 只使用有來源證據的屬性 | 沒有來源證據就不載入處置名單，也不改一般商品 fill/accounting 規則；synthetic neutral event 仍可測試 `disposal=true` | event/cache identity；不另存今日名單 |
+| auction post-state | reducer 依 `AuctionPurpose` 與 `AuctionUncross` 推導 | opening、closing、periodic 各依固定 transition 處理；不以時間或背景補完 | reducer/event version |
+| order-entry policy | `TradingContext` 讀取 event signal、post-event state 與 session phase | signal/state 未知時回傳 `Unknown`，不放行 order | strategy/execution version |
+| execution fill policy | effective `simulation`、instrument economics 與已驗證 contract 設定 | config 缺失或矛盾時在 config/planner 階段拒絕 | effective config／execution plan checksum |
+| strategy-visible metadata | event、`MarketStateView`、`TradingContext` 與 session context | 只呈現已觀察或已驗證值；不查 provider API | event、strategy 與 run artifact identity |
+
+production flow 是 `RunConfig` 的既有 contract/session/economics 初始化，加上 provider normalizer
+輸出的 neutral event，經由 `ReplayCore -> MarketState -> TradingContext -> execution` 完成。
+reserved 或無法解讀的 provider evidence 會映射為 `Unknown` 並保留 warning；profile、metadata DB、
+crawler 與 web lookup 不在 core path。這讓缺少 market background 的商品仍能回播無關事件，同時不把
+unknown 靜默降級成 false、`Continuous` 或可執行 order。
+
 ## 5. TradingContext
 
 MarketState 保存 source-derived facts；`TradingContext` 保存目前 event 的決策投影。它分開表達：

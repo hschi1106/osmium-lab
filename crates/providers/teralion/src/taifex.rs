@@ -3,19 +3,19 @@ use std::{error::Error, fmt};
 use market_types::{
     AuctionObservation, BookError, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot,
     DomainEvent, EventError, EventPayload, IndicativeAuction, InstrumentId, MarketAnnotations,
-    MarketId, MatchTime, MatchTimeError, Observation, ObservedTrade, Price, PriceError, Quantity,
-    QuantityError, QuantityUnit, SourceFormatId, TradeBatch, TradeBatchOrdering,
-    TradeObservationKind, TradingDate,
+    MarketId, MarketSignal, MatchTime, MatchTimeError, Observation, ObservedTrade, Price,
+    PriceError, Quantity, QuantityError, QuantityUnit, SourceFormatId, TradeBatch,
+    TradeBatchOrdering, TradeObservationKind, TradingDate,
 };
 use serde::Deserialize;
 use serde_json::value::RawValue;
 
 pub const MAPPING_NAME: &str = "TeralionTaifexFutures";
-pub const MAPPING_VERSION: u16 = 3;
+pub const MAPPING_VERSION: u16 = 4;
 pub const SPREAD_MAPPING_NAME: &str = "TeralionTaifexCalendarSpreads";
-pub const SPREAD_MAPPING_VERSION: u16 = 1;
+pub const SPREAD_MAPPING_VERSION: u16 = 2;
 pub const OPTION_MAPPING_NAME: &str = "TeralionTaifexOptions";
-pub const OPTION_MAPPING_VERSION: u16 = 2;
+pub const OPTION_MAPPING_VERSION: u16 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstrumentProfile {
@@ -373,7 +373,8 @@ impl TaifexNormalizer {
             Observation::NoObservation,
             MarketAnnotations::None,
         )
-        .map_err(|error| event_error(record_number, &context, error))?;
+        .map_err(|error| event_error(record_number, &context, error))?
+        .with_market_signal(Observation::Set(MarketSignal::Continuous));
         Ok(ClassifiedRecord::Accepted(Box::new(DomainEvent::new(
             self.config.instrument.clone(),
             self.config.trading_date,
@@ -504,10 +505,10 @@ impl TaifexNormalizer {
             source_format,
             match_time,
             None,
-            EventPayload::BookSnapshot(market_types::BookSnapshot::new(
-                book,
-                MarketAnnotations::None,
-            )),
+            EventPayload::BookSnapshot(
+                market_types::BookSnapshot::new(book, MarketAnnotations::None)
+                    .with_market_signal(Observation::Set(MarketSignal::Continuous)),
+            ),
         ))))
     }
 }

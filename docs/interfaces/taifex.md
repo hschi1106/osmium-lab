@@ -2,11 +2,17 @@
 
 適用 normalizer：
 
-- outright futures：`TeralionTaifexFutures`，mapping version `3`，wire market `taifex_fut`。
-- calendar spreads：`TeralionTaifexCalendarSpreads`，mapping version `1`，wire market `taifex_fut`。
-- index options：`TeralionTaifexOptions`，mapping version `2`，wire market `taifex_opt`。
+- outright futures：`TeralionTaifexFutures`，mapping version `4`，wire market `taifex_fut`。
+- calendar spreads：`TeralionTaifexCalendarSpreads`，mapping version `2`，wire market `taifex_fut`。
+- index options：`TeralionTaifexOptions`，mapping version `3`，wire market `taifex_opt`。
 
 上述 profiles 在 domain 中都使用 `MarketId::Taifex`；archive market、mapping identity 與 economics 依明確 instrument contract 選擇，不由 symbol 推定。
+
+I020 trade 與 I080／I082 完整五檔是已驗證的 firm observation，normalizer 明確輸出
+`MarketSignal::Continuous`；I022 opening calculated observation 輸出
+`AuctionCollecting(AuctionPurpose::Opening)`。generic event constructor 不會用
+`Continuous` 補缺少的 provider evidence，也沒有 instrument-day market background lookup；若
+來源未提供 signal，core 保留 `NoObservation`／`Unknown`。
 
 ## 1. Session 與時間
 
