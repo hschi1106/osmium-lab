@@ -1,20 +1,11 @@
 use std::{error::Error, fmt};
 
-use market_types::{
-    DomainEvent, EventKind, MarketAnnotations, MarketId, QuantityUnit, SourceFormatId,
-};
+use market_types::{DomainEvent, EventKind, MarketId, QuantityUnit, SourceFormatId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CumulativeVolumePolicy {
     Unconstrained,
     NonDecreasingWithinSegment { unit: QuantityUnit },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AnnotationPolicy {
-    NoneOnly,
-    TwseQuote,
-    TpexQuote,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,7 +46,6 @@ pub struct MarketStateProfile {
     market: MarketId,
     source_rules: Box<[SourceFormatRule]>,
     cumulative_volume_policy: CumulativeVolumePolicy,
-    annotation_policy: AnnotationPolicy,
     segment_boundary_policy_version: u16,
 }
 
@@ -64,7 +54,6 @@ impl MarketStateProfile {
         market: MarketId,
         mut source_rules: Vec<SourceFormatRule>,
         cumulative_volume_policy: CumulativeVolumePolicy,
-        annotation_policy: AnnotationPolicy,
         segment_boundary_policy_version: u16,
     ) -> Result<Self, ProfileError> {
         if source_rules.is_empty() {
@@ -84,7 +73,6 @@ impl MarketStateProfile {
             market,
             source_rules: source_rules.into_boxed_slice(),
             cumulative_volume_policy,
-            annotation_policy,
             segment_boundary_policy_version,
         })
     }
@@ -118,7 +106,6 @@ impl MarketStateProfile {
             CumulativeVolumePolicy::NonDecreasingWithinSegment {
                 unit: QuantityUnit::TradingUnit,
             },
-            AnnotationPolicy::TwseQuote,
             1,
         )
         .expect("built-in TWSE market-state profile is valid")
@@ -153,7 +140,6 @@ impl MarketStateProfile {
             CumulativeVolumePolicy::NonDecreasingWithinSegment {
                 unit: QuantityUnit::TradingUnit,
             },
-            AnnotationPolicy::TwseQuote,
             1,
         )
         .expect("built-in TWSE warrant market-state profile is valid")
@@ -185,7 +171,6 @@ impl MarketStateProfile {
                 .expect("TAIFEX reference book profile has accepted event kinds"),
             ],
             CumulativeVolumePolicy::Unconstrained,
-            AnnotationPolicy::NoneOnly,
             1,
         )
         .expect("built-in TAIFEX market-state profile is valid")
@@ -217,7 +202,6 @@ impl MarketStateProfile {
                 .expect("TAIFEX option reference book profile has accepted event kinds"),
             ],
             CumulativeVolumePolicy::Unconstrained,
-            AnnotationPolicy::NoneOnly,
             1,
         )
         .expect("built-in TAIFEX option market-state profile is valid")
@@ -260,7 +244,6 @@ impl MarketStateProfile {
             CumulativeVolumePolicy::NonDecreasingWithinSegment {
                 unit: QuantityUnit::TradingUnit,
             },
-            AnnotationPolicy::TpexQuote,
             1,
         )
         .expect("built-in TPEx market-state profile is valid")
@@ -296,18 +279,7 @@ impl MarketStateProfile {
             return Err(ProfileError::UnsupportedEventKind);
         }
 
-        let annotations = event.payload().annotations();
-        let compatible = matches!(
-            (self.annotation_policy, annotations),
-            (AnnotationPolicy::NoneOnly, MarketAnnotations::None)
-                | (AnnotationPolicy::TwseQuote, MarketAnnotations::TwseQuote(_))
-                | (AnnotationPolicy::TpexQuote, MarketAnnotations::TpexQuote(_))
-        );
-        if compatible {
-            Ok(())
-        } else {
-            Err(ProfileError::IncompatibleAnnotations)
-        }
+        Ok(())
     }
 }
 
@@ -320,7 +292,6 @@ pub enum ProfileError {
     MarketMismatch,
     UnsupportedSourceFormat,
     UnsupportedEventKind,
-    IncompatibleAnnotations,
 }
 
 impl fmt::Display for ProfileError {
@@ -337,9 +308,6 @@ impl fmt::Display for ProfileError {
             Self::MarketMismatch => "event market does not match market-state profile",
             Self::UnsupportedSourceFormat => "event source format is not supported by profile",
             Self::UnsupportedEventKind => "event kind is not supported for its source format",
-            Self::IncompatibleAnnotations => {
-                "event annotations are incompatible with market-state profile"
-            }
         };
         formatter.write_str(message)
     }

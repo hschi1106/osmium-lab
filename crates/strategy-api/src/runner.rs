@@ -196,17 +196,17 @@ pub fn run_strategy<S: Strategy>(
             .state(event.instrument())
             .expect("replay commit guarantees instrument state")
             .view();
-        let trading = TwseTradingContextEvaluator
-            .evaluate(event, commit.occurrence(), state, segment)
-            .map_err(|error| {
-                failure(
-                    &core,
-                    &output,
-                    StrategyRunErrorCategory::Context,
-                    error.to_string(),
-                    Some(commit.occurrence()),
-                )
-            })?;
+        let trading =
+            TwseTradingContextEvaluator::evaluate(event, commit.occurrence(), state, segment)
+                .map_err(|error| {
+                    failure(
+                        &core,
+                        &output,
+                        StrategyRunErrorCategory::Context,
+                        error.to_string(),
+                        Some(commit.occurrence()),
+                    )
+                })?;
         let context = StrategyEventContext::new_with_states(
             commit.occurrence(),
             event,

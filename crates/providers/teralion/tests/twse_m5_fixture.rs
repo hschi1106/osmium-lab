@@ -5,7 +5,7 @@ use std::{
 };
 
 use market_types::{
-    EventPayload, IndicativeAuctionKind, InstrumentId, MarketId, MatchTime, Symbol, TradingDate,
+    AuctionPurpose, EventPayload, InstrumentId, MarketId, MatchTime, Symbol, TradingDate,
 };
 use teralion_provider::twse::{NormalizationErrorKind, NormalizerConfig, TwseNormalizer};
 
@@ -61,11 +61,12 @@ fn synthetic_warrant_fixture_normalizes_offline() {
         |(quotes, trades, opening, closing), event| match event.payload() {
             EventPayload::QuoteSnapshot(_) => (quotes + 1, trades, opening, closing),
             EventPayload::TradeBatch(_) => (quotes, trades + 1, opening, closing),
-            EventPayload::IndicativeAuction(auction) => match auction.kind() {
-                IndicativeAuctionKind::Opening => (quotes, trades, opening + 1, closing),
-                IndicativeAuctionKind::Closing => (quotes, trades, opening, closing + 1),
-                IndicativeAuctionKind::IntradayStability { .. }
-                | IndicativeAuctionKind::IntradayUnclassified => (quotes, trades, opening, closing),
+            EventPayload::IndicativeAuction(auction) => match auction.observation().purpose() {
+                AuctionPurpose::Opening => (quotes, trades, opening + 1, closing),
+                AuctionPurpose::Closing => (quotes, trades, opening, closing + 1),
+                AuctionPurpose::Periodic | AuctionPurpose::VolatilityInterruption => {
+                    (quotes, trades, opening, closing)
+                }
             },
             EventPayload::BookSnapshot(_) => panic!("warrant quote must not produce a book event"),
             EventPayload::MarketStatus(_) => {

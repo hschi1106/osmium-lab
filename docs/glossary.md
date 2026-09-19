@@ -8,7 +8,9 @@
 | `received_at` | Teralion 擷取時間；只用於 archive query 與來源診斷。 |
 | `match_time` | 交易所事件時間；唯一 replay clock 與事件第一排序鍵。 |
 | domain event | 與 Teralion wire format 分離、通過驗證且具版本的市場事件。 |
-| `MarketState` | 由已排序事件歸納的商品狀態，只包含來源可支持的成交、完整 snapshot 與 annotations。 |
+| `MarketSignal` | provider-neutral 的 `Continuous`、`AuctionCollecting`、`AuctionUncross` 或 `Closed` 市場語義；raw provider flags 只在 boundary 解碼。 |
+| `AuctionObservation` | 一輪 call auction 的 purpose、delayed、disposal 與可選 volatility direction。 |
+| `MarketState` | 由已排序事件歸納的商品狀態，並由 reducer 唯一持有 `MarketSignal` 與 `MarketPhase`。 |
 | `TradingContext` | 由 session、目前 event 與更新後 state 推導的下單、matching 與 fill eligibility。 |
 | explicit universe | strategy 與設定明確列出的 market／symbol 集合。 |
 | session plan | 由 trading date、instrument profile 與 session kinds 解析出的版本化時間區段。 |

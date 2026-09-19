@@ -1,8 +1,8 @@
 use std::{error::Error, fmt};
 
 use market_types::{
-    BookError, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventError,
-    EventPayload, IndicativeAuction, IndicativeAuctionKind, InstrumentId, MarketAnnotations,
+    AuctionObservation, BookError, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot,
+    DomainEvent, EventError, EventPayload, IndicativeAuction, InstrumentId, MarketAnnotations,
     MarketId, MatchTime, MatchTimeError, Observation, ObservedTrade, Price, PriceError, Quantity,
     QuantityError, QuantityUnit, SourceFormatId, TradeBatch, TradeBatchOrdering,
     TradeObservationKind, TradingDate,
@@ -450,7 +450,7 @@ impl TaifexNormalizer {
             )
         };
         let auction = IndicativeAuction::new(
-            IndicativeAuctionKind::Opening,
+            AuctionObservation::opening(false, false),
             price,
             quantity,
             Observation::NoObservation,

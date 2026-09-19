@@ -1,5 +1,5 @@
 use market_types::{
-    EventPayload, IndicativeAuctionKind, InstantTrend, InstrumentId, MarketAnnotations, MarketId,
+    AuctionPurpose, EventPayload, InstantTrend, InstrumentId, MarketAnnotations, MarketId,
     MatchTime, Observation, QuantityUnit, Symbol, TradeObservationKind, TradingDate,
 };
 use teralion_provider::tpex::{
@@ -238,8 +238,8 @@ fn trial_quotes_become_opening_and_closing_auction_events() {
     let EventPayload::IndicativeAuction(closing) = report.events()[1].payload() else {
         panic!("expected closing indicative auction")
     };
-    assert_eq!(opening.kind(), IndicativeAuctionKind::Opening);
-    assert_eq!(closing.kind(), IndicativeAuctionKind::Closing);
+    assert_eq!(opening.observation().purpose(), AuctionPurpose::Opening);
+    assert_eq!(closing.observation().purpose(), AuctionPurpose::Closing);
 }
 
 #[test]
@@ -263,7 +263,7 @@ fn delayed_open_trial_is_typed_as_opening_and_keeps_delayed_flag() {
         let EventPayload::IndicativeAuction(auction) = report.events()[0].payload() else {
             panic!("delayed opening trial must not become a firm quote")
         };
-        assert_eq!(auction.kind(), IndicativeAuctionKind::Opening);
+        assert_eq!(auction.observation().purpose(), AuctionPurpose::Opening);
         let market_types::MarketAnnotations::TpexQuote(annotations) = auction.annotations() else {
             panic!("TPEx source annotations must be preserved")
         };
@@ -322,13 +322,10 @@ fn intraday_trials_are_unclassified_and_preserve_trend_annotations() {
     let EventPayload::IndicativeAuction(unclassified) = report.events()[1].payload() else {
         panic!("unclassified trial must be indicative")
     };
+    assert_eq!(stability.observation().purpose(), AuctionPurpose::Periodic);
     assert_eq!(
-        stability.kind(),
-        IndicativeAuctionKind::IntradayUnclassified
-    );
-    assert_eq!(
-        unclassified.kind(),
-        IndicativeAuctionKind::IntradayUnclassified
+        unclassified.observation().purpose(),
+        AuctionPurpose::Periodic
     );
     let MarketAnnotations::TpexQuote(annotations) = stability.annotations() else {
         panic!("expected TPEx source annotations")

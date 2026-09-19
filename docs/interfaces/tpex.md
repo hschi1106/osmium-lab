@@ -2,7 +2,7 @@
 
 適用 normalizer：
 
-- equity：`TeralionTpexQuote`，mapping version `6`。
+- equity：`TeralionTpexQuote`，mapping version `7`。
 - warrant：`TeralionTpexWarrant`，mapping version `6`。
 
 ## 1. 支援範圍
@@ -50,12 +50,12 @@ QuoteSnapshot(
 realtime intermediate/final group 分別產生 `TradeBatch` 與 `QuoteSnapshot`；若 final 是 status-only pause sentinel，則產生不覆寫 firm book／trade 的 `MarketStatus`。兩者都驗證 final cumulative volume。group 不完整時 strict reject，不從 book 差分、page order 或 `received_at` 推定成交。
 
 目前 normalizer 將所有 `trial=true` record 產生為 `IndicativeAuction`。opening／closing 優先
-使用明確 delayed flag，再使用 marker／session window；盤中 trial 保守分類為
-`IntradayUnclassified`，並保留 instant-trend annotations。Alpha 只能把該 trial 與先前同商品、
-同交易日的明確暫緩撮合 trigger 關聯；目前已驗證的真實序列仍不支持由單筆 trial 的 trend 推定 lifecycle，因此維持這個分類邊界。明確標示的試算價量、五檔與 cumulative volume 只進
-indicative state，不得覆寫 firm state 或成為一般 fill evidence。
+使用明確 delayed flag，再使用 marker／session window；盤中 trial 映射為 provider-neutral
+`AuctionPurpose::Periodic`，並保留 instant-trend annotations。明確標示的試算價量、五檔與
+cumulative volume 只進 indicative state，不得覆寫 firm state 或成為一般 fill evidence。
 
-`trial=false` 且有 instant-trend 的 status-only observation 產生 `MarketStatus`、保留原始 annotation 並限制 matching；normalizer 不依兩分鐘
+`trial=false` 且有 instant-trend 的 status-only observation 產生 `MarketStatus`，映射為
+`AuctionCollecting(VolatilityInterruption)` 並保留原始 annotation；normalizer 不依兩分鐘
 duration 合成 lifecycle event。真實 TPEx 樣本的正式撮合 record 在約 120 秒後以 `trial=false`
 出現、成交量與 cumulative volume 增加，之後才恢復逐筆揭示。`EquityIndicativeObservation` 只接受 typed `IndicativeAuction`，不再接受
 trial `QuoteSnapshot` workaround。
@@ -75,4 +75,9 @@ repository fixture 位於 [`fixtures/providers/teralion/tpex`](../../fixtures/pr
 官方參考：[TPEx 上櫃股票 IP 行情網路規格書](https://dsp.tpex.org.tw/storage/regular_system/%E4%B8%8A%E6%AB%83%E8%82%A1%E7%A5%A8IP%E8%A1%8C%E6%83%85%E7%B6%B2%E8%B7%AF%E8%A6%8F%E6%A0%BC%E6%9B%B8%28V.12.18_TCPIP%29.pdf)。共通規則見 [回播模型](../architecture/replay-model.md)。
 ## 7. Stability 暫緩撮合
 
-TPEx 的瞬間價格穩定措施期間只接受限價 ROD，並刪除既有一般市價委託。平台依來源 annotations 將 matching 標為 indicative；一般與 scheduled execution 都會拒絕 pause 中新進場的 market ROD，並取消已進場但尚未完成的 market ROD，limit ROD 則依各自 fill policy 保留。尚未 activation 的 scheduled request 尚未送至交易所，不會僅因 trigger 取消；試算價量不作正式 fill evidence。此處只建模已觀察到的限制，不推算 stability start/end。來源依據：[TPEx 交易制度說明](https://www.tpex.org.tw/zh-tw/mainboard/trading/rules/continuous.html)。目前 `OrderIntent` 只建模 ROD，IOC／FOK 不在支援範圍。
+TPEx 的瞬間價格穩定措施期間只接受限價 ROD，並刪除既有一般市價委託。平台將來源
+signal 映射為 `AuctionCollecting(VolatilityInterruption)`；一般與 scheduled execution 都會
+拒絕 pause 中新進場的 market ROD，並取消已進場但尚未完成的 market ROD，limit ROD 則依各自
+fill policy 保留。尚未 activation 的 scheduled request 尚未送至交易所，不會僅因 trigger
+取消；試算價量不作正式 fill evidence。此處只建模已觀察到的限制，不推算 stability start/end。
+來源依據：[TPEx 交易制度說明](https://www.tpex.org.tw/zh-tw/mainboard/trading/rules/continuous.html)。目前 `OrderIntent` 只建模 ROD，IOC／FOK 不在支援範圍。

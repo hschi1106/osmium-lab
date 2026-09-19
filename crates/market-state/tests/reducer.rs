@@ -1,16 +1,16 @@
 use market_state::{
-    AnnotationPolicy, CumulativeVolumePolicy, LastTrade, MarketState, MarketStateProfile,
-    MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId, SourceFormatRule,
-    StateField, StateTransitionError, StateWarningCode, UnavailableReason,
-    canonical_final_state_set, final_state_checksum,
+    CumulativeVolumePolicy, LastTrade, MarketState, MarketStateProfile, MarketStateReducer,
+    ReducerContext, SegmentBoundaryPolicy, SessionSegmentId, SourceFormatRule, StateField,
+    StateTransitionError, StateWarningCode, UnavailableReason, canonical_final_state_set,
+    final_state_checksum,
 };
 use market_types::{
-    BookLevel, BookSide, BookSideKind, BookSnapshot, CompleteBookSnapshot, DomainEvent, EventKind,
-    EventPayload, IndicativeAuction, IndicativeAuctionKind, InstrumentId, MarketAnnotations,
-    MarketId, MarketStatusObservation, MatchTime, Observation, ObservedTrade, Price, Quantity,
-    QuantityUnit, QuoteSnapshot, SourceFormatId, StabilityDirection, Symbol, TpexQuoteAnnotations,
-    TradeBatch, TradeBatchOrdering, TradeObservationKind, TradingDate, TwseQuoteAnnotations,
-    UnknownValue, Volume,
+    AuctionObservation, AuctionPurpose, BookLevel, BookSide, BookSideKind, BookSnapshot,
+    CompleteBookSnapshot, DomainEvent, EventKind, EventPayload, IndicativeAuction, InstrumentId,
+    MarketAnnotations, MarketId, MarketSignal, MarketStatusObservation, MatchTime, Observation,
+    ObservedTrade, Price, Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol,
+    TpexQuoteAnnotations, TradeBatch, TradeBatchOrdering, TradeObservationKind, TradingDate,
+    TwseQuoteAnnotations, UnknownValue, VolatilityDirection, Volume,
 };
 
 fn instrument(symbol: &str) -> InstrumentId {
@@ -97,9 +97,7 @@ fn stability_event(micros: i64) -> DomainEvent {
         None,
         EventPayload::IndicativeAuction(
             IndicativeAuction::new(
-                IndicativeAuctionKind::IntradayStability {
-                    direction: StabilityDirection::Up,
-                },
+                AuctionObservation::volatility_interruption(VolatilityDirection::Up, false, false),
                 Observation::Set(Price::parse("105").unwrap()),
                 Observation::Set(Quantity::new(20, QuantityUnit::TradingUnit).unwrap()),
                 Observation::Set(book(&["104"], &["106"])),
@@ -125,7 +123,14 @@ fn paused_firm_quote_event(micros: i64) -> DomainEvent {
                 Observation::Set(Volume::new(11, QuantityUnit::TradingUnit)),
                 MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(16, 0x01)),
             )
-            .unwrap(),
+            .unwrap()
+            .with_market_signal(Observation::Set(MarketSignal::AuctionCollecting(
+                AuctionObservation::volatility_interruption(
+                    VolatilityDirection::Down,
+                    false,
+                    false,
+                ),
+            ))),
         ),
     )
 }
@@ -137,15 +142,24 @@ fn volatility_pause_status_event(micros: i64, volume: u64) -> DomainEvent {
         SourceFormatId::new("STOCK_REALTIME").unwrap(),
         MatchTime::from_unix_microseconds(micros),
         None,
-        EventPayload::MarketStatus(MarketStatusObservation::new(
-            Observation::Set(Volume::new(volume, QuantityUnit::TradingUnit)),
-            MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(16, 0x02)),
-        )),
+        EventPayload::MarketStatus(
+            MarketStatusObservation::new(
+                Observation::Set(Volume::new(volume, QuantityUnit::TradingUnit)),
+                MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(16, 0x02)),
+            )
+            .with_market_signal(Observation::Set(MarketSignal::AuctionCollecting(
+                AuctionObservation::volatility_interruption(
+                    VolatilityDirection::Down,
+                    false,
+                    false,
+                ),
+            ))),
+        ),
     )
 }
 
 #[test]
-fn equity_trial_quote_is_rejected_before_it_can_replace_firm_state() {
+fn neutral_auction_quote_updates_signal_without_raw_flag_validation() {
     let reducer = MarketStateReducer::twse_regular();
     let mut state = MarketState::new(instrument("2330"), date());
     let context = context("regular", SegmentBoundaryPolicy::Carry);
@@ -170,17 +184,22 @@ fn equity_trial_quote_is_rejected_before_it_can_replace_firm_state() {
                 Observation::Set(Volume::new(999, QuantityUnit::TradingUnit)),
                 MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0x80, 0)),
             )
-            .unwrap(),
+            .unwrap()
+            .with_market_signal(Observation::Set(MarketSignal::AuctionCollecting(
+                AuctionObservation::opening(false, false),
+            ))),
         ),
     );
-
+    reducer.apply(&mut state, &trial_quote, &context).unwrap();
+    assert_eq!(state.state_version(), 2);
+    assert_ne!(state.book(), &firm_book);
     assert_eq!(
-        reducer.apply(&mut state, &trial_quote, &context),
-        Err(StateTransitionError::InvalidTwseTrialShape)
+        state.phase().known(),
+        Some(&market_state::MarketPhase::Auction(
+            market_state::AuctionState::new(AuctionObservation::opening(false, false)),
+        ))
     );
-    assert_eq!(state.state_version(), 1);
-    assert_eq!(state.book(), &firm_book);
-    assert_eq!(state.cumulative_volume().known().unwrap().value(), 10);
+    assert_eq!(state.cumulative_volume().known().unwrap().value(), 999);
 }
 
 fn reserved_firm_quote_event(micros: i64) -> DomainEvent {
@@ -197,7 +216,8 @@ fn reserved_firm_quote_event(micros: i64) -> DomainEvent {
                 Observation::Set(Volume::new(11, QuantityUnit::TradingUnit)),
                 MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0x01, 0)),
             )
-            .unwrap(),
+            .unwrap()
+            .with_market_signal(Observation::Unknown(UnknownValue::Unsigned(0x0100))),
         ),
     )
 }
@@ -412,7 +432,7 @@ fn status_only_pause_preserves_firm_book_and_trade() {
     assert!(
         receipt
             .changed_fields()
-            .contains(&market_state::ChangedField::LastAnnotations)
+            .contains(&market_state::ChangedField::MarketSignal)
     );
 }
 
@@ -532,7 +552,6 @@ fn book_snapshot_preserves_trade_and_volume_under_an_explicit_profile() {
             .unwrap(),
         ],
         CumulativeVolumePolicy::Unconstrained,
-        AnnotationPolicy::TwseQuote,
         1,
     )
     .unwrap();
@@ -579,7 +598,7 @@ fn taifex_opening_indicative_is_timeline_without_trade_or_volume_state() {
         None,
         EventPayload::IndicativeAuction(
             IndicativeAuction::new(
-                IndicativeAuctionKind::Opening,
+                AuctionObservation::opening(false, false),
                 Observation::Set(Price::parse("43500").unwrap()),
                 Observation::Set(Quantity::new(3, QuantityUnit::Contract).unwrap()),
                 Observation::NoObservation,
@@ -615,7 +634,7 @@ fn taifex_opening_indicative_is_timeline_without_trade_or_volume_state() {
     ));
     assert!(
         matches!(state.indicative_auction(), StateField::Known { value, .. }
-        if value.kind() == IndicativeAuctionKind::Opening)
+        if value.observation() == AuctionObservation::opening(false, false))
     );
     assert!(state.last_event().is_some());
 }
@@ -644,9 +663,7 @@ fn intraday_stability_updates_only_indicative_state() {
         None,
         EventPayload::IndicativeAuction(
             IndicativeAuction::new(
-                IndicativeAuctionKind::IntradayStability {
-                    direction: StabilityDirection::Up,
-                },
+                AuctionObservation::volatility_interruption(VolatilityDirection::Up, false, false),
                 Observation::Set(Price::parse("105").unwrap()),
                 Observation::Set(Quantity::new(20, QuantityUnit::TradingUnit).unwrap()),
                 Observation::Set(book(&["104"], &["106"])),
@@ -663,15 +680,15 @@ fn intraday_stability_updates_only_indicative_state() {
     assert_eq!(state.cumulative_volume(), &firm_volume);
     assert!(
         matches!(state.indicative_auction(), StateField::Known { value, .. }
-        if value.kind() == IndicativeAuctionKind::IntradayStability {
-            direction: StabilityDirection::Up
-        })
+        if value.observation().purpose() == AuctionPurpose::VolatilityInterruption
+            && value.observation().direction() == Some(VolatilityDirection::Up))
     );
     assert_eq!(
         receipt.changed_fields(),
         &[
             market_state::ChangedField::IndicativeAuction,
-            market_state::ChangedField::LastAnnotations,
+            market_state::ChangedField::MarketSignal,
+            market_state::ChangedField::Phase,
             market_state::ChangedField::LastEvent,
         ]
     );
@@ -701,7 +718,7 @@ fn continuous_resume_clears_indicative_state_without_mutating_firm_state() {
     assert!(matches!(
         state.indicative_auction(),
         StateField::Known { value, .. }
-            if matches!(value.kind(), IndicativeAuctionKind::IntradayStability { .. })
+            if value.observation().purpose() == AuctionPurpose::VolatilityInterruption
     ));
     reducer
         .apply(&mut state, &reserved_firm_quote_event(4), &context)
@@ -709,7 +726,7 @@ fn continuous_resume_clears_indicative_state_without_mutating_firm_state() {
     assert!(matches!(
         state.indicative_auction(),
         StateField::Known { value, .. }
-            if matches!(value.kind(), IndicativeAuctionKind::IntradayStability { .. })
+            if value.observation().purpose() == AuctionPurpose::VolatilityInterruption
     ));
 
     let resumed = quote_event(
@@ -774,7 +791,7 @@ fn market_status_does_not_clear_indicative_state_even_with_normal_flags() {
     assert!(matches!(
         state.indicative_auction(),
         StateField::Known { value, .. }
-            if matches!(value.kind(), IndicativeAuctionKind::IntradayStability { .. })
+            if value.observation().purpose() == AuctionPurpose::VolatilityInterruption
     ));
     assert_eq!(state.cumulative_volume().known().unwrap().value(), 11);
 }
@@ -865,9 +882,11 @@ fn tpex_normal_matching_event_clears_prior_indicative_observation() {
         None,
         EventPayload::IndicativeAuction(
             IndicativeAuction::new(
-                IndicativeAuctionKind::IntradayStability {
-                    direction: StabilityDirection::Down,
-                },
+                AuctionObservation::volatility_interruption(
+                    VolatilityDirection::Down,
+                    false,
+                    false,
+                ),
                 Observation::Set(Price::parse("95").unwrap()),
                 Observation::Set(Quantity::new(5, QuantityUnit::TradingUnit).unwrap()),
                 Observation::NoObservation,
@@ -909,14 +928,14 @@ fn initial_market_state_canonical_frame_matches_the_documented_layout() {
     let mut expected = Vec::new();
     expected.extend_from_slice(b"OSMS");
     expected.extend_from_slice(&market_state::CANONICAL_MARKET_STATE_VERSION.to_be_bytes());
-    expected.extend_from_slice(&5_u16.to_be_bytes());
+    expected.extend_from_slice(&market_state::MARKET_STATE_VERSION.to_be_bytes());
     expected.push(MarketId::Twse.discriminant());
     expected.extend_from_slice(&4_u32.to_be_bytes());
     expected.extend_from_slice(b"2330");
     expected.extend_from_slice(&date().to_canonical_bytes());
     expected.push(0);
     expected.extend_from_slice(&0_u64.to_be_bytes());
-    expected.extend_from_slice(&[0, 0, 0, 0, 0]);
+    expected.extend_from_slice(&[0, 0, 0, 0, 0, 0]);
     expected.push(0);
 
     let canonical = state.to_canonical_bytes().unwrap();

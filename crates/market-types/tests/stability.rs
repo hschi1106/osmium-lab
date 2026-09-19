@@ -1,15 +1,13 @@
 use market_types::{
-    DomainEvent, EventPayload, IndicativeAuction, IndicativeAuctionKind, InstrumentId,
+    AuctionObservation, DomainEvent, EventPayload, IndicativeAuction, InstrumentId,
     MarketAnnotations, MarketId, MatchTime, Observation, Price, Quantity, QuantityUnit,
-    SourceFormatId, StabilityDirection, Symbol, TradingDate,
+    SourceFormatId, Symbol, TradingDate, VolatilityDirection,
 };
 
 #[test]
 fn indicative_auction_roundtrips_without_becoming_a_trade() {
     let auction = IndicativeAuction::new(
-        IndicativeAuctionKind::IntradayStability {
-            direction: StabilityDirection::Up,
-        },
+        AuctionObservation::volatility_interruption(VolatilityDirection::Up, false, false),
         Observation::Set(Price::parse("100").unwrap()),
         Observation::Set(Quantity::new(2, QuantityUnit::Contract).unwrap()),
         Observation::NoObservation,
@@ -38,9 +36,7 @@ fn indicative_auction_roundtrips_without_becoming_a_trade() {
         unreachable!()
     };
     assert_eq!(
-        auction.kind(),
-        IndicativeAuctionKind::IntradayStability {
-            direction: StabilityDirection::Up
-        }
+        auction.observation(),
+        AuctionObservation::volatility_interruption(VolatilityDirection::Up, false, false)
     );
 }

@@ -6,7 +6,7 @@ use std::{
 };
 
 use market_types::{
-    EventPayload, IndicativeAuctionKind, InstrumentId, MarketId, MatchTime, Observation, Price,
+    AuctionPurpose, EventPayload, InstrumentId, MarketId, MatchTime, Observation, Price,
     QuantityUnit, Symbol, TradingDate,
 };
 use teralion_provider::taifex::{
@@ -89,12 +89,12 @@ fn synthetic_futures_fixture_normalizes_with_opening_events_only() {
                 EventPayload::IndicativeAuction(auction) => Some(auction),
                 _ => None,
             })
-            .all(|auction| auction.kind() == IndicativeAuctionKind::Opening)
+            .all(|auction| auction.observation().purpose() == AuctionPurpose::Opening)
     );
     assert!(report.events().iter().any(|event| matches!(
         event.payload(),
         EventPayload::IndicativeAuction(auction)
-            if auction.kind() == IndicativeAuctionKind::Opening
+            if auction.observation().purpose() == AuctionPurpose::Opening
     )));
 }
 
@@ -119,7 +119,7 @@ fn i022_zero_zero_is_a_no_observation_opening_event() {
     let EventPayload::IndicativeAuction(auction) = event.payload() else {
         panic!("I022 must map to opening auction event")
     };
-    assert_eq!(auction.kind(), IndicativeAuctionKind::Opening);
+    assert_eq!(auction.observation().purpose(), AuctionPurpose::Opening);
     assert_eq!(auction.price(), &Observation::NoObservation);
     assert_eq!(auction.quantity(), &Observation::NoObservation);
     assert_eq!(auction.book(), &Observation::NoObservation);

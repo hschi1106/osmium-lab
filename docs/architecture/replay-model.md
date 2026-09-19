@@ -14,9 +14,14 @@ payload
 ```
 
 payload 支援 `QuoteSnapshot`、`BookSnapshot`、`TradeBatch`、`MarketStatus` 與單一 `IndicativeAuction`。
-`IndicativeAuctionKind` 將 observation 分成 `Opening`、`Closing`、帶方向的
-`IntradayStability` 與 `IntradayUnclassified`。價量使用 checked exact decimal 與具單位的
-quantity；unknown 與 no-observation 不以零值代替。
+auction 以 provider-neutral `AuctionObservation` 表達 `AuctionPurpose::{Opening, Closing,
+Periodic, VolatilityInterruption}`，並以 `delayed`、`disposal` 與可選的 volatility direction
+保留來源可支持的屬性。價量使用 checked exact decimal 與具單位的 quantity；unknown 與
+no-observation 不以零值代替。
+
+每個 event 另可攜帶 `MarketSignal::{Continuous, AuctionCollecting, AuctionUncross, Closed}`。
+`AuctionCollecting` 與 `AuctionUncross` 共用同一份 `AuctionObservation`；signal 是市場語義，
+不把 provider status bits 暴露給 replay、strategy 或 simulation。
 
 同一 source record 的不可分割成交、book 與 annotations 形成單一 atomic event。auction event 是試算觀察，不是實際成交。
 
@@ -72,7 +77,7 @@ TAIFEX after-hours segment 可以跨日，但仍歸屬 planner 指定的 trading
 - 最近 trade／batch observation。
 - cumulative volume。
 - 最新 indicative auction observation；與 firm book／trade／volume 分開保存。
-- market-specific annotations。
+- 最新 `MarketSignal` 與由 reducer 唯一推導的 `MarketPhase::{Continuous, Auction, Closed}`。
 - `last_match_time`、state version 與 applied event reference。
 
 每側 book 將最多五筆 displayed entries 分成可定價的 `BookLevel` 與可選的
@@ -85,15 +90,18 @@ best bid／ask、mark、slippage 與 execution depth 只讀取 priced levels。
 - `Set(value)`：以目前 event 與 value 取代。
 - 明確 unknown：保存 unknown reason，不推定 value。
 
-`QuoteSnapshot` 更新完整 firm book，並依 observation 更新 firm trade、volume 與 annotations。
-`BookSnapshot` 取代 firm book。`TradeBatch` 更新最近正式成交與可用 cumulative volume，
-不修改 book。`MarketStatus` 更新可用 cumulative volume 與 annotations，但不宣稱帶有完整
-book 或正式成交，因此保留既有 firm book／trade。`IndicativeAuction` 只更新獨立的試算欄位與 annotations，不建立實際成交，
-也不覆寫 firm book／trade／volume。
+`QuoteSnapshot` 更新完整 firm book，並依 observation 更新 firm trade 與 volume；`BookSnapshot`
+取代 firm book。`TradeBatch` 更新最近正式成交與可用 cumulative volume，不修改 book。
+`MarketStatus` 只更新實際攜帶的 cumulative volume 與 signal，不宣稱帶有完整 book 或正式
+成交，因此保留既有 firm book／trade。`IndicativeAuction` 只更新獨立的試算欄位與
+`AuctionCollecting` signal，不建立實際成交，也不覆寫 firm book／trade／volume。
 
-indicative state 在可確認 matching 已恢復的 firm event 上清除：TWSE／TPEx event 必須非 trial、非 volatility-interruption、且沒有 reserved status/limit bits；TAIFEX 的無 annotation firm event 則視為正式市場 observation。採 `Carry` 的 session boundary 也清除 indicative state；`ResetObservableFields` 會重設所有 observable fields。清除只改 indicative 欄位並保留 `cleared_at` event reference，不會清除或改寫 firm book／trade／volume。試算期間的 pause/trial/reserved event 不會被誤認為恢復 matching。
-
-TWSE／TPEx 的 trial annotations 必須由 `IndicativeAuction` 承載；reducer 拒絕帶 trial 的 firm／status payload，不保留舊 trial `QuoteSnapshot` 相容路徑。TradingContext 對 auction kind 與 delayed flags 的矛盾配對回報 `Unknown`。
+reducer 對 `MarketSignal` 的規則固定且不看 wall clock：`Continuous` 結束既有 auction
+context；`AuctionCollecting` 更新同一輪 observation；repeated `delayed=true` 只是
+reassertion，不產生 round counter；`AuctionUncross` 依 purpose 將 post-state 設為
+continuous、closed 或下一個 periodic auction。`Closed` 保留最後 firm observation。session
+boundary 可依 `Carry` 或 `ResetObservableFields` 清除 auction context；`NoObservation`
+保留既有 signal，`Unknown` 則保留 unknown，不推測 continuous。
 
 reducer 先驗證整個 transition，再一次提交。非法價格、數量單位、時間倒退或 cumulative-volume policy 違反時，state 不變。strategy 取得的 `MarketStateView` 沒有 mutation API。
 
@@ -104,11 +112,15 @@ reducer 支援 carry 與 reset boundary policy；目前 CLI runner 對每個 pla
 MarketState 保存 source-derived facts；`TradingContext` 保存目前 event 的決策投影。它分開表達：
 
 - new order entry 是否允許。
-- matching 是否可用，以及 continuous／call-auction 類型。
-- pending order 對目前 event 的 fill eligibility。
-- 穩定 reason code 與 policy version。
+- matching 是否可用，以及 `Continuous`／`CallAuction` 類型。
+- 目前 event 的 auction observation 與 new-order entry restriction。
+- provider-neutral policy version。
 
-context 只使用 session phase、目前 event、更新後 state 與 market-specific annotations。WarmUp trial event 可更新 state 並呼叫 strategy，但不作正式 fill；CoolDown 不接受新 order 或 fill。origin event 永遠不能填入該 callback 新建的 order。
+context 只使用 session phase、目前 event、更新後 `MarketStateView` 與 neutral market signal。
+本次 `AuctionUncross` 的 matching 仍是 `CallAuction`，不能用 uncross 後的 state 把本次
+fill eligibility 改成 continuous；下一個 event 才讀取 post-state。WarmUp auction event 可
+更新 state 並呼叫 strategy，但不作正式 fill；CoolDown 不接受新 order 或 fill。origin event
+永遠不能填入該 callback 新建的 order。
 
 ## 6. Strategy lifecycle
 

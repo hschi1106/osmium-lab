@@ -171,10 +171,9 @@ mod tests {
         MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
     };
     use market_types::{
-        BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventPayload,
-        IndicativeAuction, IndicativeAuctionKind, MarketAnnotations, MarketId, MatchTime,
-        Observation, QuoteSnapshot, SourceFormatId, Symbol, TradingDate, TwseQuoteAnnotations,
-        Volume,
+        AuctionObservation, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent,
+        EventPayload, IndicativeAuction, MarketAnnotations, MarketId, MatchTime, Observation,
+        QuoteSnapshot, SourceFormatId, Symbol, TradingDate, TwseQuoteAnnotations, Volume,
     };
     use replay_engine::ReplayCore;
     use strategy_api::{
@@ -283,7 +282,7 @@ mod tests {
         let payload = if annotations.status().trial() {
             EventPayload::IndicativeAuction(
                 IndicativeAuction::new(
-                    IndicativeAuctionKind::Opening,
+                    AuctionObservation::opening(false, false),
                     Observation::NoObservation,
                     Observation::NoObservation,
                     Observation::Set(book),
@@ -361,9 +360,9 @@ mod tests {
         for event in &events {
             let commit = core.apply_ordered(event).unwrap();
             let state = core.state(&twse).unwrap().view();
-            let trading = TwseTradingContextEvaluator
-                .evaluate(event, commit.occurrence(), state, &segment)
-                .unwrap();
+            let trading =
+                TwseTradingContextEvaluator::evaluate(event, commit.occurrence(), state, &segment)
+                    .unwrap();
             let mut sink = StrategyOutputSink::with_order_intents();
             strategy
                 .on_event(

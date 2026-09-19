@@ -6,8 +6,8 @@ use std::{
 };
 
 use market_types::{
-    EventPayload, IndicativeAuctionKind, InstrumentId, MarketId, MatchTime, Observation,
-    QuantityUnit, Symbol, TradingDate,
+    AuctionPurpose, EventPayload, InstrumentId, MarketId, MatchTime, Observation, QuantityUnit,
+    Symbol, TradingDate,
 };
 use teralion_provider::taifex::{
     InstrumentProfile, KnownSkipReason, NormalizationErrorKind, NormalizerConfig, TaifexNormalizer,
@@ -97,7 +97,7 @@ fn synthetic_option_fixture_normalizes_cross_session_events() {
             }
             EventPayload::IndicativeAuction(auction) => {
                 payloads.2 += 1;
-                assert_eq!(auction.kind(), IndicativeAuctionKind::Opening);
+                assert_eq!(auction.observation().purpose(), AuctionPurpose::Opening);
                 assert_eq!(auction.quantity(), &Observation::NoObservation);
             }
             EventPayload::QuoteSnapshot(_) => {

@@ -2,11 +2,12 @@
 mod support;
 
 use market_types::{
-    BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventPayload,
-    IndicativeAuction, IndicativeAuctionKind, InstrumentId, MarketAnnotations, MarketId,
-    MarketStatusObservation, MatchTime, Observation, ObservedTrade, Price, Quantity, QuantityUnit,
-    QuoteSnapshot, SourceFormatId, Symbol, TpexQuoteAnnotations, TradeBatch, TradeBatchOrdering,
-    TradeObservationKind, TradingDate, Volume,
+    AuctionObservation, BookLevel, BookSide, BookSideKind, CANONICAL_EVENT_VERSION,
+    CompleteBookSnapshot, DomainEvent, EVENT_SCHEMA_VERSION, EventPayload, IndicativeAuction,
+    InstrumentId, MarketAnnotations, MarketId, MarketStatusObservation, MatchTime, Observation,
+    ObservedTrade, Price, Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol,
+    TpexQuoteAnnotations, TradeBatch, TradeBatchOrdering, TradeObservationKind, TradingDate,
+    Volume,
 };
 use support::empty_book;
 
@@ -30,8 +31,8 @@ fn canonical_quote_frame_has_the_documented_field_order() {
 
     let mut expected = Vec::new();
     expected.extend_from_slice(b"OSME");
-    expected.extend_from_slice(&6_u16.to_be_bytes());
-    expected.extend_from_slice(&6_u16.to_be_bytes());
+    expected.extend_from_slice(&CANONICAL_EVENT_VERSION.to_be_bytes());
+    expected.extend_from_slice(&EVENT_SCHEMA_VERSION.to_be_bytes());
     expected.push(1);
     expected.extend_from_slice(&1_u32.to_be_bytes());
     expected.push(b'A');
@@ -47,6 +48,8 @@ fn canonical_quote_frame_has_the_documented_field_order() {
     expected.push(0);
     expected.extend_from_slice(&0_u64.to_be_bytes());
     expected.push(0);
+    expected.push(1);
+    expected.push(1);
 
     let canonical = event.to_canonical_bytes().unwrap();
     assert_eq!(canonical, expected);
@@ -310,7 +313,7 @@ fn canonical_decoder_rejects_trailing_bytes_and_survives_frame_mutations() {
         )),
         encode(EventPayload::IndicativeAuction(
             IndicativeAuction::new(
-                IndicativeAuctionKind::Opening,
+                AuctionObservation::opening(false, false),
                 Observation::NoObservation,
                 Observation::NoObservation,
                 Observation::NoObservation,

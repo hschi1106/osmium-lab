@@ -102,9 +102,15 @@ domain event 集合為：
 - `QuoteSnapshot`：完整五檔，以及同一 source observation 的成交、累計量與 annotations。
 - `BookSnapshot`：完整五檔與 annotations。
 - `TradeBatch`：同一 source observation 的一筆或多筆成交與可用累計量。
-- `MarketStatus`：只有累計量與 typed annotations 的狀態 observation；不宣稱提供正式成交或完整 firm book。
-- `IndicativeAuction`：以 `Opening`、`Closing`、`IntradayStability(direction)` 或
-  `IntradayUnclassified` 分類的試算資訊，不是實際成交。
+- `MarketStatus`：只有累計量與 provider-neutral market signal 的狀態 observation；不宣稱
+  提供正式成交或完整 firm book。
+- `IndicativeAuction`：以 `AuctionPurpose::{Opening, Closing, Periodic,
+  VolatilityInterruption}` 與 `delayed`／`disposal` 屬性表達的試算資訊，不是實際成交。
+
+事件的 market signal 使用單一 provider-neutral taxonomy：`Continuous`、
+`AuctionCollecting(AuctionObservation)`、`AuctionUncross(AuctionObservation)` 與 `Closed`。
+TWSE／TPEx raw status bits 只在 provider boundary 解碼，不進入 strategy 或 execution
+simulation。
 
 每個 event 包含 instrument、trading date、source format、`match_time`、可選 source sequence 與 payload。同一 source observation 的不可分割內容以單一 event 原子處理。
 
@@ -114,9 +120,11 @@ domain event 集合為：
 
 ### REPLAY-03 市場狀態
 
-每個商品的 `MarketState` 分開保存 firm 完整五檔、最近成交、累計量，以及最新
-indicative auction observation、annotations、最後 `match_time` 與 state version。新的完整
-firm snapshot 取代舊 firm snapshot；`MarketStatus` 只更新其實際攜帶的狀態與累計量，不清空既有 firm book／trade；indicative observation 不得覆寫 firm state。系統不重建逐筆委託或 queue。
+每個商品的 `MarketState` 分開保存 firm 完整五檔、最近成交、累計量，最新 indicative
+auction observation、reducer-owned `MarketSignal`／`MarketPhase`、最後 `match_time` 與
+state version。新的完整 firm snapshot 取代舊 firm snapshot；`MarketStatus` 只更新其實際
+攜帶的 signal 與累計量，不清空既有 firm book／trade；indicative observation 不得覆寫
+firm state。系統不重建逐筆委託或 queue。
 
 ### REPLAY-04 處理順序
 

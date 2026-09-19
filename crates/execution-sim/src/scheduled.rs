@@ -1192,7 +1192,7 @@ fn entry_allowed(entry: NewOrderEntry, order_type: strategy_api::OrderType) -> b
     match entry {
         NewOrderEntry::Allowed => true,
         NewOrderEntry::Restricted(OrderRestrictionReason::PreOpenLimitOrdersOnly)
-        | NewOrderEntry::Restricted(OrderRestrictionReason::IndicativeMarket) => {
+        | NewOrderEntry::Restricted(OrderRestrictionReason::AuctionCollecting) => {
             matches!(order_type, strategy_api::OrderType::Limit { .. })
         }
         NewOrderEntry::Blocked(_) | NewOrderEntry::Unknown => false,
@@ -1772,10 +1772,8 @@ mod tests {
                     instrument(),
                     pause_time,
                     pause_time,
-                    MatchingState::Indicative(
-                        strategy_api::IndicativeReason::VolatilityInterruptionDown,
-                    ),
-                    NewOrderEntry::Restricted(OrderRestrictionReason::IndicativeMarket),
+                    MatchingState::Enabled(MatchingMethod::CallAuction),
+                    NewOrderEntry::Restricted(OrderRestrictionReason::AuctionCollecting),
                 )
                 .unwrap(),
             )
@@ -1814,10 +1812,8 @@ mod tests {
         for (micros, matching, entry) in [
             (
                 1_200,
-                MatchingState::Indicative(
-                    strategy_api::IndicativeReason::VolatilityInterruptionDown,
-                ),
-                NewOrderEntry::Restricted(OrderRestrictionReason::IndicativeMarket),
+                MatchingState::Enabled(MatchingMethod::CallAuction),
+                NewOrderEntry::Restricted(OrderRestrictionReason::AuctionCollecting),
             ),
             (
                 1_300,

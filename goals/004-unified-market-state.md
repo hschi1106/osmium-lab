@@ -1,6 +1,6 @@
 # 004：統一 Continuous / CallAuction 市場狀態模型
 
-Status: pending
+Status: done
 Depends on: 003-decouple-teralion-provider.md
 
 ## 目標
@@ -165,25 +165,25 @@ Teralion mapping 只在 `providers/teralion`。可映射既有證據，但不為
 
 ## 驗收
 
-- [ ] 一個 neutral model 表達必要情境。
-- [ ] reducer 是跨事件 state 唯一 owner。
-- [ ] strategy/sim 不解 raw provider flags。
-- [ ] event matching 與 post-state 分離。
-- [ ] core cases 不依賴 Teralion fixture。
-- [ ] provider mapping 只在 provider boundary。
-- [ ] 舊重複 taxonomy/evaluator 已刪或有不同語義理由。
-- [ ] replay/simulation/scheduled regression 通過。
-- [ ] fmt/test/clippy 通過。
-- [ ] cloc 已記錄。
+- [x] 一個 neutral model 表達必要情境。
+- [x] reducer 是跨事件 state 唯一 owner。
+- [x] strategy/sim 不解 raw provider flags。
+- [x] event matching 與 post-state 分離。
+- [x] core cases 不依賴 Teralion fixture。
+- [x] provider mapping 只在 provider boundary。
+- [x] 舊重複 taxonomy/evaluator 已刪或有不同語義理由。
+- [x] replay/simulation/scheduled regression 通過。
+- [x] fmt/test/clippy 通過。
+- [x] cloc 已記錄。
 
 ## 執行紀錄
 
-- Baseline revision / working tree：
-- Rust LOC before：
-- Replaced concepts：
-- New minimal contract：
-- Validation：
-- Rust LOC after / delta：
-- Breaking versions/checksums：
-- 剩餘風險：
+- Baseline revision / working tree：`ea18253` / clean。
+- Rust LOC before：`~/cloc/cloc --include-lang=Rust crates`：111 files / 3,596 blank / 267 comment / 41,769 code。
+- Replaced concepts：刪除 `IndicativeAuctionKind`／`StabilityDirection` 與 `IndicativeReason`；TWSE／TPEx 分開的 TradingContext evaluator 收斂為單一 `MarketTradingContextEvaluator`。market-state、strategy-api、execution-sim 不再解碼 `MarketAnnotations` raw flags；raw wire mapping 僅保留在 `providers/teralion` boundary。
+- New minimal contract：新增 `AuctionPurpose`、`AuctionObservation`、`MarketSignal` 與 reducer-owned `MarketPhase`／`AuctionState`。`QuoteSnapshot`、`BookSnapshot`、`TradeBatch`、`MarketStatus` 以 `Observation<MarketSignal>` 攜帶 neutral signal；`IndicativeAuction` 直接攜帶 `AuctionObservation`。reducer 明確處理 NoObservation／Unknown／Set、delayed reassertion、opening／closing／periodic／VI uncross post-state、session reset 與 multi-instrument isolation。
+- Validation：`cargo fmt --check`、`cargo test --workspace`（324 passed / 54 suites）、`cargo clippy --workspace --all-targets --all-features -- -D warnings` 均 exit 0。新增 provider-neutral synthetic tests：market-state 7 cases、strategy-api 4 cases；Teralion TWSE／TPEx／TAIFEX fixture regression 全部通過。fixture generation、compact/bundle/license verifier 與 acceptance Python tests（8 passed）通過。release CLI／fixture builder build 通過；無 `TERALION_API_KEY` 的 offline `data verify`、`cache prepare`、`replay`、`backtest`、`inspect` 通過。Goal 004 smoke replay 2 events 的 `event_checksum=a796e6ab3494f338254ef7312e0a30e25964288f2cc3a62d906456f9022a7239`、`final_state_checksum=b03ad9a67e8f0590ce572038913afb4806ea1a12e0441f1e1736488d5028733b`。
+- Rust LOC after / delta：`~/cloc/cloc --include-lang=Rust crates`：113 files / 3,637 blank / 270 comment / 42,008 code；相較 before 為 `+2 files / +41 blank / +3 comment / +239 code`。
+- Breaking versions/checksums：`MARKET_TYPES_VERSION` 7→8、event schema/canonical 6→7、`MARKET_STATE_VERSION` 5→6、state reducer 4→5、canonical market/final state 5→6；TWSE mapping 9→10、TPEx mapping 6→7、TradingContext rule 1→2。event／state canonical frame 新增 market signal／phase，故 replay event、final-state 與 cache identity checksum 改變，舊 derived cache 必須重建。
+- 剩餘風險：Teralion 目前沒有足夠來源證據可填 `disposal=true`，因此 provider mapping 不臆造處置欄位；neutral synthetic contract 已覆蓋 disposal／delayed combination。VI trial 仍保守映射為 `Periodic`，只有已證實的 status-only trigger 映射為 `VolatilityInterruption`。
 - 下一步：005-close-market-background-gap.md

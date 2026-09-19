@@ -1,18 +1,19 @@
 use std::{collections::BTreeMap, error::Error, fmt};
 
 use market_types::{
-    BookError, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventError,
-    EventPayload, IndicativeAuction, IndicativeAuctionKind, InstantTrend, InstrumentId,
-    LimitPosition, MarketAnnotations, MarketId, MarketStatusObservation, MatchTime, MatchTimeError,
-    Observation, ObservedTrade, Price, PriceError, Quantity, QuantityError, QuantityUnit,
-    QuoteSnapshot, SourceFormatId, TradeBatch, TradeBatchOrdering, TradeObservationKind,
-    TradingDate, TwseQuoteAnnotations, Volume,
+    AuctionObservation, BookError, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot,
+    DomainEvent, EventError, EventPayload, IndicativeAuction, InstantTrend, InstrumentId,
+    LimitPosition, MarketAnnotations, MarketId, MarketSignal, MarketStatusObservation, MatchTime,
+    MatchTimeError, Observation, ObservedTrade, Price, PriceError, Quantity, QuantityError,
+    QuantityUnit, QuoteSnapshot, SourceFormatId, TradeBatch, TradeBatchOrdering,
+    TradeObservationKind, TradingDate, TwseQuoteAnnotations, UnknownValue, VolatilityDirection,
+    Volume,
 };
 use serde::Deserialize;
 use serde_json::value::RawValue;
 
 pub const MAPPING_NAME: &str = "TeralionTwseQuote";
-pub const MAPPING_VERSION: u16 = 9;
+pub const MAPPING_VERSION: u16 = 10;
 pub const WARRANT_MAPPING_NAME: &str = "TeralionTwseWarrant";
 pub const WARRANT_MAPPING_VERSION: u16 = 6;
 
@@ -512,7 +513,10 @@ impl TwseNormalizer {
             let status = MarketStatusObservation::new(
                 Observation::Set(record.cumulative_volume),
                 MarketAnnotations::TwseQuote(record.annotations),
-            );
+            )
+            .with_market_signal(Observation::Set(MarketSignal::AuctionCollecting(
+                volatility_observation(record.annotations),
+            )));
             return Ok(self.domain_event(record, EventPayload::MarketStatus(status)));
         }
         let book = record.book.clone().ok_or_else(|| {
@@ -535,7 +539,8 @@ impl TwseNormalizer {
             Observation::Set(record.cumulative_volume),
             MarketAnnotations::TwseQuote(record.annotations),
         )
-        .map_err(|error| event_error(record, error))?;
+        .map_err(|error| event_error(record, error))?
+        .with_market_signal(self.firm_market_signal(record));
         Ok(self.domain_event(record, EventPayload::QuoteSnapshot(snapshot)))
     }
 
@@ -560,7 +565,8 @@ impl TwseNormalizer {
             Observation::Set(record.cumulative_volume),
             MarketAnnotations::TwseQuote(record.annotations),
         )
-        .map_err(|error| event_error(record, error))?;
+        .map_err(|error| event_error(record, error))?
+        .with_market_signal(self.firm_market_signal(record));
         Ok(self.domain_event(record, EventPayload::TradeBatch(batch)))
     }
 
@@ -593,14 +599,15 @@ impl TwseNormalizer {
             Observation::Set(last.cumulative_volume),
             MarketAnnotations::TwseQuote(first.annotations),
         )
-        .map_err(|error| event_error(first, error))?;
+        .map_err(|error| event_error(first, error))?
+        .with_market_signal(self.firm_market_signal(first));
         Ok(self.domain_event(first, EventPayload::TradeBatch(batch)))
     }
 
     fn auction_event(
         &self,
         record: &ValidatedRecord,
-        kind: IndicativeAuctionKind,
+        observation: AuctionObservation,
         book: Observation<CompleteBookSnapshot>,
     ) -> Result<DomainEvent, NormalizationError> {
         let (price, quantity) = match record.deal {
@@ -611,7 +618,7 @@ impl TwseNormalizer {
             None => (Observation::NoObservation, Observation::NoObservation),
         };
         let auction = IndicativeAuction::new(
-            kind,
+            observation,
             price,
             quantity,
             book,
@@ -625,7 +632,7 @@ impl TwseNormalizer {
     fn auction_phase(
         &self,
         record: &ValidatedRecord,
-    ) -> Result<Option<IndicativeAuctionKind>, NormalizationError> {
+    ) -> Result<Option<AuctionObservation>, NormalizationError> {
         let status = record.annotations.status();
         if !status.trial() {
             return Ok(None);
@@ -641,10 +648,10 @@ impl TwseNormalizer {
             ));
         }
         if status.delayed_open() {
-            return Ok(Some(IndicativeAuctionKind::Opening));
+            return Ok(Some(AuctionObservation::opening(true, false)));
         }
         if status.delayed_close() {
-            return Ok(Some(IndicativeAuctionKind::Closing));
+            return Ok(Some(AuctionObservation::closing(true, false)));
         }
 
         let opening_window_start = self.session_time("08:30:00");
@@ -658,13 +665,13 @@ impl TwseNormalizer {
         let opening = status.delayed_open() || status.opening_marker() || in_opening_window;
         let closing = status.delayed_close() || status.closing_marker() || in_closing_window;
         match (opening, closing) {
-            (true, false) => Ok(Some(IndicativeAuctionKind::Opening)),
-            (false, true) => Ok(Some(IndicativeAuctionKind::Closing)),
+            (true, false) => Ok(Some(AuctionObservation::opening(false, false))),
+            (false, true) => Ok(Some(AuctionObservation::closing(false, false))),
             // Instant-trend proves a pause direction, not that Teralion's
             // deal/book fields are simulated-auction values. Preserve the
             // annotation and keep the indicative observation unclassified
             // until a real source fixture verifies that mapping.
-            (false, false) => Ok(Some(IndicativeAuctionKind::IntradayUnclassified)),
+            (false, false) => Ok(Some(AuctionObservation::periodic(false, false))),
             (true, true) => Err(NormalizationError::new(
                 record.record_number,
                 record.context.clone(),
@@ -673,6 +680,35 @@ impl TwseNormalizer {
                 ),
             )),
         }
+    }
+
+    fn firm_market_signal(&self, record: &ValidatedRecord) -> Observation<MarketSignal> {
+        let status = record.annotations.status();
+        let limits = record.annotations.limits();
+        if status.reserved_bits() != 0
+            || matches!(limits.instant_trend(), InstantTrend::Reserved)
+            || matches!(limits.trade(), LimitPosition::Reserved)
+            || matches!(limits.best_bid(), LimitPosition::Reserved)
+            || matches!(limits.best_ask(), LimitPosition::Reserved)
+        {
+            return Observation::Unknown(UnknownValue::Unsigned(
+                u64::from(record.annotations.status_flags_raw()) << 8
+                    | u64::from(record.annotations.limit_flags_raw()),
+            ));
+        }
+        let signal = if status.opening_marker() {
+            MarketSignal::AuctionUncross(AuctionObservation::opening(false, false))
+        } else if status.closing_marker() {
+            MarketSignal::AuctionUncross(AuctionObservation::closing(false, false))
+        } else if matches!(
+            limits.instant_trend(),
+            InstantTrend::VolatilityInterruptionDown | InstantTrend::VolatilityInterruptionUp
+        ) {
+            MarketSignal::AuctionCollecting(volatility_observation(record.annotations))
+        } else {
+            MarketSignal::Continuous
+        };
+        Observation::Set(signal)
     }
 
     fn session_time(&self, time: &str) -> MatchTime {
@@ -1175,6 +1211,17 @@ fn is_status_only_pause(record: &ValidatedRecord) -> bool {
                 && book.bids().levels().next().is_none()
                 && book.asks().levels().next().is_none()
         })
+}
+
+fn volatility_observation(annotations: TwseQuoteAnnotations) -> AuctionObservation {
+    let direction = match annotations.limits().instant_trend() {
+        InstantTrend::VolatilityInterruptionDown => VolatilityDirection::Down,
+        InstantTrend::VolatilityInterruptionUp => VolatilityDirection::Up,
+        InstantTrend::Normal | InstantTrend::Reserved => {
+            unreachable!("status-only pause has a volatility-interruption trend")
+        }
+    };
+    AuctionObservation::volatility_interruption(direction, false, false)
 }
 
 fn parse_deal(

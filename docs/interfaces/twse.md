@@ -2,7 +2,7 @@
 
 適用 normalizer：
 
-- equity：`TeralionTwseQuote`，mapping version `9`。
+- equity：`TeralionTwseQuote`，mapping version `10`。
 - warrant：`TeralionTwseWarrant`，mapping version `6`。
 
 ## 1. 支援範圍
@@ -52,15 +52,16 @@ QuoteSnapshot(
 )
 ```
 
-一般 quote 的 `deal=null` 保留為 `NoObservation`，不建立成交。真實 `/ticks` 樣本確認 zero quantity 會出現在具明確 VI trend、空買賣簿的暫緩撮合 observation；TWSE normalizer 現將這種沒有 firm book／trade 的形狀映射為 `MarketStatus`，只攜帶 cumulative volume 與 typed annotations。它不以空陣列清除暫停前最後一份 firm book，也不把零量 recent-price sentinel 當成交。若沒有 VI trend、仍是 intermediate print 或帶有非空 book，則拒絕零量 deal。另以 verified 3026 partition 確認 stability 結束後會大量出現第一檔零價市價委託揭示，現改以獨立 quantity 保存。這些修正令 equity／warrant mapping identity 升為 v9／v6，舊 cache 必須重建。
+一般 quote 的 `deal=null` 保留為 `NoObservation`，不建立成交。真實 `/ticks` 樣本確認 zero quantity 會出現在具明確 VI trend、空買賣簿的暫緩撮合 observation；TWSE normalizer 現將這種沒有 firm book／trade 的形狀映射為 `MarketStatus`，只攜帶 cumulative volume 與 typed annotations。它不以空陣列清除暫停前最後一份 firm book，也不把零量 recent-price sentinel 當成交。若沒有 VI trend、仍是 intermediate print 或帶有非空 book，則拒絕零量 deal。另以 verified 3026 partition 確認 stability 結束後會大量出現第一檔零價市價委託揭示，現改以獨立 quantity 保存。這些修正令 equity／warrant mapping identity 升為 v10／v6，舊 cache 必須重建。
 
 目前 normalizer 將所有 `trial=true` record 產生為 `IndicativeAuction`，不回落為 firm
 `QuoteSnapshot`；opening／closing 由 delayed flag、marker 與 session window 分類。盤中 trial
-保守標為 `IntradayUnclassified`，即使 instant-trend annotations 帶有方向也不直接將方向
-套用到試算 observation；Alpha 可把它與先前明確的暫緩撮合 trigger 關聯。目前已驗證的真實序列仍不支持由單筆 trial 的 trend 推定 lifecycle，因此維持這個分類邊界。明確標示的試算
-observation 不可成為 actual trade、firm cumulative volume、一般 mark 或 fill evidence。
+映射為 provider-neutral `AuctionPurpose::Periodic`；instant-trend 的方向仍保留在來源
+annotations，只有有明確證據時才映射為 `VolatilityInterruption` observation。明確標示的
+試算 observation 不可成為 actual trade、firm cumulative volume、一般 mark 或 fill evidence。
 
-`trial=false` 且有 instant-trend 的 status-only observation 產生 `MarketStatus`，matching context 受限但不合成
+`trial=false` 且有 instant-trend 的 status-only observation 產生 `MarketStatus`，signal 映射為
+`AuctionCollecting(VolatilityInterruption)`；matching context 受限但不合成
 `StabilityStarted/Ended`。已觀察到的 TWSE 樣本中，trigger 後約 120 秒出現 trial=false、累計量增加的正式撮合記錄，隨後回到 `status_flags=16` 的逐筆報價；該正式結果仍是 firm event。這是可由 immutable partition 重跑的 adapter certification；通用 domain／Alpha 驗證另以 provider-neutral observations 執行。
 
 ## 5. Intermediate／final group
@@ -78,7 +79,9 @@ ordering rule 的 `source_phase_rank` 保證 intermediate batch 先於同時間 
 
 ## 6. TradingContext
 
-TWSE annotations 由 market rule evaluator 轉成 new-order、matching 與 fill eligibility。trial、opening、continuous、closing、限制撮合與 unknown／reserved flags 都使用 typed reason code；strategy 不直接解碼 raw bits。
+TWSE annotations 只在 provider boundary 轉成 provider-neutral `MarketSignal`；strategy 與
+execution simulation 只讀 `MatchingMethod`、`AuctionObservation` 與 order-entry restriction，
+不直接解碼 raw bits。
 
 漲停／跌停、瞬間趨勢或處置狀態是 source observation，不代表平台重算交易所規則。沒有明確 resume evidence 時，不以 wall clock 自動解除限制。
 
@@ -91,4 +94,9 @@ repository fixture 位於 [`fixtures/providers/teralion/twse`](../../fixtures/pr
 官方格式參考：[TWSE TCP/IP 證券交易資訊網路文件](https://dsp.twse.com.tw/tcpipTradingFiles/list)。共通 event/state 規則見 [回播模型](../architecture/replay-model.md)。
 ## 8. Stability 暫緩撮合
 
-TWSE 的瞬間價格穩定措施期間只接受限價 ROD；既有市價 ROD 會自動刪除。平台依來源 annotations 將 matching 標為 indicative；一般與 scheduled execution 都會拒絕 pause 中新進場的 market ROD，並取消已進場但尚未完成的 market ROD，limit ROD 則依各自 fill policy 保留。尚未 activation 的 scheduled request 尚未送至交易所，不會僅因 trigger 取消。此行為不代表平台重建完整 stability lifecycle，也不把試算價量當成正式成交。來源依據：[TWSE 交易制度說明](https://www.twse.com.tw/zh/products/system/trading.html)、[投資人知識網交易制度說明](https://www.twse.com.tw/zh/about/company/guide.html)。目前 `OrderIntent` 只建模 ROD，IOC／FOK 不在支援範圍。
+TWSE 的瞬間價格穩定措施期間只接受限價 ROD；既有市價 ROD 會自動刪除。平台將來源
+signal 映射為 `AuctionCollecting(VolatilityInterruption)`，一般與 scheduled execution 都
+會拒絕 pause 中新進場的 market ROD，並取消已進場但尚未完成的 market ROD，limit ROD 則依
+各自 fill policy 保留。尚未 activation 的 scheduled request 尚未送至交易所，不會僅因
+trigger 取消。此行為不代表平台重建完整 stability lifecycle，也不把試算價量當成正式成交。
+來源依據：[TWSE 交易制度說明](https://www.twse.com.tw/zh/products/system/trading.html)、[投資人知識網交易制度說明](https://www.twse.com.tw/zh/about/company/guide.html)。目前 `OrderIntent` 只建模 ROD，IOC／FOK 不在支援範圍。

@@ -1,9 +1,9 @@
 use std::{cmp::Ordering, error::Error, fmt, str::FromStr};
 
 use market_types::{
-    CompleteBookSnapshot, DomainEvent, EventFingerprint, EventKind, IndicativeAuction,
-    InstrumentId, MarketAnnotations, MatchTime, ObservedTrade, SourceFormatId, TradeBatchOrdering,
-    TradingDate, UnknownValue, Volume,
+    AuctionObservation, AuctionPurpose, CompleteBookSnapshot, DomainEvent, EventFingerprint,
+    EventKind, IndicativeAuction, InstrumentId, MarketSignal, MatchTime, ObservedTrade,
+    SourceFormatId, TradeBatchOrdering, TradingDate, UnknownValue, VolatilityDirection, Volume,
 };
 
 /// A non-empty, byte-exact session segment identifier from a market profile.
@@ -155,6 +155,51 @@ pub enum UnavailableReason {
     Cleared { cleared_at: AppliedEventRef },
 }
 
+/// The reducer-owned state after applying the latest market signal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MarketPhase {
+    Continuous,
+    Auction(AuctionState),
+    Closed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AuctionState {
+    observation: AuctionObservation,
+}
+
+impl AuctionState {
+    #[must_use]
+    pub const fn new(observation: AuctionObservation) -> Self {
+        Self { observation }
+    }
+
+    #[must_use]
+    pub const fn observation(self) -> AuctionObservation {
+        self.observation
+    }
+
+    #[must_use]
+    pub const fn purpose(self) -> AuctionPurpose {
+        self.observation.purpose()
+    }
+
+    #[must_use]
+    pub const fn delayed(self) -> bool {
+        self.observation.delayed()
+    }
+
+    #[must_use]
+    pub const fn disposal(self) -> bool {
+        self.observation.disposal()
+    }
+
+    #[must_use]
+    pub const fn direction(self) -> Option<VolatilityDirection> {
+        self.observation.direction()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum StateField<T> {
     Unavailable(UnavailableReason),
@@ -262,7 +307,8 @@ pub struct MarketState {
     recent_trade: StateField<TradeObservation>,
     cumulative_volume: StateField<Volume>,
     indicative_auction: StateField<IndicativeAuction>,
-    last_annotations: StateField<MarketAnnotations>,
+    market_signal: StateField<MarketSignal>,
+    phase: StateField<MarketPhase>,
     last_event: Option<AppliedEventRef>,
     state_version: u64,
 }
@@ -278,7 +324,8 @@ impl MarketState {
             recent_trade: StateField::initial(),
             cumulative_volume: StateField::initial(),
             indicative_auction: StateField::initial(),
-            last_annotations: StateField::initial(),
+            market_signal: StateField::initial(),
+            phase: StateField::initial(),
             last_event: None,
             state_version: 0,
         }
@@ -335,8 +382,13 @@ impl MarketState {
     }
 
     #[must_use]
-    pub const fn last_annotations(&self) -> &StateField<MarketAnnotations> {
-        &self.last_annotations
+    pub const fn market_signal(&self) -> &StateField<MarketSignal> {
+        &self.market_signal
+    }
+
+    #[must_use]
+    pub const fn phase(&self) -> &StateField<MarketPhase> {
+        &self.phase
     }
 
     #[must_use]
@@ -349,7 +401,8 @@ impl MarketState {
         self.recent_trade = StateField::initial();
         self.cumulative_volume = StateField::initial();
         self.indicative_auction = StateField::initial();
-        self.last_annotations = StateField::initial();
+        self.market_signal = StateField::initial();
+        self.phase = StateField::initial();
     }
 
     pub(crate) fn set_segment(&mut self, segment: SessionSegmentId) {
@@ -372,8 +425,12 @@ impl MarketState {
         self.indicative_auction = auction;
     }
 
-    pub(crate) fn set_last_annotations(&mut self, annotations: StateField<MarketAnnotations>) {
-        self.last_annotations = annotations;
+    pub(crate) fn set_market_signal(&mut self, signal: StateField<MarketSignal>) {
+        self.market_signal = signal;
+    }
+
+    pub(crate) fn set_phase(&mut self, phase: StateField<MarketPhase>) {
+        self.phase = phase;
     }
 
     pub(crate) fn finish_event(&mut self, event: AppliedEventRef, version: u64) {
@@ -487,8 +544,13 @@ impl<'a> MarketStateView<'a> {
     }
 
     #[must_use]
-    pub const fn last_annotations(self) -> &'a StateField<MarketAnnotations> {
-        self.state.last_annotations()
+    pub const fn market_signal(self) -> &'a StateField<MarketSignal> {
+        self.state.market_signal()
+    }
+
+    #[must_use]
+    pub const fn phase(self) -> &'a StateField<MarketPhase> {
+        self.state.phase()
     }
 }
 

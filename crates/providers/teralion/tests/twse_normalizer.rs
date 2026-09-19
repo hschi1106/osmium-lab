@@ -1,5 +1,5 @@
 use market_types::{
-    EventPayload, IndicativeAuctionKind, InstantTrend, InstrumentId, MarketAnnotations, MarketId,
+    AuctionPurpose, EventPayload, InstantTrend, InstrumentId, MarketAnnotations, MarketId,
     MatchTime, Observation, QuantityUnit, Symbol, TradeObservationKind, TradingDate,
 };
 use teralion_provider::twse::{
@@ -182,8 +182,8 @@ fn trial_quotes_become_opening_and_closing_auction_events() {
     let EventPayload::IndicativeAuction(closing) = report.events()[1].payload() else {
         panic!("expected closing indicative auction")
     };
-    assert_eq!(opening.kind(), IndicativeAuctionKind::Opening);
-    assert_eq!(closing.kind(), IndicativeAuctionKind::Closing);
+    assert_eq!(opening.observation().purpose(), AuctionPurpose::Opening);
+    assert_eq!(closing.observation().purpose(), AuctionPurpose::Closing);
 }
 
 #[test]
@@ -207,7 +207,7 @@ fn delayed_open_trial_is_typed_as_opening_and_keeps_delayed_flag() {
         let EventPayload::IndicativeAuction(auction) = report.events()[0].payload() else {
             panic!("delayed opening trial must not become a firm quote")
         };
-        assert_eq!(auction.kind(), IndicativeAuctionKind::Opening);
+        assert_eq!(auction.observation().purpose(), AuctionPurpose::Opening);
         let market_types::MarketAnnotations::TwseQuote(annotations) = auction.annotations() else {
             panic!("TWSE source annotations must be preserved")
         };
@@ -255,7 +255,7 @@ fn intraday_unmarked_trial_becomes_an_isolated_indicative_observation() {
         panic!("expected TWSE annotations")
     };
     assert!(annotations.status().trial());
-    assert_eq!(auction.kind(), IndicativeAuctionKind::IntradayUnclassified);
+    assert_eq!(auction.observation().purpose(), AuctionPurpose::Periodic);
     assert_eq!(auction.quantity().as_set().unwrap().value(), 2);
 }
 
@@ -286,16 +286,13 @@ fn intraday_trial_keeps_direction_annotation_without_claiming_trial_semantics() 
         .events()
         .iter()
         .map(|event| match event.payload() {
-            EventPayload::IndicativeAuction(auction) => auction.kind(),
+            EventPayload::IndicativeAuction(auction) => auction.observation().purpose(),
             _ => panic!("trial must be indicative"),
         })
         .collect::<Vec<_>>();
     assert_eq!(
         kinds,
-        vec![
-            IndicativeAuctionKind::IntradayUnclassified,
-            IndicativeAuctionKind::IntradayUnclassified,
-        ]
+        vec![AuctionPurpose::Periodic, AuctionPurpose::Periodic,]
     );
     let trends = report
         .events()

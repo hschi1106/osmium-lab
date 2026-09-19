@@ -7,17 +7,16 @@ use execution_sim::{
     AuctionMatchEvidence, MultiLedger, MultiPerformanceSummary, ScheduledDepthSimulator,
     ScheduledOrderStatus, VisibleBookEvidence, VisibleTradingStateEvidence,
 };
-use market_types::{DomainEvent, MatchTime};
+use market_types::{AuctionPurpose, DomainEvent, MarketSignal, MatchTime};
 use replay_engine::{
     CompletedReplay, EventOccurrence, EventStream, OrderingKey, ReplayCore, ReplayPlan,
     ReplayStreamFactory,
 };
 use strategy_api::{
-    ExecutionFillFeedback, IndicativeReason, MarketTradingContextEvaluator, MatchingState,
-    OrderFeedback, OrderId, ScheduledExecutionPolicy, Strategy, StrategyEventContext,
-    StrategyFeedbackContext, StrategyFinalizeContext, StrategyInitializationContext,
-    StrategyOutput, StrategyOutputSink, StrategyTimerContext, StrategyTimerId,
-    StrategyTimerRequest, TradingContext,
+    ExecutionFillFeedback, MarketTradingContextEvaluator, OrderFeedback, OrderId,
+    ScheduledExecutionPolicy, Strategy, StrategyEventContext, StrategyFeedbackContext,
+    StrategyFinalizeContext, StrategyInitializationContext, StrategyOutput, StrategyOutputSink,
+    StrategyTimerContext, StrategyTimerId, StrategyTimerRequest, TradingContext,
 };
 
 use crate::{
@@ -263,9 +262,9 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
         let state = core
             .state(event.instrument())
             .ok_or(MultiBacktestError::Declaration)?;
-        let trading = MarketTradingContextEvaluator
-            .evaluate(&event, &occurrence, state.view(), segment)
-            .map_err(|error| MultiBacktestError::Context(error.to_string()))?;
+        let trading =
+            MarketTradingContextEvaluator::evaluate(&event, &occurrence, state.view(), segment)
+                .map_err(|error| MultiBacktestError::Context(error.to_string()))?;
         let visible_at = add_milliseconds(event.match_time(), self.market_data_latency_ms)
             .map_err(|_| MultiBacktestError::Sequence)?;
         if trading.matching()
@@ -483,11 +482,9 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
             ));
         }
         if matches!(
-            observation.trading.matching(),
-            MatchingState::Indicative(
-                IndicativeReason::VolatilityInterruptionDown
-                    | IndicativeReason::VolatilityInterruptionUp
-            )
+            observation.trading.market_signal(),
+            Some(MarketSignal::AuctionCollecting(auction))
+                if auction.purpose() == AuctionPurpose::VolatilityInterruption
         ) {
             let feedback = self
                 .simulator
@@ -919,11 +916,11 @@ mod tests {
         MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
     };
     use market_types::{
-        BookLevel, BookSide, BookSideKind, BookSnapshot, CompleteBookSnapshot, Decimal,
-        EventPayload, IndicativeAuction, IndicativeAuctionKind, MarketAnnotations, MarketId,
+        AuctionObservation, BookLevel, BookSide, BookSideKind, BookSnapshot, CompleteBookSnapshot,
+        Decimal, EventPayload, IndicativeAuction, MarketAnnotations, MarketId, MarketSignal,
         MarketStatusObservation, Observation, ObservedTrade, Price, Quantity, QuantityUnit,
         QuoteSnapshot, SourceFormatId, Symbol, TpexQuoteAnnotations, TradeObservationKind,
-        TradingDate, TwseQuoteAnnotations, Volume,
+        TradingDate, TwseQuoteAnnotations, VolatilityDirection, Volume,
     };
     use replay_engine::{ReplayStreamBinding, StableStreamDescriptorId};
     use strategy_api::{
@@ -1223,10 +1220,19 @@ mod tests {
             SourceFormatId::new("STOCK_REALTIME").unwrap(),
             pause_time,
             None,
-            EventPayload::MarketStatus(MarketStatusObservation::new(
-                Observation::NoObservation,
-                MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0x10, 0x01)),
-            )),
+            EventPayload::MarketStatus(
+                MarketStatusObservation::new(
+                    Observation::NoObservation,
+                    MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0x10, 0x01)),
+                )
+                .with_market_signal(Observation::Set(
+                    MarketSignal::AuctionCollecting(AuctionObservation::volatility_interruption(
+                        VolatilityDirection::Down,
+                        false,
+                        false,
+                    )),
+                )),
+            ),
         );
         let core = ReplayCore::new_multi(
             vec![MarketState::new(instrument.clone(), date)],
@@ -1655,7 +1661,7 @@ mod tests {
             let payload = if annotations.status().trial() {
                 EventPayload::IndicativeAuction(
                     IndicativeAuction::new(
-                        IndicativeAuctionKind::Opening,
+                        AuctionObservation::opening(false, false),
                         Observation::Set(Price::parse("100").unwrap()),
                         Observation::Set(quantity),
                         Observation::Set(book),
@@ -1672,7 +1678,14 @@ mod tests {
                         Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
                         MarketAnnotations::TpexQuote(annotations),
                     )
-                    .unwrap(),
+                    .unwrap()
+                    .with_market_signal(Observation::Set(
+                        if annotations.status().opening_marker() {
+                            MarketSignal::AuctionUncross(AuctionObservation::opening(false, false))
+                        } else {
+                            MarketSignal::Continuous
+                        },
+                    )),
                 )
             };
             DomainEvent::new(

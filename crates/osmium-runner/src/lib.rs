@@ -282,9 +282,9 @@ fn process_multi_event<S: Strategy>(
     let state = views.get(event.instrument()).ok_or_else(|| {
         MultiBacktestError::Schedule("event state is absent from replay core".to_owned())
     })?;
-    let trading = MarketTradingContextEvaluator
-        .evaluate(event, commit.occurrence(), state, segment)
-        .map_err(|error| MultiBacktestError::Context(error.to_string()))?;
+    let trading =
+        MarketTradingContextEvaluator::evaluate(event, commit.occurrence(), state, segment)
+            .map_err(|error| MultiBacktestError::Context(error.to_string()))?;
     if let Some(previous) =
         current_segments.insert(event.instrument().clone(), segment.id().clone())
         && previous != *segment.id()
@@ -503,9 +503,9 @@ fn run_backtest_with_next<S: Strategy>(
             .state(event.instrument())
             .ok_or(BacktestError::Declaration)?
             .view();
-        let trading = TwseTradingContextEvaluator
-            .evaluate(&event, commit.occurrence(), state, segment)
-            .map_err(|error| BacktestError::Context(error.to_string()))?;
+        let trading =
+            TwseTradingContextEvaluator::evaluate(&event, commit.occurrence(), state, segment)
+                .map_err(|error| BacktestError::Context(error.to_string()))?;
         let mut sink = StrategyOutputSink::with_order_intents();
         strategy
             .on_event(

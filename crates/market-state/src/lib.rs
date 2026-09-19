@@ -8,12 +8,11 @@ pub use canonical::{
     FinalStateEncodingError, StateFingerprint, canonical_final_state_set, final_state_checksum,
 };
 pub use model::{
-    AppliedEventRef, LastTrade, LastTradeUnavailable, MarketState, MarketStateView, ModelError,
-    SessionSegmentId, SessionSegmentIdError, StateField, TradeObservation, UnavailableReason,
+    AppliedEventRef, AuctionState, LastTrade, LastTradeUnavailable, MarketPhase, MarketState,
+    MarketStateView, ModelError, SessionSegmentId, SessionSegmentIdError, StateField,
+    TradeObservation, UnavailableReason,
 };
-pub use profile::{
-    AnnotationPolicy, CumulativeVolumePolicy, MarketStateProfile, ProfileError, SourceFormatRule,
-};
+pub use profile::{CumulativeVolumePolicy, MarketStateProfile, ProfileError, SourceFormatRule};
 pub use reducer::{
     BoundaryAction, ChangedField, MARKET_STATE_VERSION, MarketStateReducer, ProposedTransition,
     ReducerContext, STATE_REDUCER_VERSION, SegmentBoundaryPolicy, StateTransitionError,
