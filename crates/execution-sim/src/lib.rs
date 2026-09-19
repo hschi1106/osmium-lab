@@ -267,15 +267,7 @@ impl Simulator {
                 reason: RejectionReason::PriceNotAllowedByInstrumentProfile,
             });
         }
-        let entry_allowed = match trading.new_order_entry() {
-            NewOrderEntry::Allowed => true,
-            NewOrderEntry::Restricted(OrderRestrictionReason::PreOpenLimitOrdersOnly)
-            | NewOrderEntry::Restricted(OrderRestrictionReason::AuctionCollecting) => {
-                matches!(intent.order_type(), OrderType::Limit { .. })
-            }
-            NewOrderEntry::Blocked(_) | NewOrderEntry::Unknown => false,
-        };
-        if !entry_allowed {
+        if !entry_allowed(trading.new_order_entry(), intent.order_type()) {
             return Ok(OrderFeedback::Rejected {
                 reason: RejectionReason::NewOrderEntryBlocked,
             });
@@ -522,6 +514,17 @@ fn evidence(event: &DomainEvent, mode: EvidenceMode, side: OrderSide) -> Option<
             .first()
             .map(|trade| (trade.price(), trade.quantity())),
         _ => None,
+    }
+}
+
+fn entry_allowed(entry: NewOrderEntry, order_type: OrderType) -> bool {
+    match entry {
+        NewOrderEntry::Allowed => true,
+        NewOrderEntry::Restricted(OrderRestrictionReason::PreOpenLimitOrdersOnly)
+        | NewOrderEntry::Restricted(OrderRestrictionReason::AuctionCollecting) => {
+            matches!(order_type, OrderType::Limit { .. })
+        }
+        NewOrderEntry::Blocked(_) | NewOrderEntry::Unknown => false,
     }
 }
 

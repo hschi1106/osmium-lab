@@ -6,8 +6,8 @@ use market_types::{
 };
 use strategy_api::{
     CancellationReason, ClientOrderId, ExecutionFailureReason, ExecutionFillFeedback, FillId,
-    MatchingState, NewOrderEntry, OrderFeedback, OrderId, OrderRestrictionReason, OrderSide,
-    OrderType, ScheduledExecutionPolicy, ScheduledOrderRequest,
+    MatchingState, NewOrderEntry, OrderFeedback, OrderId, OrderSide, OrderType,
+    ScheduledExecutionPolicy, ScheduledOrderRequest,
 };
 
 use crate::{DepthSweepError, FillRecord, depth::sweep_marketable_depth_with_consumed};
@@ -586,7 +586,7 @@ impl ScheduledDepthSimulator {
         let instrument = request.intent().instrument().clone();
         if self.trading_states.get(&instrument).is_some_and(|state| {
             state.visible_at <= at
-                && !entry_allowed(state.new_order_entry, request.intent().order_type())
+                && !super::entry_allowed(state.new_order_entry, request.intent().order_type())
         }) {
             return Ok(self.fail_activation(
                 order_index,
@@ -665,7 +665,7 @@ impl ScheduledDepthSimulator {
             .get(&instrument)
             .filter(|state| state.visible_at <= at)
             .is_some_and(|state| {
-                entry_allowed(state.new_order_entry, request.intent().order_type())
+                super::entry_allowed(state.new_order_entry, request.intent().order_type())
             })
         {
             return Ok(self.fail_activation(
@@ -1188,17 +1188,6 @@ impl ScheduledDepthSimulator {
     }
 }
 
-fn entry_allowed(entry: NewOrderEntry, order_type: strategy_api::OrderType) -> bool {
-    match entry {
-        NewOrderEntry::Allowed => true,
-        NewOrderEntry::Restricted(OrderRestrictionReason::PreOpenLimitOrdersOnly)
-        | NewOrderEntry::Restricted(OrderRestrictionReason::AuctionCollecting) => {
-            matches!(order_type, strategy_api::OrderType::Limit { .. })
-        }
-        NewOrderEntry::Blocked(_) | NewOrderEntry::Unknown => false,
-    }
-}
-
 fn fill_id(order_id: OrderId, control_sequence: u64, level_index: u8) -> FillId {
     let mut identity = Vec::new();
     identity.extend_from_slice(b"OSSF");
@@ -1345,7 +1334,8 @@ mod tests {
         BookLevel, BookSide, BookSideKind, MarketId, MatchingMethod, Price, Symbol,
     };
     use strategy_api::{
-        ClientOrderId, OrderIntent, OrderSide, OrderType, ScheduledExecutionPolicy,
+        ClientOrderId, OrderIntent, OrderRestrictionReason, OrderSide, OrderType,
+        ScheduledExecutionPolicy,
     };
 
     use super::*;

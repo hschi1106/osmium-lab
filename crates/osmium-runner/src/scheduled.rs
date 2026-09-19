@@ -4,8 +4,9 @@ use std::{
 };
 
 use execution_sim::{
-    AuctionMatchEvidence, MultiLedger, MultiPerformanceSummary, ScheduledDepthSimulator,
-    ScheduledOrderStatus, VisibleBookEvidence, VisibleTradingStateEvidence,
+    AuctionMatchEvidence, MultiLedger, MultiPerformanceSummary, ScheduledActivation,
+    ScheduledDepthSimulator, ScheduledOrderStatus, VisibleBookEvidence,
+    VisibleTradingStateEvidence,
 };
 use market_types::{AuctionPurpose, DomainEvent, MarketSignal, MatchTime};
 use replay_engine::{
@@ -375,23 +376,13 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
                     .intent()
                     .instrument()
                     .clone();
-                for fill in self.simulator.fills()[previous_fill_count..]
-                    .iter()
-                    .cloned()
-                {
-                    self.ledger
-                        .apply_fill(&instrument, fill)
-                        .map_err(|error| MultiBacktestError::Accounting(error.to_string()))?;
-                }
-                self.refresh_open_position(&instrument)?;
-                self.schedule_feedback(
+                self.settle_activations(
+                    &instrument,
+                    previous_fill_count,
+                    [activation],
                     at,
-                    [activation.feedback().clone()],
-                    activation.execution_fills().iter().cloned(),
-                    order_id.as_bytes(),
                     sequence,
-                )?;
-                Ok(())
+                )
             }
             ScheduledBacktestControl::AllocateVisibleDepth(instrument) => {
                 let previous_fill_count = self.simulator.fills().len();
@@ -399,25 +390,7 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
                     .simulator
                     .evaluate_active(&instrument, sequence, at)
                     .map_err(|error| MultiBacktestError::Simulation(error.to_string()))?;
-                for fill in self.simulator.fills()[previous_fill_count..]
-                    .iter()
-                    .cloned()
-                {
-                    self.ledger
-                        .apply_fill(&instrument, fill)
-                        .map_err(|error| MultiBacktestError::Accounting(error.to_string()))?;
-                }
-                self.refresh_open_position(&instrument)?;
-                for result in results {
-                    self.schedule_feedback(
-                        at,
-                        [result.feedback().clone()],
-                        result.execution_fills().iter().cloned(),
-                        result.order_id().as_bytes(),
-                        sequence,
-                    )?;
-                }
-                Ok(())
+                self.settle_activations(&instrument, previous_fill_count, results, at, sequence)
             }
             ScheduledBacktestControl::AllocateAuctionMatch(evidence) => {
                 let instrument = evidence.instrument().clone();
@@ -427,25 +400,13 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
                     .simulator
                     .evaluate_auction_match(&evidence)
                     .map_err(|error| MultiBacktestError::Simulation(error.to_string()))?;
-                for fill in self.simulator.fills()[previous_fill_count..]
-                    .iter()
-                    .cloned()
-                {
-                    self.ledger
-                        .apply_fill(&instrument, fill)
-                        .map_err(|error| MultiBacktestError::Accounting(error.to_string()))?;
-                }
-                self.refresh_open_position(&instrument)?;
-                for result in results {
-                    self.schedule_feedback(
-                        feedback_at,
-                        [result.feedback().clone()],
-                        result.execution_fills().iter().cloned(),
-                        result.order_id().as_bytes(),
-                        sequence,
-                    )?;
-                }
-                Ok(())
+                self.settle_activations(
+                    &instrument,
+                    previous_fill_count,
+                    results,
+                    feedback_at,
+                    sequence,
+                )
             }
             ScheduledBacktestControl::StrategyTimer(request) => {
                 if self.timer_generations.get(request.timer_id()) != Some(&sequence) {
@@ -459,6 +420,35 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
                 origin_identity,
             } => self.deliver_feedback(at, sequence, origin_identity, &feedback, &execution_fills),
         }
+    }
+
+    fn settle_activations(
+        &mut self,
+        instrument: &market_types::InstrumentId,
+        previous_fill_count: usize,
+        activations: impl IntoIterator<Item = ScheduledActivation>,
+        feedback_at: MatchTime,
+        control_sequence: u64,
+    ) -> Result<(), MultiBacktestError> {
+        for fill in self.simulator.fills()[previous_fill_count..]
+            .iter()
+            .cloned()
+        {
+            self.ledger
+                .apply_fill(instrument, fill)
+                .map_err(|error| MultiBacktestError::Accounting(error.to_string()))?;
+        }
+        self.refresh_open_position(instrument)?;
+        for activation in activations {
+            self.schedule_feedback(
+                feedback_at,
+                [activation.feedback().clone()],
+                activation.execution_fills().iter().cloned(),
+                activation.order_id().as_bytes(),
+                control_sequence,
+            )?;
+        }
+        Ok(())
     }
 
     fn release_observation(

@@ -1,6 +1,6 @@
 # 007：收斂一般與 scheduled execution 的重複邏輯
 
-Status: pending
+Status: complete
 Depends on: 006-backtest-capability-closure.md
 
 ## 目標
@@ -118,14 +118,14 @@ osmium-runner LOC before/after
 
 ## 執行紀錄
 
-- Baseline revision / working tree：
-- Rust LOC before：
-- execution-sim LOC before：
-- runner LOC before：
-- Duplication found：
-- Consolidation：
-- Validation：
-- Rust LOC after / delta：
-- execution-sim / runner LOC after：
-- 剩餘風險：
+- Baseline revision / working tree：`390b6d8`；baseline working tree clean。
+- Rust LOC before：`~/cloc/cloc --include-lang=Rust crates` = 114 files / 3,656 blank / 273 comment / 42,468 code。
+- execution-sim LOC before：4 files / 410 blank / 21 comment / 5,750 code。
+- runner LOC before：6 files / 237 blank / 0 comment / 4,778 code。
+- Duplication found：一般 `Simulator::submit` 與 `ScheduledDepthSimulator::activate` 以相同規則解讀 `NewOrderEntry`；`ScheduledCoordinator::process_control` 的 Activate、visible-depth allocation、auction allocation 三個 branch 重複將新 fills 寫入 ledger、更新 open position 並排入 feedback。兩者都沒有混合 market-event evidence 與 control-time evidence，但 lifecycle sink code 確實重複。
+- Consolidation：在 `crates/execution-sim/src/lib.rs` 建立單一 private `entry_allowed` policy helper，scheduled module 直接委派；在 `crates/osmium-runner/src/scheduled.rs` 建立 `settle_activations`，保留每個 branch 的 simulator operation、feedback time（auction 仍使用 `visible_at`）與 `FillTrigger` 差異，只集中 shared ledger／position／feedback plumbing。沒有加入 trait hierarchy，也沒有把一般與 scheduled simulator 合成同一 struct。
+- Validation：`rtk cargo fmt --check` 通過；`rtk cargo test --workspace` = 328 passed（55 suites）；`rtk cargo clippy --workspace --all-targets --all-features -- -D warnings` 無問題；focused `rtk cargo test -p execution-sim -p osmium-runner` = 66 passed（4 suites）；`rtk git diff --check` 通過。
+- Rust LOC after / delta：114 files / 3,657 blank / 273 comment / 42,450 code；相對 baseline code `-18`。
+- execution-sim / runner LOC after：execution-sim = 4 files / 410 blank / 21 comment / 5,743 code（`-7`）；runner = 6 files / 238 blank / 0 comment / 4,767 code（`-11`）。
+- 剩餘風險：scheduled coordinator 仍需在 visibility release 時讀取 provider-neutral `TradingContext` 的 volatility-interruption signal，才能以 control time cancel active market orders；這不是 raw provider annotation interpretation，且刻意保留以維持 market visibility 與 control scheduling 邊界。一般／scheduled order status 仍是不同模型的不同 state enum，未強行合併。
 - 下一步：008-simplify-accounting-economics.md
