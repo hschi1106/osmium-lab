@@ -84,6 +84,26 @@ fill 保存 order、trigger event/control action、price、quantity、slippage�
 
 equity、futures 與 options 使用分開的 accounting model。options premium 依 `price × economic quantity × multiplier` 移動 cash；futures 依其模型計算 position 與 P&L。無法確認 economics 時拒絕執行，不套用猜測 default。
 
+### 5.1 Economics boundary
+
+設定與 runtime 的責任保持單向轉換：
+
+| concept | config／planner representation | runtime owner | conversion rule |
+| --- | --- | --- | --- |
+| currency | `Currency`／`CurrencyAmount` 與每商品 `InstrumentEconomicsConfig` | `MultiLedger` 的 exact decimal cash | 目前只接受 TWD；currency identity 留在 effective config，runtime 不假設跨幣別換算 |
+| quantity unit | `InstrumentEconomicsConfig.quantity_unit` | `InstrumentLedgerConfig` 與 `MultiSimulator` | composition root 複製一次；fill quantity 必須再次通過 ledger unit check |
+| units／multiplier | `units_per_trading_unit`、`multiplier` | `InstrumentEconomics` | composition root 複製一次；notional／P&L 只由 accounting formula 使用 |
+| accounting model | explicit `InstrumentClass` | `AccountingModel` | CLI 只在建立 ledger 時選擇 `EquityV1`、`FuturesV1` 或 `OptionsV1`；`MultiLedger` 再驗證 market/model 相容性 |
+| fee／tax／rounding | planner `ChargeConfig`（含 provenance） | `ChargeModel`／`DayTradeTaxModel` | CLI 的 `charge` 是唯一 mapping；runtime 只保留計算所需 exact fields |
+| day-trade tax | per-instrument `DayTradeTaxConfig` | `DayTradeTaxModel` | eligibility 在 planner 綁定 trading dates；runtime 維持 FIFO 配對與後續 negative adjustment |
+| position accounting／marking | `PositionAccountingConfig`、`MarkingPolicyConfig` | `Ledger`、runner `final_mark` | config 只選已支援版本；position formula 由 ledger 擁有，runner 只提供 final mark |
+| cash charge | strategy output `CashChargeRequest` | runner → `CashChargeRecord` → `MultiLedger` | runner 只建立 identity／時間；ledger 原子驗證與扣款 |
+
+`InstrumentReferenceConfig` 與 `InstrumentEconomicsConfig` 同時保存 contract metadata 與 economics
+terms，是為了在 planner 驗證來源 reference 與執行 economics 一致；兩者不直接進入 ledger。runtime
+constructor 仍做 defensive validation，避免公開 crate API 被繞過 config/planner 後留下 invalid
+state。
+
 ## 6. Fee 與 tax
 
 charge model 支援：
