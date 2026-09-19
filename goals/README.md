@@ -1,97 +1,299 @@
-# Goals：精簡架構與提高可讀性
+# Goals：精簡 osmium-lab 架構、完成 provider 解耦與回測能力閉環
 
-本目錄管理 osmium-lab 的精簡目標。目標是讓人更容易理解架構、資料流與程式碼，不為重寫而重寫、不追求最少行數，也不建立不必要的通用 framework。以完成後的整體簡單程度為優先，不以最小 diff 或保留舊架構為目標；必要時可以進行破壞性重構。
+本目錄是一組可由 **Luna max long run** 依序執行的破壞性重構目標。
 
-成功的改動應能具體說明：少了哪個多餘概念、哪段重複邏輯、哪次不必要的轉換，或哪個難以追蹤的控制流程。正確性與可讀性優先於 LOC；必要的測試、驗證與領域差異不是冗餘。
+最終目的不是單純壓低 LOC，而是讓 `osmium-lab`：
 
-## 1. 讀取與選擇目標
+1. 與任何特定歷史行情供應商完全解耦；Teralion 只是目前內建 provider。
+2. 保留並驗證產品需求中聲稱支援的全部回測能力：資料準備、deterministic replay、strategy、一般與 scheduled execution、各支援商品的帳務、run artifacts 與 inspect。
+3. 移除已知無用能力、舊相容路徑、重複 orchestration、重複 domain 判斷與無必要 abstraction。
+4. 使主要資料流可以由人順著讀完，crate/module ownership 清楚。
+5. 使用本機 `~/cloc/cloc` 量化 Rust code footprint；LOC 是觀察指標，不是犧牲正確性的 KPI。
 
-- 遵守適用的 `AGENTS.md`，先讀根目錄 `AGENTS.md`、`docs/product-requirements.md`，再讀本檔與當前目標。其餘文件與程式碼按需要讀取，不要求每個 subagent 重讀整個 repo。
-- 產品需求仍是產品範圍與領域正確性的基準；本目錄不是另一份產品規格。使用者已明確授權為本目錄的精簡目標進行破壞性重構，不要求舊版相容。舊文件對 API、設定、資料格式或實作結構的描述不是保留舊設計的理由；在目標內同步更新受影響的文件與驗證，不需只因 breaking change 再次請求確認。不得藉此自行刪減產品能力或放寬領域正確性要求。
-- 使用者指定目標時，只執行該檔。使用者要求依序執行時，先恢復 `in_progress`，否則選編號最小、前置條件成立的 `pending` 目標；`_template.md` 不是待辦。
-- 一次只推進一個目標。狀態只存在各目標檔，不另建狀態資料庫、進度看板或 orchestration framework。
-- 完成指定範圍就停止。新發現最多留簡短候選，不得自行新增並執行下一輪重構。
+本 goals 明確授權 breaking refactor；不要求舊 API、config、cache、artifact 或 crate path 相容。
 
-## 2. Agent 分工
+---
 
-| 角色 | 指定模型／推理 | 責任 |
-| --- | --- | --- |
-| Main | astra / low | 理解需求、確認問題、選擇最簡單有效方案、定義驗收、分派工作、review diff、判定完成。 |
-| Implementation | sol / medium | 按明確範圍修改 production code、測試與相關文件；回報變更與風險，不自行擴張架構。 |
-| Execution | luna / max | 執行指定測試、benchmark、實驗與程序輪詢，收集可重現證據；不自行決定領域語義或驗收標準。 |
+## 1. 執行模型：Luna max 單一 long-run executor
 
-以上是要求使用的設定，不是模型已切換的證據。開始實作前確認 main 與 subagent 的實際 model／reasoning；使用目前環境支援的 model ID 與設定方式，不猜測 ID。無法確認或無法使用指定配置時，回報限制並停止 implementation，不靜默改用別的模型、提高 reasoning，或宣稱已委派。
+這套 goals 是為 **Luna / max** 作為主執行者設計，不再要求 Astra / Sol 分工，也不要因舊 goal 內容提到其他模型而切換模型。
 
-Astra 原則上不承擔大段 implementation，也不自己反覆跑長測試；可直接維護目標檔與做必要的少量整合。測試與實驗的「要證明什麼、預期結果是什麼」由 Astra 決定；Sol 實作需要推理的測試／實驗程式；Luna 負責執行。Luna 不修改 production code、驗收門檻、expected output 或 golden fixtures 來消除失敗。
+Luna max 負責：
 
-預設每次只啟用目前需要的角色，不必三者常駐。修改與驗證同一 working tree 時必須交接，不可邊改邊驗收。只有檔案與依賴均獨立的任務才考慮並行；subagent 不自行再派生其他 agent。
+- 讀取 repo、確認現況與依賴。
+- 選擇目標範圍內最簡單有效方案。
+- 修改 production code、tests、fixtures、docs。
+- 執行 focused / workspace tests、benchmark、cloc。
+- review 自己的 diff 與驗證結果。
+- 更新當前 goal 的執行紀錄與 status。
+
+不要建立 subagent orchestration framework。若環境本身提供 subagent，可不用；本計畫不依賴它。
+
+### 長跑規則
+
+- 一次只執行一個 goal，依編號前進。
+- 前一 goal 未 `done`，不得跳到依賴它的下一 goal。
+- 每一 goal 開始時重新讀取目前 working tree；不能假設前一份摘要仍是最新事實。
+- 不自行 commit、push、rebase、reset、clean 或刪除使用者原始行情。
+- 不等待人工確認 breaking changes；本目錄已授權。
+- 必要驗收真的無法完成時，將 goal 標成 `blocked` 並停止依賴鏈；不得假裝通過。
+- 發現 scope 外問題，只在執行紀錄留下短候選；不要順手展開。
+- 不為 long run 建立 task DB、dashboard、scheduler、agent registry 或 recovery framework。
+
+---
+
+## 2. 開始每個 goal 前必讀
+
+1. 根目錄 `AGENTS.md`
+2. `docs/product-requirements.md`
+3. 本 `goals/README.md`
+4. 當前 goal
+
+其他文件與 code 依實際資料流再讀，不要求每個 goal 全 repo 重讀。
+
+`docs/product-requirements.md` 是產品範圍基準；goal 可以改變其架構描述與已明確授權刪除的功能，但不得未經 goal 指示自行新增或刪除產品能力。
+
+### 「所有回測能力」的定義
+
+本計畫中的「所有回測能力」指 **執行當時修訂後的產品需求聲稱支援的能力全部有 production path 與驗證**。
+
+它不自動代表新增：
+
+- IOC / FOK 或所有交易所 order type
+- 盤中零股、盤後零股、盤後定價、鉅額交易
+- 即時交易
+- 完整 exchange matching engine
+- queue position / hidden liquidity
+- 交易所未由資料證明的內部狀態
+
+若產品需求目前把某能力列為 out-of-scope，就不要在 cleanup 計畫中偷偷加回來。
+
+---
 
 ## 3. 精簡原則
 
-- 先證明當前程式碼有問題，再修改。已完成、已足夠簡單，或刪除成本大於收益時，允許不改，並留下具體理由。
-- 優先刪除無用程式碼、合併語義相同的重複實作、移除純轉送包裝與不必要轉換，讓主流程容易順著讀完。
-- 不把語義不同、只是長得像的程式碼硬抽成一套；不把有用的模組邊界壓成巨型檔案。
-- 新增 trait、generic、crate、依賴或間接層，必須解決目前可指出的問題，並解釋比直接做法更簡單的原因。未來可能有需求不是充分理由。
-- 不為了乾淨而全面改名、搬檔、統一風格或順手修其他模組。一次變更只處理一個可說明的問題。
-- 不刪除必要的完整性檢查、錯誤脈絡、領域規則或獨立測試覆蓋；不以壓縮排版或刪除註解灌水式減少 LOC。
-- 保留必要的領域正確性：包括 deterministic replay、時間與資料可見性、完整 snapshot／indicative 差異、source／cache 邊界與精確帳務。表示方式與介面可以重設；不能把既有實作細節誤當成不可改的產品要求。
-- 可破壞舊版契約，但必須說清楚新契約與影響，並提供相應驗證；不把未說明的語義變更偽裝成單純整理。
+優先順序：
 
-## 4. 破壞性重構與相容性政策
+1. 刪除沒有產品用途的功能與 dead code。
+2. 刪除舊版 compatibility path。
+3. 把 provider-specific code 收回 provider 邊界。
+4. 合併語義相同的重複判斷與重複 orchestration。
+5. 移除純 forwarding wrapper、不必要 DTO 轉換與 one-call-site abstraction。
+6. 只有在能刪掉實際 coupling / duplication 時才新增 abstraction。
 
-- **不要求向後相容。** 允許在目標範圍內重設公開 API、CLI、設定結構與語義、資料格式、cache identity、模組／crate 邊界及版本契約；不需要逐項重新取得相容性豁免。
-- 優先保留一套清楚的新實作。刪除僅為舊版相容而存在的 wrapper、alias、fallback、deprecated API、舊 parser、版本分支與雙軌流程；不為歷史使用方式新增 shim、migration framework 或長期過渡層。不要誤刪仍有當前產品用途的 adapter 或 fallback。
-- 同一個邏輯變更一併更新 repo 內受影響的呼叫端、範例、設定、測試與文件。舊外部呼叫端不保證可用；只需交代新的使用方式，不為未知外部使用者保留舊介面。
-- 舊設定、cache 與 run artifacts 可以不再支援，不需要自動遷移。不相容內容須明確拒絕，不得以新格式靜默誤讀。衍生 cache 可以重新建立；破壞性重構不等於獲准自動刪除或覆寫使用者的原始行情資料與無關檔案。
-- 只驗證舊相容行為的測試可以刪除或改寫；必要的領域案例、錯誤處理與新契約覆蓋必須保留。不能為了測試通過而刪除有效失敗案例，或未經分析就更新 expected values。
-- 小步執行是為了方便理解、review 與驗證，不是要求每一步保留舊 API。必要的跨模組變更可以作為同一個可驗收步驟，避免為了縮小 diff 留下永久相容負擔。
+禁止為「未來可能」新增：
 
-## 5. 每個目標的工作迴圈
+- generic framework
+- plugin registry
+- dependency injection container
+- event bus
+- rule engine
+- DSL
+- capability graph
+- provider registration macro
+- dynamic loading
+- state-machine framework
 
-1. 記錄起始 revision 與 working-tree 狀態，保護使用者既有修改。確認目標仍適用；不得把舊文件或檔名當成問題已存在的證據。
-2. 追蹤相關入口、呼叫者與資料流，提出可定位到 `檔案::symbol` 的證據。選擇最簡單有效方案，說明必須保留的領域行為、要改變的契約與驗收方式；不要先寫長篇理想架構，也不要為了縮小 diff 保留不必要的舊設計。
-3. 在變更前建立相關 baseline，區分必須保留的領域語義與刻意淘汰的舊介面行為。Astra 定義新契約與驗收案例，Sol 補上必要的 regression／新契約測試；不把 characterization test 當成凍結舊設計的理由。
-4. Astra 給 Sol 一份短委派：目標、允許修改範圍、新契約、領域不可變條件與驗收案例。Sol 完成一個可獨立 review／驗證的邏輯變更後交回；必要呼叫端與文件須一併改完，不自行擴大 scope。
-5. 交由 Luna 對穩定的程式碼版本執行驗證。每次回報 command、工作目錄、revision／diff 狀態、輸入、exit code、結果摘要及必要 log 路徑；不傾倒完整日誌。
-6. Astra 親自檢查 diff 與驗證證據。測試通過是必要證據，不等於架構合理或業務語義正確。失敗時交由 Sol 修正；同一問題連續兩輪沒有新進展，重新評估方案，不盲目重試。
-7. 更新當前目標檔的結果與下一步。先完成這個小步驟，再繼續同一目標內的下一個必要步驟。
+不要把語義不同、只是長得像的 code 硬合併。
 
-子任務回報只需：做了什麼、檔案／symbols、驗證證據、未解風險。避免每個 agent 各自產生一份重複報告。
+### 必須保留的核心正確性
 
-## 6. 驗證與執行成本
+- deterministic replay
+- `match_time` 與資料可見性 / no-look-ahead
+- firm vs indicative market data isolation
+- verified source / derived cache boundary
+- provider wire / DomainEvent boundary
+- strategy read-only market state
+- order origin / subsequent-event causality
+- scheduled control time 與 replay event stream 分離
+- exact fee / tax / cash / position / P&L accounting
+- reconciliation
+- immutable run artifacts 與 inspect lineage
 
-Rust 變更先做 focused validation，例如：
+---
 
-```sh
-cargo fmt --all --check
-cargo test -p <實際受影響的-crate>
-```
+## 4. Breaking-change 政策
 
-完成涉及 Rust 的目標前，執行 `cargo test --workspace`；其他檢查依 repo 的 CI 與變更風險選擇，不因每個小 patch 就重跑完整 release gate。純文件目標不必為了形式而編譯整個 workspace。
+允許直接修改：
 
-若要確認目前的 Rust 程式碼數量，使用本機的 `~/cloc/cloc`，並以輸出中 Rust 的 `code`
-欄位作為統一判斷標準：
+- public Rust API
+- CLI
+- config schema
+- cache / source identity
+- canonical encoding / version
+- module / crate boundary
+- local derived-data layout
+- artifact version
+
+原則：
+
+- 只保留一套新實作。
+- 不留 deprecated alias、wrapper crate、fallback parser、dual reader、legacy encoder。
+- 舊 derived cache 可拒絕並重建。
+- 不自動刪除或覆寫 user-owned raw source。
+- 如果舊格式需要被拒絕，保留**最小版本檢查**即可；不要保留舊版讀取能力。
+
+---
+
+## 5. LOC 計量：強制使用 `~/cloc/cloc`
+
+### 5.1 Repo baseline
+
+Goal-000 必須執行：
 
 ```sh
 ~/cloc/cloc --vcs=git --include-lang=Rust .
 ```
 
-`--vcs=git` 只統計 Git 追蹤的檔案，避免 `target/`、本機暫存檔或其他未追蹤內容影響結果。
-這項數字僅用於一致地描述程式碼數量，不作為程式碼品質或精簡成果的單一判斷依據。
+保存 Rust `code` 欄位。
 
-對 replay／simulation／accounting 路徑，使用固定且合法取得的輸入驗證必要的事件語義、資料可見性、成交與帳務結果，以及新版本的可重現性。未變更的語義需與 baseline 對照；表示方式、排序契約或序列化改變時，不要求跨版本 checksum／byte output 相同，但須說明差異並驗證新契約，不可直接更新 expected value 略過分析。必要時更新 schema／format／ordering 等版本識別以拒絕不相容資料；版本識別不代表必須保留舊版讀取器。
+### 5.2 Dirty working tree 的準確計數
 
-Benchmark 僅在改到效能敏感路徑或目標明確要求時執行；記錄相同輸入、build profile、執行條件與合理的重複次數。不拿單次 wall time 宣稱效能提升，也不預設使用完整市場真實資料做昂貴實驗。
+long run 中新增檔案可能尚未被 Git track；因此每個 goal 結束時，另外以目前 working tree 的 Rust 檔案清單計數：
 
-長程序優先用工具的 wait／blocking completion 或有 timeout 的簡單腳本等待。輪詢必須有上限；除非出現新輸出、失敗或完成，不反覆喚醒 agent 分析相同狀態。不得為此新增排程系統或自動恢復框架。
+```sh
+git ls-files -co --exclude-standard '*.rs' \
+  | while IFS= read -r f; do
+      [ -f "$f" ] && printf '%s\n' "$f"
+    done \
+  | sort -u > /tmp/osmium-rust-files.txt
 
-任何未執行、失敗、timeout 或因環境受限而無法完成的必要驗證都要明說；不得寫成通過。
+~/cloc/cloc \
+  --list-file=/tmp/osmium-rust-files.txt \
+  --include-lang=Rust
+```
 
-## 7. 完成、阻塞與恢復
+記錄：
 
-- `pending`：尚未開始；`in_progress`：執行中；`blocked`：有明確阻塞；`done`：所有驗收條件成立。
-- 沒有必要改動也可 `done`，但須提供目標已滿足、或經檢查不值得修改的具體證據，不能只寫「看起來沒問題」。
-- 缺資料、必要測試不能執行、方案需要超出目標的產品能力／領域語義變更，或指定模型不可用時，記為 `blocked`，保留已完成工作與原因，不假裝完成。API、設定或格式的破壞性變更已獲授權，不能只因不相容舊版就標成阻塞。
-- 目標檔只保存恢復工作所需的最少狀態：已完成、驗證結果、剩餘問題、下一步；不保存逐輪對話。
-- 恢復時重新確認 working tree、現有 diff 與程序狀態，不把上次 agent 的摘要當作最新事實，也不重複啟動仍在執行的程序。
-- 最終交付說明：修改檔案、減少了什麼複雜度、breaking changes 與新的使用方式、實際驗證結果與剩餘風險。未要求時不 commit、不 push、不清理或回復無關檔案。
+```text
+Rust LOC before
+Rust LOC after
+delta
+```
+
+必要時對主要受影響 crate 再跑 `~/cloc/cloc --include-lang=Rust <path>`，但 repo total 仍是主要比較指標。
+
+### LOC 解讀
+
+- 不設定硬性「每個 goal 都必須下降」。
+- 新 contract / correctness tests 可能暫時增加 LOC。
+- 不用壓縮格式、刪必要測試、刪註解或合併語義不同 code 來灌水。
+- Goal-012 最後比較 Goal-000 baseline 與 final Rust LOC，並解釋增減來源。
+
+---
+
+## 6. 每個 goal 的固定工作迴圈
+
+1. `git rev-parse HEAD`、`git status --short`。
+2. 讀當前 code，不把 goal 中的舊 symbol 當成仍存在的事實。
+3. 執行本 goal 的 before-cloc。
+4. 建立必要 baseline tests / checksums / behavior evidence。
+5. 只修改當前 scope。
+6. focused tests。
+7. `cargo fmt --all --check`
+8. 必要時 `cargo clippy --workspace --all-targets -- -D warnings`
+9. goal 完成前 `cargo test --workspace`
+10. after-cloc。
+11. review diff：確認舊路徑真的刪掉，而不是新舊雙軌。
+12. 更新 goal 執行紀錄；所有 acceptance 成立才改 `Status: done`。
+
+長程序使用正常 blocking wait 或有 timeout 的腳本；不要高頻輪詢。
+
+---
+
+## 7. 驗證政策
+
+Rust goal 的最低完成 gate：
+
+```sh
+cargo fmt --all --check
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+若 repo 當時既有 CI / acceptance 有更適合的 focused command，先跑 focused 再跑 workspace。
+
+涉及 replay / market-state / execution / accounting / cache / provider mapping 時，不能只看 compile pass；必須跑相應 domain cases。
+
+若 schema / canonical encoding / ordering / identity 刻意改變：
+
+- 不要求跨版本 checksum 相同。
+- 必須解釋差異。
+- 新版本重跑必須 deterministic。
+- 不能只更新 golden 值就宣稱正確。
+
+---
+
+## 8. Goal 順序
+
+```text
+000 baseline-and-inventory
+  ↓
+001 remove-tui
+  ↓
+002 provider-neutral-validation
+  ↓
+003 decouple-teralion-provider
+  ↓
+004 unified-market-state
+  ↓
+005 close-market-background-gap
+  ↓
+006 backtest-capability-closure
+  ↓
+007 consolidate-execution-paths
+  ↓
+008 simplify-accounting-economics
+  ↓
+009 simplify-config-planner-runner
+  ↓
+010 remove-legacy-compatibility
+  ↓
+011 final-redundancy-cleanup
+  ↓
+012 final-acceptance
+```
+
+Goal-006 是後續精簡的 functional firewall；Goal-011 才做全 repo 最後 cleanup。
+
+---
+
+## 9. Status
+
+每份 goal：
+
+- `pending`
+- `in_progress`
+- `blocked`
+- `done`
+
+執行紀錄只保留恢復需要的資訊：
+
+- baseline revision / working tree
+- before / after Rust LOC
+- 決定與改動
+- 驗證 command / exit result
+- breaking changes
+- 剩餘風險
+- 下一步
+
+不要保存逐輪思考日誌。
+
+---
+
+## 10. 最終成功條件
+
+Goal-012 完成時：
+
+- TUI 與專用負擔消失。
+- 核心 market semantics provider-neutral。
+- Teralion acquisition + wire mapping 集中在 provider boundary。
+- 核心 source/cache/replay/strategy/sim/accounting 不依賴 Teralion schema。
+- 產品需求內聲稱支援的回測能力全部有 production path + tests。
+- 普通 / scheduled execution 不保留可證明的重複 market interpretation / order lifecycle。
+- economics / accounting config 到 runtime 沒有不必要重複模型。
+- config → plan → run data flow 可順著理解。
+- legacy compatibility production path 清除。
+- final full-repo cleanup 完成。
+- workspace tests / clippy / fmt / smoke / capability gates 通過。
+- final Rust LOC、crate count、主要依賴與 benchmark 結果和 baseline 一起回報。
