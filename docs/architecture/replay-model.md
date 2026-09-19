@@ -164,7 +164,7 @@ resolve factory and parameters
 cli_contract=4
 config_schema=3
 run_manifest=4
-event_schema=6
+event_schema=7
 cache_format=3
 accounting=8
 ```

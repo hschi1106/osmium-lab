@@ -678,6 +678,8 @@ impl Error for BacktestError {}
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use execution_sim::{
         AccountingModel, ChargeBasis, ChargeModel, ChargeSides, EvidenceMode, FillModel,
         InstrumentEconomics, InstrumentLedgerConfig, MultiLedger, QuantityPolicy, RoundingPolicy,
@@ -838,16 +840,21 @@ mod tests {
     }
 
     struct MultiFactory {
-        events: Vec<DomainEvent>,
+        events: BTreeMap<InstrumentId, Vec<DomainEvent>>,
     }
 
     impl ReplayStreamFactory for MultiFactory {
         type Stream = MultiVecStream;
         type Error = std::io::Error;
 
-        fn open(&mut self, _binding: &ReplayStreamBinding) -> Result<Self::Stream, Self::Error> {
+        fn open(&mut self, binding: &ReplayStreamBinding) -> Result<Self::Stream, Self::Error> {
             Ok(MultiVecStream {
-                events: self.events.clone().into_iter(),
+                events: self
+                    .events
+                    .get(binding.instrument())
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter(),
             })
         }
     }
@@ -984,7 +991,9 @@ mod tests {
             core,
             strategy,
             &plan,
-            &mut MultiFactory { events },
+            &mut MultiFactory {
+                events: BTreeMap::from([(instrument.clone(), events)]),
+            },
             &schedule,
             simulator,
             ledger,
@@ -1046,5 +1055,227 @@ mod tests {
             manifest["versions"]["fill_model"],
             execution_sim::FILL_MODEL_VERSION
         );
+    }
+
+    #[test]
+    fn multi_market_backtest_reconciles_equity_and_option_economics() {
+        let equity = InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap());
+        let option = InstrumentId::new(MarketId::Taifex, Symbol::new("TXO202612").unwrap());
+        let date = TradingDate::parse("2026-07-27").unwrap();
+        let equity_events = (0..3)
+            .map(|second| {
+                twse_event(
+                    &equity,
+                    MatchTime::parse(&format!("2026-07-27T09:00:0{second}+08:00")).unwrap(),
+                    second + 1,
+                )
+            })
+            .collect::<Vec<_>>();
+        let option_events = (0..3)
+            .map(|second| {
+                taifex_event(
+                    &option,
+                    MatchTime::parse(&format!("2026-07-27T09:00:0{second}+08:00")).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let session_id = SessionSegmentId::new("regular").unwrap();
+        let segment = || {
+            SessionSegment::new(
+                SessionSegmentId::new("regular").unwrap(),
+                SessionKind::Regular,
+                date,
+                MatchTime::parse("2026-07-27T09:00:00+08:00").unwrap(),
+                MatchTime::parse("2026-07-27T13:30:00+08:00").unwrap(),
+            )
+            .unwrap()
+        };
+        let core = ReplayCore::new_multi(
+            vec![
+                MarketState::new(equity.clone(), date),
+                MarketState::new(option.clone(), date),
+            ],
+            vec![
+                (equity.clone(), MarketStateReducer::twse_regular()),
+                (option.clone(), MarketStateReducer::taifex_options()),
+            ],
+            vec![
+                (
+                    equity.clone(),
+                    ReducerContext::new(date, session_id.clone(), SegmentBoundaryPolicy::Carry, 1),
+                ),
+                (
+                    option.clone(),
+                    ReducerContext::new(date, session_id, SegmentBoundaryPolicy::Carry, 1),
+                ),
+            ],
+        )
+        .unwrap();
+        let bindings = vec![
+            ReplayStreamBinding::new(
+                StableStreamDescriptorId::from_bytes([8; 32]),
+                equity.clone(),
+                date,
+                [2; 32],
+                [3; 32],
+            ),
+            ReplayStreamBinding::new(
+                StableStreamDescriptorId::from_bytes([9; 32]),
+                option.clone(),
+                date,
+                [4; 32],
+                [5; 32],
+            ),
+        ];
+        let plan = ReplayPlan::new_multi([6; 32], bindings).unwrap();
+        let schedule = MultiSessionSchedule::new(vec![
+            (equity.clone(), vec![segment()]),
+            (option.clone(), vec![segment()]),
+        ])
+        .unwrap();
+        let strategy = AcceptanceStrategy::new(
+            AcceptanceStrategy::source_binary_identity().unwrap(),
+            [equity.clone(), option.clone()],
+            [SessionKind::Regular],
+        )
+        .unwrap();
+        let fill_model = || execution_sim::FillModel {
+            evidence: execution_sim::EvidenceMode::TopOfBook,
+            quantity: execution_sim::QuantityPolicy::Displayed,
+            adverse_price_delta: Decimal::ZERO,
+            market_data_latency_ms: 0,
+            order_latency_ms: 0,
+        };
+        let simulator = MultiSimulator::new([
+            (
+                equity.clone(),
+                QuantityUnit::TradingUnit,
+                fill_model(),
+                market_types::PricePolicy::PositiveOnly,
+            ),
+            (
+                option.clone(),
+                QuantityUnit::Contract,
+                fill_model(),
+                market_types::PricePolicy::PositiveOnly,
+            ),
+        ])
+        .unwrap();
+        let zero_charge = || ChargeModel {
+            basis: ChargeBasis::NotionalRate,
+            rate: Decimal::ZERO,
+            sides: ChargeSides::Both,
+            minimum: Decimal::ZERO,
+            precision: 0,
+            rounding: RoundingPolicy::Down,
+        };
+        let ledger = MultiLedger::new(
+            Decimal::parse("1000000").unwrap(),
+            [
+                InstrumentLedgerConfig::new(
+                    equity.clone(),
+                    QuantityUnit::TradingUnit,
+                    AccountingModel::EquityV1,
+                    InstrumentEconomics {
+                        units_per_trading_unit: 1,
+                        multiplier: Decimal::parse("1").unwrap(),
+                        provenance: "test TWSE equity economics".into(),
+                    },
+                    zero_charge(),
+                    zero_charge(),
+                ),
+                InstrumentLedgerConfig::new(
+                    option.clone(),
+                    QuantityUnit::Contract,
+                    AccountingModel::OptionsV1,
+                    InstrumentEconomics {
+                        units_per_trading_unit: 1,
+                        multiplier: Decimal::parse("50").unwrap(),
+                        provenance: "test TAIFEX option economics".into(),
+                    },
+                    zero_charge(),
+                    zero_charge(),
+                ),
+            ],
+        )
+        .unwrap();
+        let completed = run_multi_backtest(
+            core,
+            strategy,
+            &plan,
+            &mut MultiFactory {
+                events: BTreeMap::from([
+                    (equity.clone(), equity_events),
+                    (option.clone(), option_events),
+                ]),
+            },
+            &schedule,
+            simulator,
+            ledger,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(completed.replay.summary().event_count(), 6);
+        assert_eq!(completed.simulator.order_count(), 4);
+        assert_eq!(completed.simulator.fill_count(), 4);
+        assert_eq!(completed.performance.fill_count(), 4);
+        assert_eq!(
+            completed.performance.realized_pnl(),
+            Decimal::parse("-102").unwrap()
+        );
+        assert_eq!(completed.ledger.cash(), Decimal::parse("999898").unwrap());
+        assert_eq!(
+            completed.ledger.ledger(&equity).unwrap().accounting_model(),
+            AccountingModel::EquityV1
+        );
+        assert_eq!(
+            completed.ledger.ledger(&option).unwrap().accounting_model(),
+            AccountingModel::OptionsV1
+        );
+        assert_eq!(completed.performance.instruments().len(), 2);
+    }
+
+    fn twse_event(
+        instrument: &InstrumentId,
+        match_time: MatchTime,
+        cumulative: u64,
+    ) -> DomainEvent {
+        let quantity = Quantity::new(1, QuantityUnit::TradingUnit).unwrap();
+        let book = CompleteBookSnapshot::new(
+            BookSide::new(
+                BookSideKind::Bid,
+                vec![BookLevel::new(Price::parse("99").unwrap(), quantity)],
+            )
+            .unwrap(),
+            BookSide::new(
+                BookSideKind::Ask,
+                vec![BookLevel::new(Price::parse("101").unwrap(), quantity)],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        DomainEvent::new(
+            instrument.clone(),
+            TradingDate::parse("2026-07-27").unwrap(),
+            SourceFormatId::new("STOCK_REALTIME").unwrap(),
+            match_time,
+            None,
+            EventPayload::QuoteSnapshot(
+                market_types::QuoteSnapshot::new(
+                    book,
+                    market_types::Observation::NoObservation,
+                    market_types::Observation::Set(market_types::Volume::new(
+                        cumulative,
+                        QuantityUnit::TradingUnit,
+                    )),
+                    MarketAnnotations::TwseQuote(market_types::TwseQuoteAnnotations::new(0, 0)),
+                )
+                .unwrap()
+                .with_market_signal(market_types::Observation::Set(
+                    market_types::MarketSignal::Continuous,
+                )),
+            ),
+        )
     }
 }

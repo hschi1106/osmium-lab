@@ -213,7 +213,120 @@ run artifacts 至少保存 effective config checksum、execution plan identity�
 
 credential 不得進入設定、資料 artifact、log 或版本控制。source interface、normalizer mapping、event schema、ordering、cache、strategy output、fill model、accounting 與 run manifest 均需有相容性 identity；不相容時拒絕或由 verified source 重建。
 
-## 10. 驗證原則
+## 10. 能力矩陣與代表性證據
+
+本矩陣是目前產品宣稱的邊界。`production owner` 是實際擁有該行為的 crate 或
+composition-root；`evidence` 是可直接定位的 regression test、fixture 或 implementation。
+市場／商品列為「模型支援」時，表示已完成 provider normalization、MarketState、execution
+與 accounting model 的連接；不表示交易所完整撮合、逐筆委託、queue position 或 hidden
+liquidity 已被重建。
+
+### 10.1 Source 與 replay
+
+| capability | production owner | evidence | 宣稱 |
+| --- | --- | --- | --- |
+| provider-neutral verified source | `data-sync`、`market-types` | `crates/data-sync/src/verify.rs`、`crates/data-sync/src/partition.rs`、`crates/run-planner/tests/partition_plan.rs#source_and_cache_states_classify_into_explicit_actions` | 支援；Teralion 只在 composition root 接入 |
+| cache prepare／reuse／rebuild | `data-sync`、`run-planner` | `crates/data-sync/src/cache.rs`、`crates/run-planner/tests/partition_plan.rs#source_and_cache_states_classify_into_explicit_actions` | 支援；cache 是可重建 artifact |
+| deterministic multi-stream replay | `replay-engine` | `crates/replay-engine/tests/replay.rs#multi_stream_replay_merges_bounded_heads_and_ignores_sentinel`、`#multi_stream_binding_order_does_not_change_checksum` | 支援 |
+| multi-instrument universe | `replay-engine`、`osmium-runner` | `crates/osmium-runner/src/lib.rs#multi_market_backtest_reconciles_equity_and_option_economics` | 支援；每個 instrument 有獨立 state、simulator 與 ledger |
+| multi-day／trading-date | `run-planner`、`replay-engine` | `crates/run-planner/tests/partition_plan.rs#execution_plan_requires_every_universe_date_partition`、`crates/replay-engine/tests/replay.rs#context_schedule_resets_state_across_trading_dates` | 支援；repository fixtures 仍明確標示 `complete_day: false` |
+| firm／indicative isolation | `market-state` | `crates/market-state/tests/neutral_signal.rs`、`crates/market-state/tests/reducer.rs#taifex_opening_indicative_is_timeline_without_trade_or_volume_state` | 支援 |
+| no-look-ahead／visibility | `strategy-api`、`osmium-runner` | `crates/strategy-api/tests/strategy.rs#callback_observes_committed_post_event_state_and_context`、`#failed_callback_discards_current_batch_after_core_commit`、`crates/osmium-runner/src/visibility.rs` | 支援；strategy 只讀目前 post-event state |
+
+### 10.2 市場與商品
+
+| market／instrument | production path | regression evidence | 實際 execution／accounting claim |
+| --- | --- | --- | --- |
+| TWSE equity | `TwseNormalizer` → `twse_regular` → `EquityV1` | `crates/providers/teralion/tests/twse_full_fixture.rs`、`crates/osmium-runner/src/lib.rs#multi_market_backtest_reconciles_equity_and_option_economics` | 模型支援；quantity 為 `TradingUnit` |
+| TWSE warrant | `TwseNormalizer::new_warrant` → `twse_warrant` → `EquityV1` | `crates/providers/teralion/tests/twse_m5_warrant_fixture.rs`、`crates/providers/teralion/tests/twse_normalizer.rs` | 模型支援；沿用 equity accounting，不宣稱 warrant-specific exchange matching |
+| TPEx equity | `TpexNormalizer` → `tpex_regular` → `EquityV1` | `crates/providers/teralion/tests/tpex_full_fixture.rs`、`crates/providers/teralion/tests/tpex_normalizer.rs` | 模型支援；quantity 為 `TradingUnit` |
+| TPEx warrant | `TpexNormalizer::new_warrant` → `tpex_warrant` → `EquityV1` | `crates/providers/teralion/tests/tpex_m5_warrant_fixture.rs`、`crates/providers/teralion/tests/tpex_normalizer.rs` | 模型支援；沿用 equity accounting，不宣稱 warrant-specific exchange matching |
+| TAIFEX future | `TaifexNormalizer::new_futures` → `taifex_futures` → `FuturesV1` | `crates/providers/teralion/tests/taifex_fixtures.rs`、`crates/osmium-runner/src/lib.rs#multi_backtest_isolates_instruments_and_respects_latency` | 模型支援；multiplier、contract shape 與 session profile 必須明確 |
+| TAIFEX option | `TaifexNormalizer::new_options` → `taifex_options` → `OptionsV1` | `crates/providers/teralion/tests/taifex_m5_option_fixture.rs`、`crates/execution-sim/src/accounting.rs#options_v1_moves_premium_cash_with_contract_multiplier`、`crates/osmium-runner/src/lib.rs#multi_market_backtest_reconciles_equity_and_option_economics` | 模型支援；premium cash 使用 `price × quantity × multiplier` |
+
+以上六類是「可被規劃、正規化、回播並以明確模型執行／記帳」的支援宣稱，不是 full exchange
+matching。缺少 contract economics、currency、multiplier 或 class identity 時，config／plan
+必須拒絕，不以 symbol 或 market 猜測。
+
+### 10.3 Market state
+
+| capability | production owner | evidence | 缺證據時的行為 |
+| --- | --- | --- | --- |
+| continuous | `market-types`、`market-state`、`strategy-api` | `crates/market-state/tests/neutral_signal.rs#volatility_interruption_result_returns_to_continuous_without_using_a_trial_book`、`crates/providers/teralion/tests/production_market_path.rs#provider_events_reach_production_reducer_and_context_without_background_lookup` | explicit `Continuous` 才放行；不由預設值補上 |
+| opening／closing | `market-state` | `crates/market-state/tests/neutral_signal.rs#opening_and_delayed_opening_uncross_end_in_continuous_phase`、`#closing_uncross_closes_without_erasing_the_last_firm_book` | 依 `AuctionPurpose` reducer transition |
+| delayed open／close | `market-types`、`market-state` | `crates/market-state/tests/neutral_signal.rs#opening_and_delayed_opening_uncross_end_in_continuous_phase`、`crates/strategy-api/tests/strategy.rs#strategy_callback_can_observe_explicit_delayed_open_signal` | 只保留 event evidence 的 `delayed` |
+| periodic／disposal | `market-types`、`market-state`、provider boundary | `crates/market-state/tests/neutral_signal.rs#periodic_uncross_keeps_the_next_periodic_auction_and_repeated_delay_has_no_counter`、`crates/providers/teralion/tests/production_market_path.rs#provider_events_reach_production_reducer_and_context_without_background_lookup` | 沒有來源證據不載入處置背景、不猜頻率 |
+| volatility interruption | `market-state`、`execution-sim`、`osmium-runner` | `crates/market-state/tests/neutral_signal.rs#volatility_interruption_result_returns_to_continuous_without_using_a_trial_book`、`crates/execution-sim/src/lib.rs#volatility_interruption_restricts_new_orders_and_cancels_pending_market_orders` | restricted entry；既有 market ROD 依 policy cancel |
+| Unknown／degraded | `market-state`、`run-planner`、`replay-engine` | `crates/market-state/tests/neutral_signal.rs#no_observation_keeps_phase_but_unknown_signal_is_not_continuous`、`crates/providers/teralion/tests/production_market_path.rs#missing_market_signal_replays_unrelated_event_as_unknown`、`crates/run-planner/tests/partition_plan.rs#strict_plan_rejects_degraded_scope` | unknown 不推測 continuous；strict 失敗，degraded 留 warning |
+
+### 10.4 Strategy
+
+| capability | production owner | evidence |
+| --- | --- | --- |
+| initialize／event／feedback／finalize lifecycle | `strategy-api`、`osmium-runner` | `crates/strategy-api/tests/strategy.rs#boxed_strategy_runs_through_the_generic_lifecycle`、`crates/osmium-runner/src/lib.rs#empty_stream_still_finalizes_and_reconciles` |
+| explicit universe／sessions | `strategy-api`、`run-planner` | `crates/strategy-api/tests/strategy.rs#session_phase_and_twse_indicative_rules_are_explicit`、`crates/run-planner/tests/config.rs#strategy_declaration_must_match_effective_universe` |
+| timer | `strategy-api`、`osmium-runner` | `crates/osmium-runner/src/scheduled.rs` 的 timer／control tests |
+| scheduled request | `strategy-api`、`osmium-runner`、`execution-sim` | `crates/osmium-runner/src/scheduled.rs#delayed_observation_can_fill_at_control_time_without_market_event`、`crates/execution-sim/src/scheduled.rs` |
+| deterministic outputs | `strategy-api`、`replay-engine` | `crates/strategy-api/tests/strategy.rs#deterministic_output_is_independent_of_input_order`、`crates/strategy-api/tests/registry.rs#defaults_and_key_order_have_one_canonical_identity` |
+| callback transaction／failure | `strategy-api`、`osmium-runner` | `crates/strategy-api/tests/strategy.rs#failed_callback_discards_current_batch_after_core_commit`、`#panic_and_unavailable_capability_have_stable_categories` |
+| no network／wall clock／future data | `strategy-api`、`replay-engine` | `crates/strategy-api/tests/strategy.rs#callback_observes_committed_post_event_state_and_context`、`crates/replay-engine/src/engine.rs` replay callback boundary |
+
+### 10.5 Execution simulation
+
+| capability | production owner | evidence |
+| --- | --- | --- |
+| market ROD／limit ROD | `execution-sim` | `crates/execution-sim/src/lib.rs#fill_trigger_distinguishes_market_and_control_origins`、`crates/execution-sim/src/depth.rs#limit_order_stops_before_non_marketable_level` |
+| partial fill／quantity evidence | `execution-sim` | `crates/execution-sim/src/depth.rs#sell_sweeps_bids_and_reports_partial_depth`、`#market_order_quantity_is_not_used_as_price_or_fill_depth` |
+| displayed depth／subsequent-event causality | `execution-sim`、`osmium-runner` | `crates/execution-sim/src/depth.rs#buy_sweeps_asks_from_best_price`、`crates/execution-sim/src/lib.rs#latency_is_added_in_milliseconds_and_requires_a_later_match_time` |
+| adverse slippage | `execution-sim` | `crates/execution-sim/src/lib.rs#adverse_slippage_never_clamps_to_limit`、`crates/execution-sim/src/depth.rs#slippage_is_applied_before_limit_check` |
+| market-data latency／order latency | `execution-sim`、`osmium-runner` | `crates/execution-sim/src/lib.rs#latency_is_added_in_milliseconds_and_requires_a_later_match_time`、`crates/osmium-runner/src/lib.rs#multi_backtest_isolates_instruments_and_respects_latency` |
+| scheduled activation／expiry | `osmium-runner`、`execution-sim` | `crates/osmium-runner/src/scheduled.rs#passive_limit_fills_only_after_a_matching_book_becomes_visible`、`crates/osmium-runner/src/scheduled.rs#auction_fill_at_match_time_wins_over_expiry_before_feedback_visibility` |
+| visible depth／auction cross | `execution-sim` | `crates/execution-sim/src/scheduled.rs#activation_sweeps_visible_levels_and_traces_control_fills`、`#auction_strict_cross_fills_the_entire_order_at_the_clearing_price` |
+| cancel／session end／run end | `execution-sim`、`osmium-runner` | `crates/execution-sim/src/scheduled.rs#status_only_stability_pause_cancels_active_market_rods_and_blocks_activation`、`crates/osmium-runner/src/lib.rs#empty_stream_still_finalizes_and_reconciles` |
+| stability restrictions | `market-state`、`execution-sim`、`osmium-runner` | `crates/market-state/tests/reducer.rs#intraday_stability_updates_only_indicative_state`、`crates/execution-sim/src/lib.rs#volatility_interruption_restricts_new_orders_and_cancels_pending_market_orders` |
+| IOC／FOK | — | 明確 out of scope；不得由 ROD 或 scheduled policy 暗中模擬 |
+
+### 10.6 Accounting 與 economics
+
+| capability | production owner | evidence |
+| --- | --- | --- |
+| cash／position／realized／unrealized／marking | `execution-sim` | `crates/execution-sim/src/accounting.rs#average_cost_realized_pnl_and_reconciliation_are_deterministic`、`#mark_to_market_adjustments_reconcile_shared_cash_to_current_equity` |
+| fee／tax／day-trade adjustment | `execution-sim` | `crates/execution-sim/src/accounting.rs#buy_then_sell_same_day_uses_reduced_tax_for_matched_quantity`、`#sell_then_buy_same_day_reprices_prior_sell_tax`、`#unmatched_or_ineligible_quantity_keeps_ordinary_tax` |
+| cash charge | `execution-sim`、`osmium-runner` | `crates/execution-sim/src/accounting.rs#cash_charge_batch_is_atomic_reconciled_and_generic`、`crates/osmium-runner/src/scheduled.rs` |
+| quantity unit／multiplier／currency | `osmium-config`、`run-planner`、`execution-sim` | `crates/run-planner/tests/config.rs#option_reference_is_required_consistent_and_bound_into_effective_identity`、`#every_universe_instrument_requires_valid_economics` |
+| equity／futures／options model | `osmium-cli`、`execution-sim` | `crates/osmium-cli/src/command.rs` model selection、`crates/execution-sim/src/accounting.rs#futures_cash_moves_only_on_realized_pnl_and_costs`、`#options_v1_moves_premium_cash_with_contract_multiplier` |
+| reconciliation | `execution-sim`、`osmium-runner` | `crates/execution-sim/src/accounting.rs#multi_ledger_reconciles_equity_and_futures_cash_separately`、`crates/osmium-runner/src/lib.rs#multi_market_backtest_reconciles_equity_and_option_economics` |
+| per-fill costs | `execution-sim`、`osmium-runner` | `crates/execution-sim/src/accounting.rs#fixed_per_unit_fee_is_charged_for_each_filled_contract`、`crates/osmium-runner/src/artifacts.rs` |
+
+### 10.7 Artifacts
+
+| capability | production owner | evidence |
+| --- | --- | --- |
+| immutable publish | `osmium-runner` | `crates/osmium-runner/src/artifacts.rs` output-exists、staging 與 atomic publish paths；`crates/osmium-runner/src/lib.rs#empty_stream_still_finalizes_and_reconciles` |
+| effective config checksum／plan identity | `osmium-config`、`run-planner`、`osmium-runner` | `crates/run-planner/tests/config.rs#semantic_checksum_excludes_data_root`、`crates/osmium-runner/src/artifacts.rs` |
+| source／cache lineage | `data-sync`、`osmium-cli`、`osmium-runner` | `crates/data-sync/src/cache.rs`、`crates/osmium-cli/src/command.rs`、`crates/osmium-runner/src/artifacts.rs` |
+| orders／fills／cash | `osmium-runner`、`execution-sim` | `crates/osmium-runner/src/artifacts.rs`、`crates/execution-sim/src/accounting.rs` |
+| positions／performance | `osmium-runner`、`execution-sim` | `crates/osmium-runner/src/artifacts.rs`、`crates/execution-sim/src/accounting.rs` |
+| event／final-state checksum | `replay-engine`、`market-state`、`osmium-runner` | `crates/replay-engine/tests/replay.rs#shuffled_inputs_produce_identical_checksums_and_final_state`、`crates/osmium-runner/src/artifacts.rs` |
+| inspect | `osmium-runner` | `crates/osmium-runner/src/lib.rs#empty_stream_still_finalizes_and_reconciles`、`crates/osmium-runner/src/artifacts.rs` |
+
+### 10.8 Required representative E2E
+
+| scenario | required claim | representative evidence |
+| --- | --- | --- |
+| equity continuous market／limit + accounting | continuous state、ROD market／limit、cash／position 可重現 | `crates/execution-sim/src/lib.rs`、`crates/execution-sim/src/depth.rs`、`crates/osmium-runner/src/lib.rs#multi_market_backtest_reconciles_equity_and_option_economics` |
+| auction／delayed／periodic + causality | indicative 不作 fill evidence；正式 uncross trade 才可成交 | `crates/providers/teralion/tests/production_market_path.rs`、`crates/osmium-runner/src/scheduled.rs#auction_price_requires_an_explicit_trade_in_the_released_event`、`#auction_fill_at_match_time_wins_over_expiry_before_feedback_visibility` |
+| scheduled visible depth + latency | visible time、activation、staleness、market/order latency 固定 | `crates/execution-sim/src/scheduled.rs#activation_sweeps_visible_levels_and_traces_control_fills`、`crates/osmium-runner/src/scheduled.rs#delayed_observation_can_fill_at_control_time_without_market_event`、`crates/osmium-runner/src/lib.rs#multi_backtest_isolates_instruments_and_respects_latency` |
+| futures economics | multiplier、realized P&L、reconciliation | `crates/osmium-runner/src/lib.rs#multi_backtest_isolates_instruments_and_respects_latency`、`crates/execution-sim/src/accounting.rs#futures_cash_moves_only_on_realized_pnl_and_costs` |
+| options economics | option reducer、OptionsV1 premium cash、multiplier、reconciliation | `crates/providers/teralion/tests/taifex_m5_option_fixture.rs`、`crates/osmium-runner/src/lib.rs#multi_market_backtest_reconciles_equity_and_option_economics` |
+| multi-instrument／multi-market | TWSE equity 與 TAIFEX option 在同一 bounded merge 中保持 state／ledger isolation | `crates/osmium-runner/src/lib.rs#multi_market_backtest_reconciles_equity_and_option_economics` |
+| failure／reconciliation | callback／input／checksum failure 不發布 successful run；正常 run 必須 reconcile | `crates/strategy-api/tests/strategy.rs#failed_callback_discards_current_batch_after_core_commit`、`crates/osmium-runner/src/lib.rs#empty_stream_still_finalizes_and_reconciles`、`crates/osmium-runner/src/artifacts.rs` |
+
+本 repository 的 synthetic fixture 只驗證介面、normalization、replay 與離線 smoke；完整交易日
+與外部 provider authorization 仍屬 repository 外的 release gate，不將 `complete_day: false`
+的 fixture 升格為 full-day coverage。
+
+## 11. 驗證原則
 
 | 需求面 | 主要證據 |
 | --- | --- |
@@ -227,7 +340,7 @@ credential 不得進入設定、資料 artifact、log 或版本控制。source i
 
 需求與程式入口的對照見 [追溯矩陣](traceability.yaml)，操作驗證見 [驗證文件](operations/validation.md)。
 
-## 11. 參考資料
+## 12. 參考資料
 
 - [Teralion Feed Archive API](https://docs.teraliontech.com/feed-archive/)
 - [TWSE TCP/IP 證券交易資訊網路文件](https://dsp.twse.com.tw/tcpipTradingFiles/list)

@@ -1,6 +1,6 @@
 # 006：建立並關閉完整回測 capability matrix
 
-Status: pending
+Status: complete
 Depends on: 005-close-market-background-gap.md
 
 ## 目標
@@ -179,12 +179,12 @@ but production path missing
 
 ## 執行紀錄
 
-- Baseline revision / working tree：
-- Rust LOC before：
-- Capability matrix summary：
-- Gaps found：
-- Gaps fixed / docs corrected：
-- Validation：
-- Rust LOC after / delta：
-- 剩餘風險：
+- Baseline revision / working tree：`454eda0`；baseline working tree clean。
+- Rust LOC before：`~/cloc/cloc --include-lang=Rust crates` = 114 files / 3,652 blank / 273 comment / 42,241 code。
+- Capability matrix summary：在 `docs/product-requirements.md` 新增 source/replay、六類 market/instrument、market state、strategy、execution、accounting/economics、artifacts 與七個 representative E2E scenario 的 production owner／evidence／scope matrix；`docs/traceability.yaml` 同步提供 machine-readable status、owner、evidence 與 out-of-scope legend。
+- Gaps found：TAIFEX option 原本有 normalizer fixture 與 `OptionsV1` accounting unit test，但缺少 production `run_multi_backtest`／`MultiLedger` 的 options E2E；runner 的既有 multi-backtest regression 也只有單一 TAIFEX future stream。另發現 traceability 與 replay model 的 run config、run manifest、event schema、cache 與 market-types version 欄位落後實作。
+- Gaps fixed / docs corrected：`crates/osmium-runner/src/lib.rs` 的 test stream factory 改為依 `ReplayStreamBinding` 隔離 stream，新增 TWSE equity + TAIFEX option 的 multi-market run，驗證 6 events、4 orders、4 fills、EquityV1／OptionsV1、`-102` realized P&L、shared cash `999898` 與兩個 instrument ledger；traceability contract versions 對齊 code，`docs/architecture/replay-model.md` 的 `event_schema` 修正為 7。六類商品均明確標示為 explicit generic simulation/accounting model scope，不宣稱 full exchange matching；IOC/FOK 保持 out of scope。
+- Validation：`rtk cargo fmt --check` 通過；`rtk cargo test -p osmium-runner` = 16 passed（2 suites）；`rtk cargo test --workspace` = 328 passed（55 suites）；`rtk cargo clippy --workspace --all-targets --all-features -- -D warnings` 無問題；Python YAML／symbol-reference check 通過（traceability valid、55 references resolved）；`rtk git diff --check` 通過。
+- Rust LOC after / delta：`~/cloc/cloc --include-lang=Rust crates` = 114 files / 3,656 blank / 273 comment / 42,468 code；相對 baseline code `+227`。
+- 剩餘風險：repository fixtures 仍為 synthetic 且 `complete_day: false`；warrant／futures／options 的宣稱是 provider normalization + explicit generic execution/accounting model，不包含交易所完整撮合、queue position、exercise／assignment 或其他 out-of-scope order types。完整交易日證據仍需 repository 外的 authorized release gate。
 - 下一步：007-consolidate-execution-paths.md
