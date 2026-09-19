@@ -40,7 +40,7 @@ verified source -> normalizer -> replay cache -> replay engine
 | `execution-sim` | fill evidence、scheduled execution 與 accounting |
 | `osmium-config` | YAML schema 與跨區塊驗證 |
 | `osmium-runner` | replay、strategy、simulation、accounting 與 artifact 協調 |
-| `osmium-cli` | command contract、輸出格式、TUI 與 exit status |
+| `osmium-cli` | command contract、輸出格式與 exit status |
 
 依賴方向由 orchestration 指向 domain core：
 
@@ -125,7 +125,6 @@ Simulation 不修改 replay event 或 MarketState，也不宣稱重建真實撮�
 | `replay` | 否 | 否 | 否 |
 | `backtest` | 否 | 否 | 是 |
 | `run` | 視 plan 而定 | 可能發布 source/cache/run | 有 `--output` 時是 |
-| `display` | 否 | 否 | 否 |
 | `inspect` | 否 | 否 | 否 |
 
 credential 只能進入 sync transport context，不得進入設定、manifest、cache、log、strategy context 或 run output。

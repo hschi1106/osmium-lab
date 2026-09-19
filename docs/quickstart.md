@@ -33,10 +33,4 @@ osmium inspect --run runs/example
 
 `backtest --output` 指向的目錄必須不存在。replay cache 可刪除並由 verified source 重新執行 `cache prepare` 建立，不需要重新下載資料。
 
-只讀行情介面：
-
-```sh
-osmium display --config config.yaml
-```
-
 完整命令與副作用見 [CLI 參考](operations/cli.md)，資料狀態與復原方式見 [本地資料](operations/local-data.md)。

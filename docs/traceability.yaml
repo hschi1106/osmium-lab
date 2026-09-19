@@ -127,9 +127,7 @@ requirements:
 
   OPS-01:
     implementation: [crates/osmium-cli]
-    verification:
-      - crates/osmium-cli/src/lib.rs
-      - crates/osmium-cli/src/market_replay.rs
+    verification: [crates/osmium-cli/src/lib.rs]
   OPS-02:
     implementation: [crates/osmium-runner/src/artifacts.rs]
     verification: [crates/osmium-runner/src/artifacts.rs]

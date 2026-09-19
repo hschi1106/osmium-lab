@@ -6,7 +6,7 @@ Accepted
 
 ## 決策
 
-`osmium-cli` 提供 `StrategyRegistryProvider` 與 `run_with_registry_provider`。外部 Rust binary 在 compile time 註冊 strategy factories；argument parsing、commands、TUI、runner 與錯誤分類仍由 lab 實作。不採 dynamic library、runtime plugin 或 ABI boundary。
+`osmium-cli` 提供 `StrategyRegistryProvider` 與 `run_with_registry_provider`。外部 Rust binary 在 compile time 註冊 strategy factories；argument parsing、commands、runner 與錯誤分類仍由 lab 實作。不採 dynamic library、runtime plugin 或 ABI boundary。
 
 非 fill 現金成本由 capability-gated `CashChargeRequest` 表達。Request 只包含非負 exact decimal `amount`、非空 `category` 與 `reference`；時間由 runner 使用 callback 的 `match_time` 指派。Stable identity 由 callback origin 和 output sequence 雜湊產生，同一 callback 的 requests 先全部驗證，再於新 orders 的資金判定前原子寫入 `MultiLedger`。
 

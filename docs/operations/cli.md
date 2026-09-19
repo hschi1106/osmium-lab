@@ -14,7 +14,6 @@ osmium cache prepare --config <file>
 osmium replay --config <file>
 osmium backtest --config <file> --output <new-directory>
 osmium run --config <file> [--output <new-directory>]
-osmium display --config <file>
 osmium inspect --run <run-directory>
 ```
 
@@ -23,8 +22,6 @@ osmium inspect --run <run-directory>
 - `--format human|json`
 - `--quiet`
 - `--no-color`
-
-`display` 是互動式 TUI，不接受這三個選項。
 
 ## 2. 命令行為
 
@@ -40,7 +37,6 @@ osmium inspect --run <run-directory>
 | `replay` | 否 | 否 | event count、event 與 final-state checksum |
 | `backtest` | 否 | 新建 run directory | strategy、simulation、accounting 與 artifacts |
 | `run` | 視 plan 而定 | source/cache；有 `--output` 時另建 run | sync → cache → replay/backtest |
-| `display` | 否 | 否 | 只讀行情 TUI |
 | `inspect` | 否 | 否 | run status、event/order/fill count |
 
 `backtest` 不會自動下載或建立 cache；source/cache 未準備好時會失敗。`run` 是頂層 orchestration：plan 需要網路時會執行 sync，因此可能讀取 `TERALION_API_KEY`；省略 `--output` 時最後執行 replay，提供 `--output` 時執行 backtest。
@@ -101,11 +97,7 @@ run artifacts 保存 manifest、effective config checksum、plan identity、stra
 
 `inspect` 只驗證與摘要既有 run directory，不存取 config、source、Teralion 或 strategy runtime。
 
-## 8. TUI
-
-`display` 需要 compatible source/cache，使用和 replay 相同的 ordered events 與 MarketState reducer。按鍵與畫面內容見 [使用指南](../user-guide.md#4-行情-tui)。TUI 不發布 run artifacts，也不提供 `--format json`。
-
-## 9. 輸出格式
+## 8. 輸出格式
 
 human success output 使用 `key=value` 與 record lines。JSON success envelope：
 
@@ -131,7 +123,7 @@ JSON error envelope：
 
 `--quiet` 只隱藏成功輸出；錯誤仍輸出至 stderr。checksum 與大型 exact integer 在 JSON 中保持 string，避免精度遺失。
 
-## 10. Exit status
+## 9. Exit status
 
 | Code | Category | 意義 |
 | ---: | --- | --- |
@@ -141,7 +133,7 @@ JSON error envelope：
 | 10 | config | schema、strategy、universe 或 economics 錯誤 |
 | 20 | source | credential、transport、sync 或 source 錯誤 |
 | 21 | cache | cache 缺少、建立或讀取錯誤 |
-| 30 | replay | event、ordering、state 或 TUI replay 錯誤 |
+| 30 | replay | event、ordering 或 state 錯誤 |
 | 40 | simulation | order、fill、accounting 或 publication 錯誤 |
 | 50 | integrity | artifact checksum 或 reconciliation 錯誤 |
 

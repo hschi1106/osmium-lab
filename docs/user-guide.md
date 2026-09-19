@@ -62,25 +62,7 @@ osmium data verify --config config.yaml
 
 不要直接修改 `current.yaml`、published source revision、cache descriptor 或 run manifest。狀態與復原方式見 [本地資料](operations/local-data.md)。
 
-## 4. 行情 TUI
-
-```sh
-osmium display --config config.yaml
-```
-
-`display` 使用和 replay 相同的已驗證 streams 與 `match_time` 時間軸，但不執行 strategy、simulation 或 artifact publication。
-
-| 按鍵 | 行為 |
-| --- | --- |
-| ←／→ | 切換標的，不改變共用播放時間 |
-| Space | 暫停或繼續 |
-| +／=、- | 切換固定播放倍率 |
-| R | 從頭播放並恢復 1.0x |
-| Q | 離開 |
-
-畫面提供 selected instrument、時間、狀態、倍率、價格、成交量、完整五檔與最近成交；不推導 queue、imbalance 或 trade delta。
-
-## 5. Strategy 整合
+## 4. Strategy 整合
 
 ### 執行模型
 
@@ -178,7 +160,7 @@ cargo test -p strategy-api
 cargo test -p osmium-runner
 ```
 
-## 6. 常見問題
+## 5. 常見問題
 
 ### 自訂 strategy 顯示 not compiled into this binary
 

@@ -57,7 +57,7 @@ RunConfig
   -> immutable run artifacts
 ```
 
-資料同步與回測可分開執行。source 與 cache 準備完成後，`replay`、`backtest`、`run`、`display` 與 `inspect` 不需要網路或 API credential。
+資料同步與回測可分開執行。source 與 cache 準備完成後，`replay`、`backtest`、`run` 與 `inspect` 不需要網路或 API credential。
 
 ## 5. 資料需求
 
@@ -180,8 +180,7 @@ select event
 
 ### OPS-01 操作
 
-- CLI 提供 `init`、`config check`、`plan`、`data sync`、`data verify`、`cache prepare`、`replay`、`backtest`、`run`、`display` 與 `inspect`。
-- `display` 是只讀 TUI，共用 `match_time` 時間軸，可暫停、切換固定倍率與標的；不建立策略、委託或 run artifacts。
+- CLI 提供 `init`、`config check`、`plan`、`data sync`、`data verify`、`cache prepare`、`replay`、`backtest`、`run` 與 `inspect`。
 - 錯誤需指出 category 與可辨識的 market、symbol、date、format 或 artifact context。
 
 ### OPS-02 執行結果
@@ -210,7 +209,7 @@ credential 不得進入設定、資料 artifact、log 或版本控制。source i
 | 回播 | shuffled-input ordering、multi-stream merge、state reducer 與 checksum tests |
 | 策略 | read-only compile tests、no-look-ahead、callback transaction 與 registry tests |
 | 模擬帳務 | market／limit、scheduled depth、latency、fee／tax、P&L 與 reconciliation tests |
-| 操作 | CLI contract、offline flow、TUI state 與 release smoke tests |
+| 操作 | CLI contract、offline flow 與 release smoke tests |
 
 需求與程式入口的對照見 [追溯矩陣](traceability.yaml)，操作驗證見 [驗證文件](operations/validation.md)。
 

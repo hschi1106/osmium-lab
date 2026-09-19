@@ -31,7 +31,6 @@ replay cache 則是可刪除、可離線重建的衍生資料。策略只會讀�
 - 多交易日、多商品的 deterministic streaming replay 與 checksum。
 - 編譯期註冊的 Rust strategy、market／limit order、partial fill、slippage、fee、tax 與帳務。
 - 回測 artifacts、結果檢查、JSON output、穩定 exit category 與可重現 release archive。
-- 只讀的歷史行情 TUI，可同步檢視折線、成交量、完整五檔與最近成交。
 
 ## 專案重點
 
@@ -124,7 +123,7 @@ Selective Event Streams ──> Replay Engine ──> MarketState
 │   ├── execution-sim/      # fill、費稅、部位與損益
 │   ├── osmium-config/      # release RunConfig boundary
 │   ├── osmium-runner/      # 工作流程協調與 run artifacts
-│   └── osmium-cli/         # `osmium` binary 與歷史行情 TUI
+│   └── osmium-cli/         # `osmium` binary、CLI contract 與 output formatting
 ├── docs/                   # 需求、架構、介面、操作與 release 文件
 ├── examples/               # release 與 synthetic smoke configs
 ├── fixtures/               # repository-owned synthetic fixtures
@@ -204,25 +203,6 @@ target/release/osmium run \
 
 所有 non-interactive commands 都支援 `--format human|json`、`--quiet` 與 `--no-color`。
 自動化流程應使用 `--format json`，不要解析 human-readable output。
-
-## 歷史行情 TUI
-
-先完成 `data verify` 與 `cache prepare`，再啟動只讀介面：
-
-```sh
-target/release/osmium display --config my-config.yaml
-```
-
-| 按鍵 | 動作 |
-| --- | --- |
-| `←`／`→` | 切換標的，不改變播放時間 |
-| `Space` | 暫停／繼續 |
-| `+`／`-` | 切換固定播放速度 |
-| `R` | 重設為 `1.0x` |
-| `Q` | 離開 |
-
-畫面會呈現目前標的、`match_time`、播放狀態、價格折線、一分鐘 observed volume、完整五檔
-與最新成交明細。
 
 ## Strategy 開發
 
