@@ -18,7 +18,7 @@ fn partition(
     session_identity: u8,
 ) -> SourcePartitionKey {
     SourcePartitionKey::new(
-        SourceId::new("teralion").unwrap(),
+        SourceId::new("synthetic-source").unwrap(),
         instrument(symbol),
         date(date_value),
         sessions,
@@ -44,7 +44,7 @@ fn planned_partition(
     )
     .unwrap();
     let key = SourcePartitionKey::new(
-        SourceId::new("teralion").unwrap(),
+        SourceId::new("synthetic-source").unwrap(),
         instrument,
         trading_date,
         sessions,
@@ -77,14 +77,14 @@ fn partition_identity_uses_canonical_session_order() {
 
 #[test]
 fn provider_neutral_source_ids_are_storage_safe_and_part_of_identity() {
-    let teralion = SourceId::new("teralion").unwrap();
+    let source = SourceId::new("source-a").unwrap();
     let synthetic = SourceId::new("synthetic-source").unwrap();
 
     assert_eq!(synthetic.as_str(), "synthetic-source");
     assert_eq!(synthetic.storage_namespace(), "synthetic-source");
     assert_ne!(
         SourcePartitionKey::new(
-            teralion,
+            source,
             instrument("2330"),
             date("2026-07-27"),
             vec![SessionKind::Regular],
@@ -236,7 +236,7 @@ fn coverage_unavailable_is_not_confused_with_missing_download() {
     )
     .unwrap();
     let key = SourcePartitionKey::new(
-        SourceId::new("teralion").unwrap(),
+        SourceId::new("synthetic-source").unwrap(),
         instrument("2330"),
         date("2026-07-27"),
         [SessionKind::Regular],
