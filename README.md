@@ -114,8 +114,8 @@ Selective Event Streams ──> Replay Engine ──> MarketState
 ├── crates/
 │   ├── market-types/       # 市場型別與 versioned domain events
 │   ├── market-state/       # snapshot-based state 與 reducer
-│   ├── normalizer/         # TWSE／TPEx／TAIFEX normalizers
-│   ├── data-sync/          # Teralion sync、source repository 與 cache
+│   ├── providers/teralion/  # Teralion sync、wire parsing 與 market normalizers
+│   ├── data-sync/          # provider-neutral source repository 與 cache
 │   ├── run-planner/        # config 驗證、session 與 execution plan
 │   ├── replay-engine/      # deterministic ordering 與 streaming replay
 │   ├── strategy-api/       # Strategy trait、registry 與 order intent

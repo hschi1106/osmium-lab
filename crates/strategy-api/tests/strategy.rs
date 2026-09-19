@@ -15,7 +15,6 @@ use strategy_api::{
     StrategyExecutionError, StrategyIdentity, StrategyOutputRecord, StrategyOutputSink,
     StrategyRunErrorCategory, run_strategy,
 };
-use twse_normalizer::{NormalizerConfig, TwseNormalizer};
 
 fn instrument() -> InstrumentId {
     InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap())
@@ -110,16 +109,7 @@ fn quote(time: &str, cumulative: u64, status: u8, limits: u8) -> DomainEvent {
 }
 
 fn delayed_open_auction() -> DomainEvent {
-    let config = NormalizerConfig::new(
-        instrument(),
-        date(),
-        MatchTime::parse("2026-07-27T08:55:00+08:00").unwrap(),
-        MatchTime::parse("2026-07-27T13:35:00+08:00").unwrap(),
-    )
-    .unwrap();
-    let normalizer = TwseNormalizer::new(config);
-    let wire = r#"{"type":"quote","market":"twse","format":"STOCK_REALTIME","symbol":"2330","match_time":"2026-07-27T08:59:59+08:00","received_at":"2026-07-27T09:00:00+08:00","bids":[{"price":100,"quantity":2}],"asks":[{"price":101,"quantity":2}],"deal":{"price":100,"quantity":2},"cum_volume":0,"limit_flags":0,"status_flags":192,"intermediate_print":false}"#;
-    normalizer.normalize_json_lines([wire]).unwrap().events()[0].clone()
+    quote("2026-07-27T08:59:59+08:00", 0, 0xc0, 0)
 }
 
 fn binary_identity() -> BinaryIdentity {

@@ -5,9 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use data_sync::{
-    CacheBuilder, PartitionedSourceRepository, SourceAdapterRuntime, normalizer_config_for,
-};
+use data_sync::PartitionedSourceRepository;
 use execution_sim::{
     AccountingModel, ChargeBasis, ChargeModel, ChargeSides, DayTradeTaxModel, EvidenceMode,
     FillModel, InstrumentEconomics, InstrumentLedgerConfig, MultiLedger, MultiSimulator,
@@ -26,6 +24,10 @@ use run_planner::{
     RoundingPolicy as PlanRounding, SlippageModelConfig, SourceAction, SourceState,
 };
 use strategy_api::{AcceptanceStrategyFactory, SessionKind, SessionSegment, StrategyRegistry};
+use teralion_provider::{
+    PartitionNormalizerConfig, ProviderError, TeralionProvider, normalizer_config_for,
+    prepare_cache as prepare_teralion_cache,
+};
 
 use crate::ExitCategory;
 
@@ -158,12 +160,19 @@ pub fn execute_inspect(path: &Path) -> Result<String, CommandError> {
     ))
 }
 
+fn plan_config(config: &RunConfig) -> Result<osmium_config::PlanBundle, CommandError> {
+    Ok(plan(config, |source, market, class, shape| {
+        teralion_provider::normalizer_mapping_for(source, market, class, shape)
+            .map_err(|error| error.to_string())
+    })?)
+}
+
 fn execute_plan(
     path: &Path,
     provider: &dyn StrategyRegistryProvider,
 ) -> Result<String, CommandError> {
     let config = load_config_with_registry_provider(path, provider)?;
-    let bundle = plan(&config)?;
+    let bundle = plan_config(&config)?;
     let mut output = format!(
         "plan_identity={}\nnetwork_requirement={:?}\npartitions={}",
         hex(bundle.execution.identity().as_bytes()),
@@ -211,7 +220,7 @@ pub fn load_config_with_registry_provider(
 fn normalizer_config(
     config: &RunConfig,
     key: &run_planner::SourcePartitionKey,
-) -> Result<data_sync::PartitionNormalizerConfig, CommandError> {
+) -> Result<PartitionNormalizerConfig, CommandError> {
     let session_plan = config.session_plan_for(key)?;
     let kind = config
         .instrument_class_for(key.instrument())
@@ -226,7 +235,7 @@ fn normalizer_config(
         contract_shape,
         &session_plan,
     )
-    .map_err(data_sync::SourceAdapterError::from)?)
+    .map_err(ProviderError::from)?)
 }
 
 fn load_dotenv() {
@@ -240,7 +249,7 @@ fn execute_sync(
     provider: &dyn StrategyRegistryProvider,
 ) -> Result<String, CommandError> {
     let config = load_config_with_registry_provider(path, provider)?;
-    let bundle = plan(&config)?;
+    let bundle = plan_config(&config)?;
     for partition in bundle.execution.partitions() {
         match partition.source_action() {
             SourceAction::RejectIncomplete { .. } | SourceAction::RejectCorrupt { .. } => {
@@ -276,7 +285,7 @@ fn execute_sync(
         return Ok("source=reused\nhttp_requests=0".to_owned());
     }
     load_dotenv();
-    let mut source_runtime = SourceAdapterRuntime::new(config.effective().source())?;
+    let mut source_runtime = TeralionProvider::new(config.effective().source())?;
     let mut output = String::from("source=partitions\n");
     let mut total_pages = 0_u64;
     let mut published = 0_u32;
@@ -357,8 +366,7 @@ fn prepare_cache(
     provider: &dyn StrategyRegistryProvider,
 ) -> Result<String, CommandError> {
     let config = load_config_with_registry_provider(path, provider)?;
-    let bundle = plan(&config)?;
-    let builder = CacheBuilder::new(config.effective().data_root());
+    let bundle = plan_config(&config)?;
     let mut output = String::from("cache=partitions\n");
     for partition in bundle.execution.partitions() {
         match partition.cache_action() {
@@ -385,7 +393,11 @@ fn prepare_cache(
                     ));
                 }
                 let normalizer = normalizer_config(&config, partition.key())?;
-                let built = builder.build_partition(partition.key(), normalizer)?;
+                let built = prepare_teralion_cache(
+                    config.effective().data_root(),
+                    partition.key(),
+                    normalizer,
+                )?;
                 output.push_str(&format!(
                     "partition={:?}/{:?}@{} status=built cache_identity={}\n",
                     partition.key().instrument().market(),
@@ -446,7 +458,7 @@ fn replay(
     provider: &dyn StrategyRegistryProvider,
 ) -> Result<replay_engine::CompletedReplay, CommandError> {
     let config = load_config_with_registry_provider(path, provider)?;
-    let bundle = plan(&config)?;
+    let bundle = plan_config(&config)?;
     let replay = bundle.replay.as_ref().ok_or(CommandError::CacheMissing)?;
     let mut core = replay_core(&config, &bundle)?;
     let mut factory = data_sync::LocalCacheFactory::new_partitioned(
@@ -554,7 +566,7 @@ fn execute_backtest(
 ) -> Result<String, CommandError> {
     let mut config = load_config_with_registry_provider(path, provider)?;
     let strategy_metadata = config.strategy_metadata().clone();
-    let bundle = plan(&config)?;
+    let bundle = plan_config(&config)?;
     let replay = bundle.replay.as_ref().ok_or(CommandError::CacheMissing)?;
     let core = replay_core(&config, &bundle)?;
     let schedule = schedule(&config)?;
@@ -800,7 +812,7 @@ fn execute_run(
     provider: &dyn StrategyRegistryProvider,
 ) -> Result<String, CommandError> {
     let config = load_config_with_registry_provider(path, provider)?;
-    let bundle = plan(&config)?;
+    let bundle = plan_config(&config)?;
     if bundle.execution.network_requirement() == NetworkRequirement::Required {
         execute_sync(path, provider)?;
     }
@@ -843,7 +855,7 @@ pub enum CommandError {
     Verify(data_sync::VerificationError),
     CacheBuild(data_sync::CacheBuildError),
     CacheRead(data_sync::CacheReadError),
-    SourceAdapter(data_sync::SourceAdapterError),
+    Provider(teralion_provider::ProviderError),
     Replay(replay_engine::ReplayError),
     State(market_state::SessionSegmentIdError),
     Context(strategy_api::ContextError),
@@ -876,11 +888,13 @@ impl CommandError {
             | Self::Context(_)
             | Self::Strategy(_)
             | Self::ReplayContextWindow(_)
-            | Self::SourceAdapter(data_sync::SourceAdapterError::Configuration(_)) => {
-                ExitCategory::Config
-            }
+            | Self::Provider(
+                teralion_provider::ProviderError::Configuration(_)
+                | teralion_provider::ProviderError::Normalization(_)
+                | teralion_provider::ProviderError::UnsupportedSource(_),
+            ) => ExitCategory::Config,
             Self::OutputRequired => ExitCategory::Usage,
-            Self::SourceAdapter(_) | Self::Partition(_) => ExitCategory::Source,
+            Self::Provider(_) | Self::Partition(_) => ExitCategory::Source,
             Self::CacheBuild(_) | Self::CacheRead(_) | Self::CacheMissing => ExitCategory::Cache,
             Self::Replay(_) => ExitCategory::Replay,
             Self::Backtest(_)
@@ -914,7 +928,7 @@ convert!(Config, osmium_config::ConfigError);
 convert!(Verify, data_sync::VerificationError);
 convert!(CacheBuild, data_sync::CacheBuildError);
 convert!(CacheRead, data_sync::CacheReadError);
-convert!(SourceAdapter, data_sync::SourceAdapterError);
+convert!(Provider, teralion_provider::ProviderError);
 convert!(Replay, replay_engine::ReplayError);
 convert!(State, market_state::SessionSegmentIdError);
 convert!(Context, strategy_api::ContextError);
@@ -961,12 +975,11 @@ mod tests {
         sync::atomic::{AtomicBool, Ordering},
     };
 
-    use data_sync::{
-        ArchiveKind, ArchiveTimestamp, CursorStateMachine, StagingRevision, TeralionQuery,
-    };
+    use data_sync::StagingRevision;
     use market_types::{InstrumentId, Symbol, TradingDate};
     use run_planner::{CorruptReason, SessionPlan, SourceId, SourcePartitionKey};
     use strategy_api::SessionKind;
+    use teralion_provider::{ArchiveKind, ArchiveTimestamp, CursorStateMachine, TeralionQuery};
 
     #[test]
     fn command_exit_codes_preserve_stable_failure_categories() {
@@ -977,8 +990,7 @@ mod tests {
         );
         assert_eq!(CommandError::CacheMissing.exit_code(), 21);
         assert_eq!(
-            CommandError::SourceAdapter(data_sync::SourceAdapterError::MissingCredential)
-                .exit_code(),
+            CommandError::Provider(teralion_provider::ProviderError::MissingCredential).exit_code(),
             20
         );
         assert_eq!(
@@ -1000,7 +1012,7 @@ mod tests {
         )
         .unwrap();
         let key = SourcePartitionKey::new(
-            SourceId::TeralionFeedArchive,
+            SourceId::new("teralion").unwrap(),
             instrument,
             trading_date,
             [SessionKind::Regular],
@@ -1060,7 +1072,8 @@ mod tests {
         let mut cursor = CursorStateMachine::new(ticks.clone()).unwrap();
         let request = cursor.request_next().unwrap();
         let pending = cursor.accept_response(&request, body).unwrap();
-        let staged = staging.stage_page(pending).unwrap();
+        let source_page = pending.source_page();
+        let staged = staging.stage_page(&source_page).unwrap();
         cursor.commit_page(staged.commit_receipt()).unwrap();
         staging
             .stage_daily_instrument(

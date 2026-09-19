@@ -1008,7 +1008,8 @@ impl EffectiveRunConfig {
         output.extend_from_slice(&SOURCE_POLICY_VERSION.to_be_bytes());
         output.extend_from_slice(&CACHE_POLICY_VERSION.to_be_bytes());
         output.extend_from_slice(&REPLAY_DATA_POLICY_VERSION.to_be_bytes());
-        output.push(self.source as u8);
+        append_len(self.source.as_bytes().len(), &mut output)?;
+        output.extend_from_slice(self.source.as_bytes());
 
         append_len(self.trading_dates.len(), &mut output)?;
         for date in &self.trading_dates {

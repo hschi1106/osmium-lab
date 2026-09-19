@@ -7,7 +7,7 @@ use std::{
 use market_types::{
     EventPayload, IndicativeAuctionKind, InstrumentId, MarketId, MatchTime, Symbol, TradingDate,
 };
-use twse_normalizer::{NormalizationErrorKind, NormalizerConfig, TwseNormalizer};
+use teralion_provider::twse::{NormalizationErrorKind, NormalizerConfig, TwseNormalizer};
 
 fn fixture_lines() -> Vec<String> {
     let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

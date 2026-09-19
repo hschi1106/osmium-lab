@@ -16,7 +16,7 @@ pub use config::{
 };
 pub use partition::{
     CacheIdentity, CacheState, CorruptReason, IncompleteReason, SOURCE_PARTITION_KEY_VERSION,
-    SessionPlanIdentity, SourceId, SourcePartitionIdentity, SourcePartitionKey,
+    SessionPlanIdentity, SourceId, SourceIdError, SourcePartitionIdentity, SourcePartitionKey,
     SourcePartitionKeyError, SourceRevisionIdentity, SourceState, SourceStateKind,
 };
 pub use plan::{

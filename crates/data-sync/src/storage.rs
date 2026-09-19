@@ -9,7 +9,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{PageCommitReceipt, PendingPage, SanitizedQueryIdentity};
+use crate::SourceRequestIdentity;
 
 pub const ZSTD_COMPRESSION_LEVEL: i32 = 3;
 const SOURCE_MANIFEST_VERSION: u16 = 1;
@@ -39,6 +39,90 @@ pub struct PageMetadata {
     pub zstd_implementation: String,
     pub zstd_version: String,
     pub query_identity: String,
+}
+
+/// A verified source page supplied by an acquisition provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourcePage {
+    ordinal: u32,
+    query_identity: SourceRequestIdentity,
+    body: Box<[u8]>,
+    body_fingerprint: [u8; 32],
+    record_count: u64,
+}
+
+impl SourcePage {
+    pub fn new(
+        ordinal: u32,
+        query_identity: SourceRequestIdentity,
+        body: Vec<u8>,
+        record_count: u64,
+    ) -> Self {
+        let body_fingerprint = *blake3::hash(&body).as_bytes();
+        Self {
+            ordinal,
+            query_identity,
+            body: body.into_boxed_slice(),
+            body_fingerprint,
+            record_count,
+        }
+    }
+
+    #[must_use]
+    pub const fn ordinal(&self) -> u32 {
+        self.ordinal
+    }
+
+    #[must_use]
+    pub const fn query_identity(&self) -> SourceRequestIdentity {
+        self.query_identity
+    }
+
+    #[must_use]
+    pub const fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    #[must_use]
+    pub const fn body_fingerprint(&self) -> &[u8; 32] {
+        &self.body_fingerprint
+    }
+
+    #[must_use]
+    pub const fn record_count(&self) -> u64 {
+        self.record_count
+    }
+
+    #[must_use]
+    pub const fn commit_receipt(&self) -> PageCommitReceipt {
+        PageCommitReceipt::new(self.ordinal, self.body_fingerprint)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageCommitReceipt {
+    ordinal: u32,
+    body_fingerprint: [u8; 32],
+}
+
+impl PageCommitReceipt {
+    #[must_use]
+    pub const fn new(ordinal: u32, body_fingerprint: [u8; 32]) -> Self {
+        Self {
+            ordinal,
+            body_fingerprint,
+        }
+    }
+
+    #[must_use]
+    pub const fn ordinal(self) -> u32 {
+        self.ordinal
+    }
+
+    #[must_use]
+    pub const fn body_fingerprint(self) -> [u8; 32] {
+        self.body_fingerprint
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,7 +168,7 @@ pub struct SourceManifest {
 
 impl SourceManifest {
     pub(crate) fn build(
-        query_identity: SanitizedQueryIdentity,
+        query_identity: SourceRequestIdentity,
         terminal_cursor_reached: bool,
         mut pages: Vec<PageMetadata>,
         daily_instrument: PageMetadata,
@@ -185,27 +269,35 @@ impl StagingRevision {
         })
     }
 
-    pub fn resume(data_root: impl AsRef<Path>, attempt_id: &str) -> Result<Self, StagingError> {
+    pub fn resume(
+        data_root: impl AsRef<Path>,
+        attempt_id: &str,
+        committed_pages: u32,
+    ) -> Result<Self, StagingError> {
         let data_root = data_root.as_ref().to_path_buf();
         let attempt_path = data_root.join("staging").join(attempt_id);
-        Self::resume_at(data_root.join("source"), attempt_path)
+        Self::resume_at(data_root.join("source"), attempt_path, committed_pages)
     }
 
     pub fn resume_for_partition(
         data_root: impl AsRef<Path>,
         key: &run_planner::SourcePartitionKey,
         attempt_id: &str,
+        committed_pages: u32,
     ) -> Result<Self, StagingError> {
         validate_attempt_id(attempt_id)?;
         let repository = crate::PartitionedSourceRepository::new(data_root, key.clone())
             .map_err(|error| StagingError::Partition(error.to_string()))?;
         let publish_root = repository.root().to_path_buf();
         let attempt_path = publish_root.join("staging").join(attempt_id);
-        Self::resume_at(publish_root, attempt_path)
+        Self::resume_at(publish_root, attempt_path, committed_pages)
     }
 
-    fn resume_at(publish_root: PathBuf, attempt_path: PathBuf) -> Result<Self, StagingError> {
-        let checkpoint = crate::CursorCheckpoint::load(&attempt_path.join("checkpoint.json"))?;
+    fn resume_at(
+        publish_root: PathBuf,
+        attempt_path: PathBuf,
+        committed_pages: u32,
+    ) -> Result<Self, StagingError> {
         let mut metadata_paths = fs::read_dir(attempt_path.join("ticks/pages"))?
             .filter_map(Result::ok)
             .map(|entry| entry.path())
@@ -222,10 +314,10 @@ impl StagingRevision {
                     .map_err(|error| StagingError::Manifest(error.to_string()))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        if pages.len() < checkpoint.committed_pages() as usize {
+        if pages.len() < committed_pages as usize {
             return Err(StagingError::CheckpointPageMismatch);
         }
-        pages.truncate(checkpoint.committed_pages() as usize);
+        pages.truncate(committed_pages as usize);
         let daily_path = attempt_path.join("instrument/daily.yaml");
         let daily_instrument = if daily_path.exists() {
             Some(
@@ -248,7 +340,7 @@ impl StagingRevision {
         &self.attempt_path
     }
 
-    pub fn stage_page(&mut self, page: &PendingPage) -> Result<StagedPage, StagingError> {
+    pub fn stage_page(&mut self, page: &SourcePage) -> Result<StagedPage, StagingError> {
         if page.ordinal() != self.pages.len() as u32 {
             return Err(StagingError::NonContiguousPages);
         }
@@ -292,7 +384,7 @@ impl StagingRevision {
 
     pub fn stage_daily_instrument(
         &mut self,
-        query_identity: SanitizedQueryIdentity,
+        query_identity: SourceRequestIdentity,
         body: &[u8],
     ) -> Result<StagedObject, StagingError> {
         serde_json::from_slice::<serde_json::Value>(body)
@@ -318,7 +410,7 @@ impl StagingRevision {
 
     pub fn publish(
         self,
-        query_identity: SanitizedQueryIdentity,
+        query_identity: SourceRequestIdentity,
         terminal_cursor_reached: bool,
     ) -> Result<PublishedRevision, StagingError> {
         let daily_instrument = self
@@ -395,7 +487,7 @@ fn write_compressed_object(
     kind: ObjectKind,
     ordinal: u32,
     record_count: u64,
-    query_identity: SanitizedQueryIdentity,
+    query_identity: SourceRequestIdentity,
     body: &[u8],
 ) -> Result<PageMetadata, StagingError> {
     let final_path = root.join(relative_path);
@@ -560,17 +652,12 @@ mod tests {
     use strategy_api::SessionKind;
 
     use super::*;
-    use crate::{ArchiveKind, ArchiveTimestamp, CursorStateMachine, TeralionQuery};
+    fn query_identity() -> SourceRequestIdentity {
+        SourceRequestIdentity::from_bytes([1; 32])
+    }
 
-    fn query() -> TeralionQuery {
-        TeralionQuery::ticks(
-            InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap()),
-            ArchiveTimestamp::parse("2026-07-27T08:55:00+08:00").unwrap(),
-            ArchiveTimestamp::parse("2026-07-27T13:35:00+08:00").unwrap(),
-            [ArchiveKind::Quote],
-            5_000,
-        )
-        .unwrap()
+    fn page(body: &[u8]) -> SourcePage {
+        SourcePage::new(0, query_identity(), body.to_vec(), 1)
     }
 
     fn partition_key() -> SourcePartitionKey {
@@ -579,7 +666,7 @@ mod tests {
         let session_plan =
             SessionPlan::for_instrument(&instrument, date, [SessionKind::Regular]).unwrap();
         SourcePartitionKey::new(
-            SourceId::TeralionFeedArchive,
+            SourceId::new("synthetic-source").unwrap(),
             instrument,
             date,
             [SessionKind::Regular],
@@ -592,12 +679,8 @@ mod tests {
     fn page_is_zstd_only_and_round_trips_before_commit() {
         let root = tempfile::tempdir().unwrap();
         let mut staging = StagingRevision::create(root.path(), "attempt-1").unwrap();
-        let query = query();
-        let mut machine = CursorStateMachine::new(query.clone()).unwrap();
-        let request = machine.request_next().unwrap();
-        let body = br#"{"items":[],"next_cursor":null}"#.to_vec();
-        let pending = machine.accept_response(&request, body.clone()).unwrap();
-        let staged = staging.stage_page(pending).unwrap();
+        let body = br#"{"items":[{"synthetic":true}],"next_cursor":null}"#;
+        let staged = staging.stage_page(&page(body)).unwrap();
         assert!(
             staging
                 .path()
@@ -607,43 +690,35 @@ mod tests {
         assert!(!staging.path().join("ticks/pages/00000000.json").exists());
         assert_eq!(
             staged.metadata().uncompressed_sha256,
-            hex(&Sha256::digest(&body))
+            hex(&Sha256::digest(body))
         );
-        machine.commit_page(staged.commit_receipt()).unwrap();
     }
 
     #[test]
     fn publish_requires_terminal_cursor_and_daily_instrument() {
         let root = tempfile::tempdir().unwrap();
         let staging = StagingRevision::create(root.path(), "attempt-2").unwrap();
-        let error = staging.publish(query().identity(), false).unwrap_err();
+        let error = staging.publish(query_identity(), false).unwrap_err();
         assert!(matches!(error, StagingError::DailyInstrumentMissing));
     }
 
     #[test]
     fn publish_atomically_moves_an_immutable_revision() {
         let root = tempfile::tempdir().unwrap();
-        let query = query();
         let mut staging = StagingRevision::create(root.path(), "attempt-3").unwrap();
-        let mut machine = CursorStateMachine::new(query.clone()).unwrap();
-        let request = machine.request_next().unwrap();
-        let pending = machine
-            .accept_response(&request, br#"{"items":[],"next_cursor":null}"#.to_vec())
+        let _staged = staging
+            .stage_page(&page(
+                br#"{"items":[{"synthetic":true}],"next_cursor":null}"#,
+            ))
             .unwrap();
-        let staged = staging.stage_page(pending).unwrap();
-        machine.commit_page(staged.commit_receipt()).unwrap();
         staging
             .stage_daily_instrument(
-                TeralionQuery::daily_instrument(
-                    query.instrument().unwrap().clone(),
-                    "2026-07-27".parse().unwrap(),
-                )
-                .identity(),
-                br#"{"symbol":"2330","market":"twse","date":"2026-07-27"}"#,
+                SourceRequestIdentity::from_bytes([2; 32]),
+                br#"{"synthetic":true}"#,
             )
             .unwrap();
 
-        let published = staging.publish(query.identity(), true).unwrap();
+        let published = staging.publish(query_identity(), true).unwrap();
         assert!(published.path().join("manifest.yaml").is_file());
         assert!(published.path().join("instrument/daily.json.zst").is_file());
         assert_eq!(
@@ -655,28 +730,21 @@ mod tests {
     #[test]
     fn partition_publish_has_an_independent_current_pointer() {
         let root = tempfile::tempdir().unwrap();
-        let query = query();
         let key = partition_key();
         let mut staging =
             StagingRevision::create_for_partition(root.path(), &key, "attempt-4").unwrap();
-        let mut machine = CursorStateMachine::new(query.clone()).unwrap();
-        let request = machine.request_next().unwrap();
-        let pending = machine
-            .accept_response(&request, br#"{"items":[],"next_cursor":null}"#.to_vec())
+        let _staged = staging
+            .stage_page(&page(
+                br#"{"items":[{"synthetic":true}],"next_cursor":null}"#,
+            ))
             .unwrap();
-        let staged = staging.stage_page(pending).unwrap();
-        machine.commit_page(staged.commit_receipt()).unwrap();
         staging
             .stage_daily_instrument(
-                TeralionQuery::daily_instrument(
-                    query.instrument().unwrap().clone(),
-                    "2026-07-27".parse().unwrap(),
-                )
-                .identity(),
-                br#"{"symbol":"2330","market":"twse","date":"2026-07-27"}"#,
+                SourceRequestIdentity::from_bytes([2; 32]),
+                br#"{"synthetic":true}"#,
             )
             .unwrap();
-        let published = staging.publish(query.identity(), true).unwrap();
+        let published = staging.publish(query_identity(), true).unwrap();
         let repository = crate::PartitionedSourceRepository::new(root.path(), key).unwrap();
         assert_eq!(
             fs::read_to_string(repository.current_path()).unwrap(),
@@ -689,24 +757,17 @@ mod tests {
     #[test]
     fn partition_resume_rehydrates_committed_pages_from_checkpoint() {
         let root = tempfile::tempdir().unwrap();
-        let query = query();
         let key = partition_key();
         let attempt = "attempt-resume";
         let mut staging =
             StagingRevision::create_for_partition(root.path(), &key, attempt).unwrap();
-        let mut machine = CursorStateMachine::new(query.clone()).unwrap();
-        let request = machine.request_next().unwrap();
-        let pending = machine
-            .accept_response(&request, br#"{"items":[],"next_cursor":"next"}"#.to_vec())
-            .unwrap();
-        let staged = staging.stage_page(pending).unwrap();
-        machine.commit_page(staged.commit_receipt()).unwrap();
-        machine
-            .checkpoint()
-            .save(&staging.path().join("checkpoint.json"))
+        let _staged = staging
+            .stage_page(&page(
+                br#"{"items":[{"synthetic":true}],"next_cursor":"next"}"#,
+            ))
             .unwrap();
 
-        let resumed = StagingRevision::resume_for_partition(root.path(), &key, attempt).unwrap();
+        let resumed = StagingRevision::resume_for_partition(root.path(), &key, attempt, 1).unwrap();
         assert_eq!(resumed.path(), staging.path());
         assert_eq!(resumed.pages.len(), 1);
         assert_eq!(resumed.pages[0].ordinal, 0);

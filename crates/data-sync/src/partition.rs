@@ -31,7 +31,7 @@ impl SourcePartitionManifest {
     pub fn from_key(key: &SourcePartitionKey) -> Self {
         Self {
             layout_version: PARTITION_LAYOUT_VERSION,
-            source: source_name(key.source()).to_owned(),
+            source: source_name(key.source()),
             instrument_market: key.instrument().market().discriminant(),
             instrument_symbol: key.instrument().symbol().as_str().to_owned(),
             trading_date_epoch_days: key.trading_date().as_epoch_days(),
@@ -211,8 +211,8 @@ fn encoded_symbol_path(value: &str) -> PathBuf {
     path
 }
 
-fn source_name(source: SourceId) -> &'static str {
-    source.storage_namespace()
+fn source_name(source: SourceId) -> String {
+    source.storage_namespace().to_owned()
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), PartitionRepositoryError> {
@@ -290,7 +290,7 @@ mod tests {
             }
         };
         SourcePartitionKey::new(
-            SourceId::TeralionFeedArchive,
+            SourceId::new("synthetic-source").unwrap(),
             instrument,
             date,
             [SessionKind::Regular],

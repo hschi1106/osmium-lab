@@ -32,8 +32,8 @@ verified source -> normalizer -> replay cache -> replay engine
 | --- | --- |
 | `market-types` | exact domain primitive、event schema 與 canonical encoding |
 | `market-state` | snapshot reducer、read-only view 與 state checksum |
-| `normalizer/{twse,tpex,taifex}` | 目前內建 adapter 的 market／format wire mapping 與驗證 |
-| `data-sync` | source adapter dispatch、目前的 Teralion transport、source repository、verify 與 replay cache |
+| `providers/teralion` | Teralion credential、query、cursor、transport、wire parsing、TWSE／TPEx／TAIFEX mapping 與 source orchestration |
+| `data-sync` | provider-neutral source staging、source repository、verify 與 replay cache publication |
 | `run-planner` | effective config、partition、session plan 與 execution plan |
 | `replay-engine` | stream validation、deterministic merge、clock 與 event occurrence |
 | `strategy-api` | strategy lifecycle、context、output、orders、timers 與 registry |
@@ -45,10 +45,10 @@ verified source -> normalizer -> replay cache -> replay engine
 依賴方向由 orchestration 指向 domain core：
 
 ```text
-osmium-cli -> osmium-config / osmium-runner / data-sync
+osmium-cli -> osmium-config / osmium-runner / data-sync / providers/teralion
 osmium-runner -> replay-engine / strategy-api / execution-sim
 replay-engine -> market-state -> market-types
-normalizers -> market-types
+providers/teralion -> data-sync / run-planner / market-types
 ```
 
 domain crates 不反向依賴 CLI、filesystem layout、任何 provider transport 或 run artifact serializer。

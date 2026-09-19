@@ -64,14 +64,14 @@ requirements:
   REPLAY-01:
     implementation:
       - crates/market-types/src/event.rs
-      - crates/normalizer/twse
-      - crates/normalizer/tpex
-      - crates/normalizer/taifex
+      - crates/providers/teralion/src/twse.rs
+      - crates/providers/teralion/src/tpex.rs
+      - crates/providers/teralion/src/taifex.rs
     verification:
       - crates/market-types/tests/domain_events.rs
-      - crates/normalizer/twse/tests
-      - crates/normalizer/tpex/tests
-      - crates/normalizer/taifex/tests
+      - crates/providers/teralion/tests/twse_normalizer.rs
+      - crates/providers/teralion/tests/tpex_normalizer.rs
+      - crates/providers/teralion/tests/taifex_fixtures.rs
   REPLAY-02:
     implementation:
       - crates/replay-engine/src/ordering.rs

@@ -17,7 +17,7 @@ fn partition(
     session_identity: u8,
 ) -> SourcePartitionKey {
     SourcePartitionKey::new(
-        SourceId::TeralionFeedArchive,
+        SourceId::new("teralion").unwrap(),
         instrument(symbol),
         date(date_value),
         sessions,
@@ -45,6 +45,37 @@ fn partition_identity_uses_canonical_session_order() {
     assert_eq!(left.canonical_bytes(), right.canonical_bytes());
     assert_eq!(left.identity(), right.identity());
     assert!(left.canonical_bytes().starts_with(b"OSPK"));
+}
+
+#[test]
+fn provider_neutral_source_ids_are_storage_safe_and_part_of_identity() {
+    let teralion = SourceId::new("teralion").unwrap();
+    let synthetic = SourceId::new("synthetic-source").unwrap();
+
+    assert_eq!(synthetic.as_str(), "synthetic-source");
+    assert_eq!(synthetic.storage_namespace(), "synthetic-source");
+    assert_ne!(
+        SourcePartitionKey::new(
+            teralion,
+            instrument("2330"),
+            date("2026-07-27"),
+            vec![SessionKind::Regular],
+            SessionPlanIdentity::from_bytes([1; 32]),
+        )
+        .unwrap()
+        .identity(),
+        SourcePartitionKey::new(
+            synthetic,
+            instrument("2330"),
+            date("2026-07-27"),
+            vec![SessionKind::Regular],
+            SessionPlanIdentity::from_bytes([1; 32]),
+        )
+        .unwrap()
+        .identity()
+    );
+    assert!(SourceId::new("").is_err());
+    assert!(SourceId::new("unsafe/source").is_err());
 }
 
 #[test]

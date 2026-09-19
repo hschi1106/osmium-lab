@@ -17,8 +17,6 @@ osmium-config = { path = "../../../crates/osmium-config" }
 run-planner = { path = "../../../crates/run-planner" }
 serde_json = "1"
 strategy-api = { path = "../../../crates/strategy-api" }
-taifex-normalizer = { path = "../../../crates/normalizer/taifex" }
-tpex-normalizer = { path = "../../../crates/normalizer/tpex" }
-twse-normalizer = { path = "../../../crates/normalizer/twse" }
+teralion-provider = { path = "../../../crates/providers/teralion" }
 
 [workspace]

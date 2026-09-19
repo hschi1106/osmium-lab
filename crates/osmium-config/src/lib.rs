@@ -7,7 +7,7 @@ use std::{
 
 use data_sync::{
     NormalizerMappingIdentity, PartitionCacheCatalog, PartitionCacheInspection,
-    PartitionedSourceRepository, normalizer_mapping_for,
+    PartitionedSourceRepository,
 };
 use market_types::{
     ContractShape, Decimal, InstrumentClass, InstrumentId, MarketId, OptionSide, QuantityUnit,
@@ -334,7 +334,16 @@ pub fn load(path: impl AsRef<Path>, registry: &StrategyRegistry) -> Result<RunCo
     resolve(raw, registry)
 }
 
-pub fn plan(config: &RunConfig) -> Result<PlanBundle, ConfigError> {
+pub fn plan<R, E>(config: &RunConfig, mapping_resolver: R) -> Result<PlanBundle, ConfigError>
+where
+    R: Fn(
+        SourceId,
+        MarketId,
+        InstrumentClass,
+        Option<ContractShape>,
+    ) -> Result<NormalizerMappingIdentity, E>,
+    E: fmt::Display,
+{
     let mut partitions = Vec::new();
     let mut session_plans = Vec::new();
     let mut replay_bindings = Vec::new();
@@ -359,7 +368,7 @@ pub fn plan(config: &RunConfig) -> Result<PlanBundle, ConfigError> {
                 PartitionedSourceRepository::new(config.effective.data_root(), key.clone())
                     .map_err(|error| ConfigError::Value(error.to_string()))?;
             let inspection = repository.inspect();
-            let expected_mapping = normalizer_mapping_for(
+            let expected_mapping = mapping_resolver(
                 config.effective.source(),
                 selection.instrument().market(),
                 selection.class(),
@@ -976,10 +985,7 @@ fn parse_market(value: &str) -> Result<MarketId, ConfigError> {
 }
 
 fn parse_source(value: &str) -> Result<SourceId, ConfigError> {
-    match value {
-        "teralion" => Ok(SourceId::TeralionFeedArchive),
-        _ => Err(ConfigError::Invalid("data.source")),
-    }
+    SourceId::new(value).map_err(|error| ConfigError::Value(error.to_string()))
 }
 
 fn parse_session(value: &str) -> Result<SessionKind, ConfigError> {
@@ -1405,6 +1411,16 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/config.yaml")
     }
 
+    fn mapping_resolver(
+        _source: SourceId,
+        _market: MarketId,
+        _class: InstrumentClass,
+        _shape: Option<ContractShape>,
+    ) -> Result<NormalizerMappingIdentity, String> {
+        NormalizerMappingIdentity::new("test-provider-mapping", 1)
+            .map_err(|error| error.to_string())
+    }
+
     #[test]
     fn run_config_materializes_the_representative_twse_profile() {
         let config = load(fixture(), &registry()).unwrap();
@@ -1415,7 +1431,7 @@ mod tests {
             config.effective().simulation().latency(),
             run_planner::LatencyConfig::new(0, 0)
         );
-        let bundle = plan(&config).unwrap();
+        let bundle = plan(&config, mapping_resolver).unwrap();
         assert_eq!(bundle.execution.partitions().len(), 1);
         assert_eq!(bundle.session_plans.len(), 1);
         assert!(
@@ -1743,12 +1759,24 @@ mod tests {
         let explicit = load(&explicit_path, &registry()).unwrap();
         let changed = load(&changed_path, &registry()).unwrap();
         assert_eq!(
-            plan(&omitted).unwrap().execution.identity(),
-            plan(&explicit).unwrap().execution.identity()
+            plan(&omitted, mapping_resolver)
+                .unwrap()
+                .execution
+                .identity(),
+            plan(&explicit, mapping_resolver)
+                .unwrap()
+                .execution
+                .identity()
         );
         assert_ne!(
-            plan(&omitted).unwrap().execution.identity(),
-            plan(&changed).unwrap().execution.identity()
+            plan(&omitted, mapping_resolver)
+                .unwrap()
+                .execution
+                .identity(),
+            plan(&changed, mapping_resolver)
+                .unwrap()
+                .execution
+                .identity()
         );
     }
 

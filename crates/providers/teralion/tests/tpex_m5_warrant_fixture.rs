@@ -7,12 +7,12 @@ use std::{
 use market_types::{
     EventPayload, IndicativeAuctionKind, InstrumentId, MarketId, MatchTime, Symbol, TradingDate,
 };
-use twse_normalizer::{NormalizerConfig, TwseNormalizer};
+use teralion_provider::tpex::{NormalizerConfig, TpexNormalizer};
 
 #[test]
-fn synthetic_regular_fixture_normalizes_offline() {
+fn synthetic_warrant_fixture_normalizes_offline() {
     let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../fixtures/providers/teralion/twse/SYNTH-TWSE-EQ/2026-07-20/regular-quotes");
+        .join("../../../fixtures/providers/teralion/tpex/SYNTH-TPEX-W/2026-07-20/regular-quotes");
     let mut shards = fs::read_dir(&fixture_dir)
         .unwrap()
         .map(|entry| entry.unwrap().path())
@@ -28,9 +28,9 @@ fn synthetic_regular_fixture_normalizes_offline() {
             .lines()
             .map(Result::unwrap)
     });
-    let normalizer = TwseNormalizer::new(
-        NormalizerConfig::new(
-            InstrumentId::new(MarketId::Twse, Symbol::new("SYNTH-TWSE-EQ").unwrap()),
+    let normalizer = TpexNormalizer::new(
+        NormalizerConfig::new_warrant(
+            InstrumentId::new(MarketId::Tpex, Symbol::new("SYNTH-TPEX-W").unwrap()),
             TradingDate::parse("2026-07-20").unwrap(),
             MatchTime::parse("2026-07-20T08:55:00+08:00").unwrap(),
             MatchTime::parse("2026-07-20T13:35:00+08:00").unwrap(),
@@ -39,31 +39,32 @@ fn synthetic_regular_fixture_normalizes_offline() {
     );
     let report = normalizer.normalize_json_lines(lines).unwrap();
 
-    assert!(report.input_records() <= 512);
-    assert!(!report.events().is_empty());
-    assert!(report.outside_replay_window().len() as u64 <= report.input_records());
+    assert_eq!(report.input_records(), 3);
+    assert_eq!(report.events().len(), 3);
+    assert!(report.outside_replay_window().is_empty());
     assert!(report.known_skipped().is_empty());
     assert!(report.warnings().is_empty());
 
-    let (quotes, trades, opening, closing) = report.events().iter().fold(
-        (0_usize, 0_usize, 0_usize, 0_usize),
-        |(quotes, trades, opening, closing), event| match event.payload() {
-            EventPayload::QuoteSnapshot(_) => (quotes + 1, trades, opening, closing),
-            EventPayload::TradeBatch(_) => (quotes, trades + 1, opening, closing),
+    let (quotes, opening, closing) = report.events().iter().fold(
+        (0_usize, 0_usize, 0_usize),
+        |(quotes, opening, closing), event| match event.payload() {
+            EventPayload::QuoteSnapshot(_) => (quotes + 1, opening, closing),
             EventPayload::IndicativeAuction(auction) => match auction.kind() {
-                IndicativeAuctionKind::Opening => (quotes, trades, opening + 1, closing),
-                IndicativeAuctionKind::Closing => (quotes, trades, opening, closing + 1),
+                IndicativeAuctionKind::Opening => (quotes, opening + 1, closing),
+                IndicativeAuctionKind::Closing => (quotes, opening, closing + 1),
                 IndicativeAuctionKind::IntradayStability { .. }
-                | IndicativeAuctionKind::IntradayUnclassified => (quotes, trades, opening, closing),
+                | IndicativeAuctionKind::IntradayUnclassified => (quotes, opening, closing),
             },
+            EventPayload::TradeBatch(_) => panic!("TPEx warrant fixture has no trade prints"),
             EventPayload::BookSnapshot(_) => {
-                panic!("TWSE M1 fixture must not produce BookSnapshot")
+                panic!("TPEx warrant fixture must not produce BookSnapshot")
             }
             EventPayload::MarketStatus(_) => {
-                panic!("TWSE M1 fixture has no status-only observations")
+                panic!("TPEx warrant fixture has no status-only observations")
             }
         },
     );
-    assert!(quotes > 0);
-    assert!(trades + opening + closing > 0);
+    assert_eq!(quotes, 1);
+    assert_eq!(opening, 1);
+    assert_eq!(closing, 1);
 }

@@ -9,7 +9,7 @@ use market_types::{
     EventPayload, IndicativeAuctionKind, InstrumentId, MarketId, MatchTime, Observation, Price,
     QuantityUnit, Symbol, TradingDate,
 };
-use taifex_normalizer::{
+use teralion_provider::taifex::{
     KnownSkipReason, NormalizationErrorKind, NormalizerConfig, TaifexNormalizer,
 };
 

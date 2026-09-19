@@ -9,7 +9,9 @@ use std::{
 
 use serde_json::Value;
 
-use crate::{ArchiveKind, SanitizedQueryIdentity, TeralionCredential, TeralionQuery};
+use data_sync::{PageCommitReceipt, SourcePage, SourceRequestIdentity};
+
+use crate::{ArchiveKind, TeralionCredential, TeralionQuery};
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct TeralionCursor(Box<str>);
@@ -42,7 +44,7 @@ impl fmt::Debug for TeralionCursor {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TeralionRequest {
     query: TeralionQuery,
-    query_identity: SanitizedQueryIdentity,
+    query_identity: SourceRequestIdentity,
     cursor: Option<TeralionCursor>,
 }
 
@@ -62,7 +64,7 @@ impl TeralionRequest {
     }
 
     #[must_use]
-    pub const fn query_identity(&self) -> SanitizedQueryIdentity {
+    pub const fn query_identity(&self) -> SourceRequestIdentity {
         self.query_identity
     }
 
@@ -121,7 +123,7 @@ pub enum CursorState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingPage {
     ordinal: u32,
-    query_identity: SanitizedQueryIdentity,
+    query_identity: SourceRequestIdentity,
     body: Box<[u8]>,
     body_fingerprint: [u8; 32],
     record_count: u64,
@@ -135,7 +137,7 @@ impl PendingPage {
     }
 
     #[must_use]
-    pub const fn query_identity(&self) -> SanitizedQueryIdentity {
+    pub const fn query_identity(&self) -> SourceRequestIdentity {
         self.query_identity
     }
 
@@ -160,23 +162,24 @@ impl PendingPage {
     }
 
     #[must_use]
-    pub const fn commit_receipt(&self) -> PageCommitReceipt {
-        PageCommitReceipt {
-            ordinal: self.ordinal,
-            body_fingerprint: self.body_fingerprint,
-        }
+    pub fn commit_receipt(&self) -> PageCommitReceipt {
+        PageCommitReceipt::new(self.ordinal, self.body_fingerprint)
     }
-}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PageCommitReceipt {
-    ordinal: u32,
-    body_fingerprint: [u8; 32],
+    #[must_use]
+    pub fn source_page(&self) -> SourcePage {
+        SourcePage::new(
+            self.ordinal,
+            self.query_identity,
+            self.body.to_vec(),
+            self.record_count,
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CursorCheckpoint {
-    query_identity: SanitizedQueryIdentity,
+    query_identity: SourceRequestIdentity,
     committed_pages: u32,
     next_cursor: Option<TeralionCursor>,
     seen_cursor_digests: BTreeSet<[u8; 32]>,
@@ -186,7 +189,7 @@ pub struct CursorCheckpoint {
 
 impl CursorCheckpoint {
     #[must_use]
-    pub const fn query_identity(&self) -> SanitizedQueryIdentity {
+    pub const fn query_identity(&self) -> SourceRequestIdentity {
         self.query_identity
     }
 
@@ -249,7 +252,7 @@ impl CursorCheckpoint {
                 .collect()
         };
         Ok(Self {
-            query_identity: SanitizedQueryIdentity::from_bytes(
+            query_identity: SourceRequestIdentity::from_bytes(
                 decode_hex_32(required_text("query_identity")?)
                     .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "query identity"))?,
             ),
@@ -437,8 +440,8 @@ impl CursorStateMachine {
             });
         }
         let pending = self.pending.take().expect("pending state has a page");
-        if receipt.ordinal != pending.ordinal
-            || receipt.body_fingerprint != pending.body_fingerprint
+        if receipt.ordinal() != pending.ordinal
+            || receipt.body_fingerprint() != pending.body_fingerprint
         {
             self.pending = Some(pending);
             return Err(CursorError::CommitReceiptMismatch);

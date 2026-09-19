@@ -37,7 +37,7 @@ frozen query
   -> atomic publish revision
 ```
 
-CLI 先依 planner action 拒絕不完整／損壞來源，再以 `SourceId` 建立 `SourceAdapterRuntime`。Runtime 接收 partition key、instrument contract 與 session plan；query、credential、transport 與 staging orchestration 由 adapter 擁有，CLI 只接收同步結果。
+CLI 先依 planner action 拒絕不完整／損壞來源，再以 `SourceId` 在 composition root 建立 `TeralionProvider`。Provider 接收 partition key、instrument contract 與 session plan；query、credential、transport、wire parsing、normalization 與 staging orchestration 由 `crates/providers/teralion` 擁有，CLI 只接收同步結果。
 
 source adapter 使用 planner 產生的 download window 查詢供應商 archive。每頁保留 wire payload；provider cursor 只作 pagination，不參與 replay ordering。API key、authorization header 與 signed URL 不得進入 query identity 或持久化資料。目前 Teralion adapter 使用 `received_at` 作 archive selection；此欄位不是通用 replay contract。
 

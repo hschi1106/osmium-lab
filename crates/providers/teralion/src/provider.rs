@@ -1,8 +1,6 @@
 use std::{env, error::Error, fmt, path::Path};
 
-use market_types::{ContractShape, InstrumentClass, MarketId, UtcOffsetMinutes};
-use run_planner::{SessionPlan, SourceId, SourcePartitionKey};
-use taifex_normalizer::{
+use crate::taifex::{
     InstrumentProfile as TaifexInstrumentProfile, MAPPING_NAME as TAIFEX_MAPPING_NAME,
     MAPPING_VERSION as TAIFEX_MAPPING_VERSION, NormalizerConfig as TaifexNormalizerConfig,
     OPTION_MAPPING_NAME as TAIFEX_OPTION_MAPPING_NAME,
@@ -10,21 +8,29 @@ use taifex_normalizer::{
     SPREAD_MAPPING_NAME as TAIFEX_SPREAD_MAPPING_NAME,
     SPREAD_MAPPING_VERSION as TAIFEX_SPREAD_MAPPING_VERSION,
 };
-use tpex_normalizer::{
+use crate::tpex::{
     MAPPING_NAME as TPEX_MAPPING_NAME, MAPPING_VERSION as TPEX_MAPPING_VERSION,
     NormalizerConfig as TpexNormalizerConfig, WARRANT_MAPPING_NAME as TPEX_WARRANT_MAPPING_NAME,
     WARRANT_MAPPING_VERSION as TPEX_WARRANT_MAPPING_VERSION,
 };
-use twse_normalizer::{
+use crate::twse::{
     MAPPING_NAME as TWSE_MAPPING_NAME, MAPPING_VERSION as TWSE_MAPPING_VERSION,
     NormalizerConfig as TwseNormalizerConfig, WARRANT_MAPPING_NAME as TWSE_WARRANT_MAPPING_NAME,
     WARRANT_MAPPING_VERSION as TWSE_WARRANT_MAPPING_VERSION,
 };
+use data_sync::{
+    CacheBuilder, NormalizerMappingIdentity, PartitionedSourceRepository, PublishedCache,
+    StagingError, StagingRevision,
+};
+use market_types::{
+    ContractShape, DomainEvent, InstrumentClass, InstrumentId, MarketId, TradingDate,
+    UtcOffsetMinutes,
+};
+use run_planner::{SessionPlan, SourceId, SourcePartitionKey};
 
 use crate::{
-    ArchiveKind, ArchiveMarket, ArchiveTimestamp, FeedArchiveTransport, PartitionNormalizerConfig,
-    PartitionedSourceRepository, QueryError, StagingError, StagingRevision, SyncError,
-    TeralionCredential, TeralionQuery, TeralionSync, TransportError,
+    ArchiveKind, ArchiveMarket, ArchiveTimestamp, CursorCheckpoint, FeedArchiveTransport,
+    QueryError, SyncError, TeralionCredential, TeralionQuery, TeralionSync, TransportError,
 };
 
 #[derive(Debug, Clone)]
@@ -34,27 +40,27 @@ struct TeralionPartitionPlan {
 }
 
 /// Built-in online source runtime selected only by stable [`SourceId`].
-pub struct SourceAdapterRuntime {
-    adapter: SourceAdapterRuntimeKind,
+pub struct TeralionProvider {
+    adapter: TeralionProviderKind,
 }
 
-enum SourceAdapterRuntimeKind {
+enum TeralionProviderKind {
     Teralion {
         sync: TeralionSync<FeedArchiveTransport>,
         credential: TeralionCredential,
     },
 }
 
-impl SourceAdapterRuntime {
-    pub fn new(source: SourceId) -> Result<Self, SourceAdapterError> {
-        let adapter = match source {
-            SourceId::TeralionFeedArchive => SourceAdapterRuntimeKind::Teralion {
-                sync: TeralionSync::new(FeedArchiveTransport::new()?),
-                credential: TeralionCredential::new(
-                    env::var("TERALION_API_KEY")
-                        .map_err(|_| SourceAdapterError::MissingCredential)?,
-                )?,
-            },
+impl TeralionProvider {
+    pub fn new(source: SourceId) -> Result<Self, ProviderError> {
+        if source.as_str() != "teralion" {
+            return Err(ProviderError::UnsupportedSource(source.as_str().to_owned()));
+        }
+        let adapter = TeralionProviderKind::Teralion {
+            sync: TeralionSync::new(FeedArchiveTransport::new()?),
+            credential: TeralionCredential::new(
+                env::var("TERALION_API_KEY").map_err(|_| ProviderError::MissingCredential)?,
+            )?,
         };
         Ok(Self { adapter })
     }
@@ -66,9 +72,9 @@ impl SourceAdapterRuntime {
         class: InstrumentClass,
         shape: Option<ContractShape>,
         session_plan: &SessionPlan,
-    ) -> Result<SourceSyncResult, SourceAdapterError> {
+    ) -> Result<SourceSyncResult, ProviderError> {
         match &mut self.adapter {
-            SourceAdapterRuntimeKind::Teralion { sync, credential } => sync_teralion_partition(
+            TeralionProviderKind::Teralion { sync, credential } => sync_teralion_partition(
                 sync,
                 credential,
                 data_root,
@@ -99,42 +105,112 @@ impl SourceSyncResult {
     }
 }
 
-/// Stable identity of the wire-to-domain mapping used to derive a replay cache.
-///
-/// Cache codecs only need canonical schema versions to read an artifact. Source
-/// adapters own this identity; planners use it to decide whether an existing
-/// derived artifact may be reused.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NormalizerMappingIdentity {
-    name: Box<str>,
-    version: u16,
+#[derive(Debug, Clone)]
+pub enum PartitionNormalizerConfig {
+    Twse(TwseNormalizerConfig),
+    Warrant(TwseNormalizerConfig),
+    Tpex(TpexNormalizerConfig),
+    TpexWarrant(TpexNormalizerConfig),
+    Taifex(TaifexNormalizerConfig),
+    TaifexCalendarSpread(TaifexNormalizerConfig),
+    TaifexOption(TaifexNormalizerConfig),
 }
 
-impl NormalizerMappingIdentity {
-    pub fn new(name: impl Into<Box<str>>, version: u16) -> Result<Self, MappingIdentityError> {
-        let name = name.into();
-        if name.trim().is_empty() {
-            return Err(MappingIdentityError::EmptyName);
-        }
-        if version == 0 {
-            return Err(MappingIdentityError::ZeroVersion);
-        }
-        Ok(Self { name, version })
-    }
-
-    pub(crate) fn from_static(name: &'static str, version: u16) -> Self {
-        Self::new(name, version).expect("built-in mapping identities are valid")
-    }
-
+impl PartitionNormalizerConfig {
     #[must_use]
-    pub fn name(&self) -> &str {
-        &self.name
+    pub fn mapping_identity(&self) -> NormalizerMappingIdentity {
+        match self {
+            Self::Twse(_) => {
+                NormalizerMappingIdentity::from_static(TWSE_MAPPING_NAME, TWSE_MAPPING_VERSION)
+            }
+            Self::Warrant(_) => NormalizerMappingIdentity::from_static(
+                TWSE_WARRANT_MAPPING_NAME,
+                TWSE_WARRANT_MAPPING_VERSION,
+            ),
+            Self::Tpex(_) => {
+                NormalizerMappingIdentity::from_static(TPEX_MAPPING_NAME, TPEX_MAPPING_VERSION)
+            }
+            Self::TpexWarrant(_) => NormalizerMappingIdentity::from_static(
+                TPEX_WARRANT_MAPPING_NAME,
+                TPEX_WARRANT_MAPPING_VERSION,
+            ),
+            Self::Taifex(_) => {
+                NormalizerMappingIdentity::from_static(TAIFEX_MAPPING_NAME, TAIFEX_MAPPING_VERSION)
+            }
+            Self::TaifexCalendarSpread(_) => NormalizerMappingIdentity::from_static(
+                TAIFEX_SPREAD_MAPPING_NAME,
+                TAIFEX_SPREAD_MAPPING_VERSION,
+            ),
+            Self::TaifexOption(_) => NormalizerMappingIdentity::from_static(
+                TAIFEX_OPTION_MAPPING_NAME,
+                TAIFEX_OPTION_MAPPING_VERSION,
+            ),
+        }
     }
 
-    #[must_use]
-    pub const fn version(&self) -> u16 {
-        self.version
+    fn normalize(
+        self,
+        lines: &[String],
+    ) -> Result<(InstrumentId, TradingDate, Vec<DomainEvent>), ProviderError> {
+        let (instrument, trading_date, events) = match self {
+            Self::Twse(config) | Self::Warrant(config) => {
+                let instrument = config.instrument().clone();
+                let trading_date = config.trading_date();
+                let events = crate::twse::TwseNormalizer::new(config)
+                    .normalize_json_lines(lines)
+                    .map_err(|error| ProviderError::Normalization(error.to_string()))?
+                    .into_events();
+                (instrument, trading_date, events)
+            }
+            Self::Tpex(config) | Self::TpexWarrant(config) => {
+                let instrument = config.instrument().clone();
+                let trading_date = config.trading_date();
+                let events = crate::tpex::TpexNormalizer::new(config)
+                    .normalize_json_lines(lines)
+                    .map_err(|error| ProviderError::Normalization(error.to_string()))?
+                    .into_events();
+                (instrument, trading_date, events)
+            }
+            Self::Taifex(config)
+            | Self::TaifexCalendarSpread(config)
+            | Self::TaifexOption(config) => {
+                let instrument = config.instrument().clone();
+                let trading_date = config.trading_date();
+                let events = crate::taifex::TaifexNormalizer::new(config)
+                    .normalize_json_lines(lines)
+                    .map_err(|error| ProviderError::Normalization(error.to_string()))?
+                    .into_events();
+                (instrument, trading_date, events)
+            }
+        };
+        Ok((instrument, trading_date, events))
     }
+}
+
+pub fn prepare_cache(
+    data_root: impl AsRef<Path>,
+    key: &SourcePartitionKey,
+    config: PartitionNormalizerConfig,
+) -> Result<PublishedCache, ProviderError> {
+    let data_root = data_root.as_ref();
+    let repository = PartitionedSourceRepository::new(data_root, key.clone())
+        .map_err(|error| ProviderError::Storage(error.to_string()))?;
+    let report = repository
+        .verify_current()
+        .map_err(|error| ProviderError::Storage(error.to_string()))?;
+    let lines = report
+        .read_tick_records()
+        .map_err(|error| ProviderError::Storage(error.to_string()))?;
+    let mapping = config.mapping_identity();
+    let (instrument, trading_date, events) = config.normalize(&lines)?;
+    if instrument != *key.instrument() || trading_date != key.trading_date() {
+        return Err(ProviderError::Normalization(
+            "normalizer output does not match the source partition".to_owned(),
+        ));
+    }
+    CacheBuilder::new(data_root)
+        .build_external_partition(key, &mapping, events)
+        .map_err(|error| ProviderError::Storage(error.to_string()))
 }
 
 /// Resolve the mapping selected by a source adapter for one instrument contract.
@@ -265,7 +341,7 @@ fn teralion_partition_plan_for(
     class: InstrumentClass,
     shape: Option<ContractShape>,
     session_plan: &SessionPlan,
-) -> Result<TeralionPartitionPlan, SourceAdapterError> {
+) -> Result<TeralionPartitionPlan, ProviderError> {
     normalizer_config_for(source, key, class, shape, session_plan)?;
     let replay_start = session_plan
         .windows()
@@ -284,12 +360,12 @@ fn teralion_partition_plan_for(
     let start = ArchiveTimestamp::parse(
         replay_start
             .to_iso8601(taipei_offset)
-            .map_err(|error| SourceAdapterError::Configuration(error.to_string()))?,
+            .map_err(|error| ProviderError::Configuration(error.to_string()))?,
     )?;
     let end = ArchiveTimestamp::parse(
         replay_end_exclusive
             .to_iso8601(taipei_offset)
-            .map_err(|error| SourceAdapterError::Configuration(error.to_string()))?,
+            .map_err(|error| ProviderError::Configuration(error.to_string()))?,
     )?;
     let kinds = match key.instrument().market() {
         MarketId::Twse | MarketId::Tpex => vec![ArchiveKind::Quote],
@@ -334,7 +410,7 @@ fn sync_teralion_partition<T: crate::TeralionTransport>(
     class: InstrumentClass,
     shape: Option<ContractShape>,
     session_plan: &SessionPlan,
-) -> Result<SourceSyncResult, SourceAdapterError> {
+) -> Result<SourceSyncResult, ProviderError> {
     let plan = teralion_partition_plan_for(key.source(), key, class, shape, session_plan)?;
     validate_json(&sync.fetch_single(
         TeralionQuery::coverage(key.trading_date(), key.trading_date())?,
@@ -354,7 +430,14 @@ fn sync_teralion_partition<T: crate::TeralionTransport>(
         .join(&attempt)
         .join("checkpoint.json");
     let mut staging = if checkpoint.exists() {
-        StagingRevision::resume_for_partition(data_root, key, &attempt)?
+        let checkpoint_state = CursorCheckpoint::load(&checkpoint)
+            .map_err(|error| ProviderError::Storage(error.to_string()))?;
+        StagingRevision::resume_for_partition(
+            data_root,
+            key,
+            &attempt,
+            checkpoint_state.committed_pages(),
+        )?
     } else {
         StagingRevision::create_for_partition(data_root, key, &attempt)?
     };
@@ -371,10 +454,10 @@ fn sync_teralion_partition<T: crate::TeralionTransport>(
     })
 }
 
-fn validate_json(bytes: &[u8]) -> Result<(), SourceAdapterError> {
+fn validate_json(bytes: &[u8]) -> Result<(), ProviderError> {
     serde_json::from_slice::<serde_json::Value>(bytes)
         .map(|_| ())
-        .map_err(|error| SourceAdapterError::InvalidResponse(error.to_string()))
+        .map_err(|error| ProviderError::InvalidResponse(error.to_string()))
 }
 
 fn attempt_id(key: &SourcePartitionKey) -> String {
@@ -426,34 +509,21 @@ fn mapping_profile_for(
     class: InstrumentClass,
     shape: Option<ContractShape>,
 ) -> Result<MappingProfile, MappingSelectionError> {
-    let profile = match (source, market, class, shape) {
-        (SourceId::TeralionFeedArchive, MarketId::Twse, InstrumentClass::Equity, None) => {
-            MappingProfile::TwseEquity
+    if source.as_str() != "teralion" {
+        return Err(MappingSelectionError);
+    }
+    let profile = match (market, class, shape) {
+        (MarketId::Twse, InstrumentClass::Equity, None) => MappingProfile::TwseEquity,
+        (MarketId::Twse, InstrumentClass::Warrant, None) => MappingProfile::TwseWarrant,
+        (MarketId::Tpex, InstrumentClass::Equity, None) => MappingProfile::TpexEquity,
+        (MarketId::Tpex, InstrumentClass::Warrant, None) => MappingProfile::TpexWarrant,
+        (MarketId::Taifex, InstrumentClass::Future, Some(ContractShape::Outright)) => {
+            MappingProfile::TaifexFuture
         }
-        (SourceId::TeralionFeedArchive, MarketId::Twse, InstrumentClass::Warrant, None) => {
-            MappingProfile::TwseWarrant
+        (MarketId::Taifex, InstrumentClass::Future, Some(ContractShape::CalendarSpread)) => {
+            MappingProfile::TaifexCalendarSpread
         }
-        (SourceId::TeralionFeedArchive, MarketId::Tpex, InstrumentClass::Equity, None) => {
-            MappingProfile::TpexEquity
-        }
-        (SourceId::TeralionFeedArchive, MarketId::Tpex, InstrumentClass::Warrant, None) => {
-            MappingProfile::TpexWarrant
-        }
-        (
-            SourceId::TeralionFeedArchive,
-            MarketId::Taifex,
-            InstrumentClass::Future,
-            Some(ContractShape::Outright),
-        ) => MappingProfile::TaifexFuture,
-        (
-            SourceId::TeralionFeedArchive,
-            MarketId::Taifex,
-            InstrumentClass::Future,
-            Some(ContractShape::CalendarSpread),
-        ) => MappingProfile::TaifexCalendarSpread,
-        (SourceId::TeralionFeedArchive, MarketId::Taifex, InstrumentClass::Option, None) => {
-            MappingProfile::TaifexOption
-        }
+        (MarketId::Taifex, InstrumentClass::Option, None) => MappingProfile::TaifexOption,
         _ => return Err(MappingSelectionError),
     };
     Ok(profile)
@@ -500,21 +570,27 @@ impl fmt::Display for NormalizerSelectionError {
 impl Error for NormalizerSelectionError {}
 
 #[derive(Debug)]
-pub enum SourceAdapterError {
+pub enum ProviderError {
+    UnsupportedSource(String),
     MissingCredential,
     Configuration(String),
     Transfer(String),
     Storage(String),
+    Normalization(String),
     InvalidResponse(String),
 }
 
-impl fmt::Display for SourceAdapterError {
+impl fmt::Display for ProviderError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingCredential => formatter.write_str("source credential is missing"),
-            Self::Configuration(message) | Self::Transfer(message) | Self::Storage(message) => {
-                formatter.write_str(message)
+            Self::UnsupportedSource(source) => {
+                write!(formatter, "unsupported source provider: {source}")
             }
+            Self::MissingCredential => formatter.write_str("source credential is missing"),
+            Self::Configuration(message)
+            | Self::Transfer(message)
+            | Self::Storage(message)
+            | Self::Normalization(message) => formatter.write_str(message),
             Self::InvalidResponse(message) => {
                 write!(formatter, "source returned invalid JSON: {message}")
             }
@@ -522,60 +598,43 @@ impl fmt::Display for SourceAdapterError {
     }
 }
 
-impl Error for SourceAdapterError {}
+impl Error for ProviderError {}
 
-impl From<NormalizerSelectionError> for SourceAdapterError {
+impl From<NormalizerSelectionError> for ProviderError {
     fn from(error: NormalizerSelectionError) -> Self {
         Self::Configuration(error.to_string())
     }
 }
 
-impl From<QueryError> for SourceAdapterError {
+impl From<QueryError> for ProviderError {
     fn from(error: QueryError) -> Self {
         Self::Configuration(error.to_string())
     }
 }
 
-impl From<TransportError> for SourceAdapterError {
+impl From<TransportError> for ProviderError {
     fn from(error: TransportError) -> Self {
         Self::Transfer(error.to_string())
     }
 }
 
-impl From<SyncError> for SourceAdapterError {
+impl From<SyncError> for ProviderError {
     fn from(error: SyncError) -> Self {
         Self::Transfer(error.to_string())
     }
 }
 
-impl From<StagingError> for SourceAdapterError {
+impl From<StagingError> for ProviderError {
     fn from(error: StagingError) -> Self {
         Self::Storage(error.to_string())
     }
 }
 
-impl From<crate::PartitionRepositoryError> for SourceAdapterError {
-    fn from(error: crate::PartitionRepositoryError) -> Self {
+impl From<data_sync::PartitionRepositoryError> for ProviderError {
+    fn from(error: data_sync::PartitionRepositoryError) -> Self {
         Self::Storage(error.to_string())
     }
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MappingIdentityError {
-    EmptyName,
-    ZeroVersion,
-}
-
-impl fmt::Display for MappingIdentityError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::EmptyName => formatter.write_str("normalizer mapping name cannot be empty"),
-            Self::ZeroVersion => formatter.write_str("normalizer mapping version must be positive"),
-        }
-    }
-}
-
-impl Error for MappingIdentityError {}
 
 #[cfg(test)]
 mod tests {
@@ -662,7 +721,7 @@ mod tests {
 
         for (market, class, shape, expected_name, expected_version) in cases {
             let identity =
-                normalizer_mapping_for(SourceId::TeralionFeedArchive, market, class, shape)
+                normalizer_mapping_for(SourceId::new("teralion").unwrap(), market, class, shape)
                     .unwrap();
             assert_eq!(identity.name(), expected_name);
             assert_eq!(identity.version(), expected_version);
@@ -673,7 +732,7 @@ mod tests {
     fn unsupported_contract_is_rejected_at_the_adapter_boundary() {
         assert_eq!(
             normalizer_mapping_for(
-                SourceId::TeralionFeedArchive,
+                SourceId::new("teralion").unwrap(),
                 MarketId::Twse,
                 InstrumentClass::Option,
                 None,
@@ -684,7 +743,7 @@ mod tests {
 
     #[test]
     fn planner_identity_and_built_normalizer_share_one_profile_resolver() {
-        let source = SourceId::TeralionFeedArchive;
+        let source = SourceId::new("teralion").unwrap();
         let instrument = InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap());
         let trading_date: TradingDate = "2026-07-27".parse().unwrap();
         let session_plan = SessionPlan::for_instrument_class(
@@ -713,7 +772,7 @@ mod tests {
 
     #[test]
     fn normalizer_builder_rejects_a_session_plan_from_another_partition() {
-        let source = SourceId::TeralionFeedArchive;
+        let source = SourceId::new("teralion").unwrap();
         let instrument = InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap());
         let other_instrument = InstrumentId::new(MarketId::Twse, Symbol::new("2317").unwrap());
         let trading_date: TradingDate = "2026-07-27".parse().unwrap();
@@ -741,7 +800,7 @@ mod tests {
 
     #[test]
     fn source_partition_plan_owns_the_provider_query_profile() {
-        let source = SourceId::TeralionFeedArchive;
+        let source = SourceId::new("teralion").unwrap();
         let instrument =
             InstrumentId::new(MarketId::Taifex, Symbol::new("TXO202609C20000").unwrap());
         let trading_date: TradingDate = "2026-07-27".parse().unwrap();
@@ -775,7 +834,7 @@ mod tests {
     #[test]
     fn source_runtime_owns_query_validation_staging_and_publish() {
         let root = tempfile::tempdir().unwrap();
-        let source = SourceId::TeralionFeedArchive;
+        let source = SourceId::new("teralion").unwrap();
         let instrument = InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap());
         let trading_date: TradingDate = "2026-07-27".parse().unwrap();
         let session_plan = SessionPlan::for_instrument_class(
@@ -818,7 +877,7 @@ mod tests {
 
     #[test]
     fn taifex_future_normalizer_preserves_disjoint_session_windows() {
-        let source = SourceId::TeralionFeedArchive;
+        let source = SourceId::new("teralion").unwrap();
         let instrument = InstrumentId::new(MarketId::Taifex, Symbol::new("TXFH6").unwrap());
         let trading_date: TradingDate = "2026-07-27".parse().unwrap();
         let session_plan = SessionPlan::with_profile(

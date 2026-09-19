@@ -102,7 +102,7 @@ pub fn run_config(
         .collect();
     RunConfig {
         config_version: 2,
-        source: run_planner::SourceId::TeralionFeedArchive,
+        source: run_planner::SourceId::new("teralion").unwrap(),
         trading_dates: dates,
         universe: universe.clone(),
         instrument_contracts,

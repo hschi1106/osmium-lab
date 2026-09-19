@@ -1,5 +1,6 @@
 use std::{collections::BTreeSet, error::Error, fmt};
 
+use data_sync::SourceRequestIdentity;
 use market_types::{InstrumentId, MatchTime, MatchTimeError, TradingDate};
 
 pub const TERALION_INTERFACE_VERSION: u16 = 1;
@@ -117,21 +118,6 @@ impl ArchiveKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SanitizedQueryIdentity([u8; 32]);
-
-impl SanitizedQueryIdentity {
-    #[must_use]
-    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-
-    #[must_use]
-    pub const fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TeralionQuery {
     Coverage {
@@ -231,8 +217,8 @@ impl TeralionQuery {
     }
 
     #[must_use]
-    pub fn identity(&self) -> SanitizedQueryIdentity {
-        SanitizedQueryIdentity(*blake3::hash(&self.canonical_bytes()).as_bytes())
+    pub fn identity(&self) -> SourceRequestIdentity {
+        SourceRequestIdentity::from_bytes(*blake3::hash(&self.canonical_bytes()).as_bytes())
     }
 
     #[must_use]

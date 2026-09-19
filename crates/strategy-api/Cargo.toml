@@ -10,8 +10,5 @@ market-state = { path = "../market-state" }
 market-types = { path = "../market-types" }
 replay-engine = { path = "../replay-engine" }
 
-[dev-dependencies]
-twse-normalizer = { path = "../normalizer/twse" }
-
 [lints]
 workspace = true

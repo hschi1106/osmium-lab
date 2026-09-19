@@ -7,15 +7,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use data_sync::{
-    ArchiveKind, ArchiveMarket, ArchiveTimestamp, CacheBuilder, StagingRevision,
-    TeralionCredential, TeralionQuery, TeralionRequest, TeralionSync, TeralionTransport,
-    TransportError, normalizer_config_for,
-};
+use data_sync::StagingRevision;
 use market_types::{InstrumentClass, InstrumentId, MarketId, UtcOffsetMinutes};
 use osmium_config::{RunConfig, load};
 use run_planner::SourcePartitionKey;
 use strategy_api::{AcceptanceStrategyFactory, SessionKind, StrategyRegistry};
+use teralion_provider::{
+    ArchiveKind, ArchiveMarket, ArchiveTimestamp, TeralionCredential, TeralionQuery,
+    TeralionRequest, TeralionSync, TeralionTransport, TransportError, normalizer_config_for,
+    prepare_cache,
+};
 
 #[derive(Debug)]
 struct FixtureTransport {
@@ -271,7 +272,7 @@ fn prepare_partition(
         selection.contract_shape(),
         &session_plan,
     )?;
-    let cache = CacheBuilder::new(data_root).build_partition(key, normalizer)?;
+    let cache = prepare_cache(data_root, key, normalizer)?;
     println!(
         "partition={:?}/{}@{} pages={} records={} source_revision={} cache_identity={}",
         key.instrument().market(),

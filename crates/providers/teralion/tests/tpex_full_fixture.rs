@@ -7,7 +7,7 @@ use std::{
 use market_types::{
     EventPayload, IndicativeAuctionKind, InstrumentId, MarketId, MatchTime, Symbol, TradingDate,
 };
-use tpex_normalizer::{NormalizerConfig, TpexNormalizer};
+use teralion_provider::tpex::{NormalizerConfig, TpexNormalizer};
 
 #[test]
 fn synthetic_regular_fixture_normalizes_offline() {
