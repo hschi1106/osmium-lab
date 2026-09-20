@@ -586,3 +586,13 @@ why still large / what independent semantics remain
 • Remaining risks：TWSE／TPEx shared wire contract以目前fixture與normalized diff為證據；未來若交易所wire semantics分歧，必須在 `QuoteMarket` 明確分支而非假設相同。Repository fixtures仍非完整交易日，外部provider authorization/full-day release gate不在本goal。Feature branch push不會自動觸發GitHub Actions；本地full validation已PASS，PR或`workflow_dispatch`後才有CI結果。  
 • Commit：`refactor: remove semantic production redundancy`（本 goal 單一 focused commit；依本次 user instruction push）。  
 • Final status：done；Goal-014 acceptance全部成立，不開始Goal-015。
+
+### Post-audit version correction
+
+Goal-014 後的 correctness follow-up 發現版本 identity 未同步涵蓋兩項既有語意變更，已補正：TPEx quote mapping `8 -> 9`、TPEx warrant mapping `7 -> 8`；`market-types 10 -> 11`、event schema `8 -> 9`、canonical event `8 -> 9`。前者反映 TPEx intermediate auction/trial phase 現在要求所有 records 與 final record 一致，後三者反映 `purpose=Unknown/NoObservation` 搭配 `direction=Known` 已成為合法 canonical AuctionObservation value set。TWSE mapping semantics 未變，維持 quote `11`／warrant `7`。
+
+同一 verified source／partition 的舊 TPEx mapping version 與新 version 現在產生不同 cache identity；既有 data-sync stale descriptor tests 也確認舊 market-types／event schema／canonical event descriptor 不會被視為 `Current`。因此舊 derived cache 及受版本影響的 event／run checksum 會 stale／改變並由 source rebuild，沒有加入 compatibility reader 或 migration。新增 `tpex_mapping_version_changes_partition_cache_identity` regression；canonical `purpose=Unknown` + `direction=Known(Down)` encode/decode round-trip 保持相同 DomainEvent，Opening／Closing／Periodic 搭配 Up/Down 仍拒絕。
+
+Follow-up validation：`cargo fmt --all --check`、指定 crate tests、workspace tests（335 passed）、workspace clippy（`-D warnings`）、synthetic fixture／bundle／acceptance／license gates、current release CLI 與 fixture helper build、fresh offline `config check -> plan -> data verify -> cache prepare -> replay -> backtest -> run -> inspect`、compiled strategy smoke 與 clean-machine release smoke 全部 PASS。相同 final versions 與 inputs 重跑得到 event checksum `11b1a67c3722a905c7eda5ce4e2a91c30de556c2c36d0a398bd4636e6426f35a`、final-state checksum `523ee48c72e5887251ec7813f9e52952b9c960a8f4c8a422b8b62f2962394ad7`，backtest artifacts byte-identical；checksum 差異相對 Goal-014 舊值是版本／canonical identity 刻意改變的預期結果。
+
+Goal-014 Status: done。

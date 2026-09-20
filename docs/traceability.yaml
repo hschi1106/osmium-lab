@@ -18,15 +18,15 @@ contracts:
     version: 4
     implementation: crates/osmium-runner/src/artifacts.rs
   event_schema:
-    version: 7
+    version: 9
     implementation: crates/market-types/src/event.rs
     documentation: docs/architecture/replay-model.md
   canonical_event:
-    version: 7
+    version: 9
     implementation: crates/market-types/src/event.rs
     documentation: docs/architecture/replay-model.md
   market_types:
-    version: 9
+    version: 11
     implementation: crates/market-types/src/event.rs
     documentation: docs/architecture/replay-model.md
   replay_cache:

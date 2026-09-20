@@ -197,15 +197,24 @@ fn auction_evidence_roundtrips_without_collapsing_missing_or_unknown_fields() {
         decoded_auction.observation().disposal(),
         AuctionEvidence::Unknown
     );
-    assert!(
-        AuctionObservation::from_parts(
-            AuctionEvidence::Known(AuctionPurpose::Opening),
-            AuctionEvidence::NoObservation,
-            AuctionEvidence::NoObservation,
-            AuctionEvidence::Known(VolatilityDirection::Up),
-        )
-        .is_none()
-    );
+    for purpose in [
+        AuctionPurpose::Opening,
+        AuctionPurpose::Closing,
+        AuctionPurpose::Periodic,
+    ] {
+        for direction in [VolatilityDirection::Up, VolatilityDirection::Down] {
+            assert!(
+                AuctionObservation::from_parts(
+                    AuctionEvidence::Known(purpose),
+                    AuctionEvidence::NoObservation,
+                    AuctionEvidence::NoObservation,
+                    AuctionEvidence::Known(direction),
+                )
+                .is_none(),
+                "non-VI purpose cannot carry a volatility direction"
+            );
+        }
+    }
 
     let partial = AuctionObservation::from_parts(
         AuctionEvidence::Unknown,

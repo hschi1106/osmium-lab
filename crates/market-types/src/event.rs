@@ -10,9 +10,9 @@ use crate::{
     trade::validate_trade_units,
 };
 
-pub const MARKET_TYPES_VERSION: u16 = 10;
-pub const EVENT_SCHEMA_VERSION: u16 = 8;
-pub const CANONICAL_EVENT_VERSION: u16 = 8;
+pub const MARKET_TYPES_VERSION: u16 = 11;
+pub const EVENT_SCHEMA_VERSION: u16 = 9;
+pub const CANONICAL_EVENT_VERSION: u16 = 9;
 const CANONICAL_MAGIC: &[u8; 4] = b"OSME";
 const CANONICAL_TRADE_BYTES: usize = 16 + 9 + 1;
 const MIN_TRADE_BATCH_SUFFIX_BYTES: usize = 1 + 1 + 1;

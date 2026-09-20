@@ -160,13 +160,15 @@ resolve factory and parameters
 
 ## 7. 版本 identity
 
-目前公開 CLI 報告：
+目前版本 identity（`event_schema` 亦由公開 CLI 報告）：
 
 ```text
 cli_contract=4
 config_schema=3
 run_manifest=4
-event_schema=7
+market_types=11
+event_schema=9
+canonical_event=9
 cache_format=3
 accounting=8
 ```

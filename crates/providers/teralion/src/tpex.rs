@@ -5,6 +5,6 @@ pub use crate::equity_quote::{
 };
 
 pub const MAPPING_NAME: &str = "TeralionTpexQuote";
-pub const MAPPING_VERSION: u16 = 8;
+pub const MAPPING_VERSION: u16 = 9;
 pub const WARRANT_MAPPING_NAME: &str = "TeralionTpexWarrant";
-pub const WARRANT_MAPPING_VERSION: u16 = 7;
+pub const WARRANT_MAPPING_VERSION: u16 = 8;

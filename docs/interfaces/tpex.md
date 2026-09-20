@@ -2,8 +2,8 @@
 
 適用 normalizer：
 
-- equity：`TeralionTpexQuote`，mapping version `8`。
-- warrant：`TeralionTpexWarrant`，mapping version `7`。
+- equity：`TeralionTpexQuote`，mapping version `9`。
+- warrant：`TeralionTpexWarrant`，mapping version `8`。
 
 ## 1. 支援範圍
 

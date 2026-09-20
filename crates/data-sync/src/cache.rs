@@ -942,6 +942,56 @@ mod tests {
     }
 
     #[test]
+    fn tpex_mapping_version_changes_partition_cache_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let key = partition_key();
+        let source_revision = source(root.path(), Some(&key));
+        let old_mapping = NormalizerMappingIdentity::from_static("TeralionTpexQuote", 8);
+        let current_mapping = NormalizerMappingIdentity::from_static("TeralionTpexQuote", 9);
+
+        let old_cache = CacheBuilder::new(root.path())
+            .build_external_partition(&key, &old_mapping, vec![event()])
+            .unwrap();
+        let current_cache = CacheBuilder::new(root.path())
+            .build_external_partition(&key, &current_mapping, vec![event()])
+            .unwrap();
+
+        assert_eq!(
+            old_cache.descriptor().source_revision_identity,
+            source_revision.manifest().revision_identity
+        );
+        assert_eq!(
+            old_cache.descriptor().partition_identity,
+            current_cache.descriptor().partition_identity
+        );
+        assert_ne!(
+            old_cache.descriptor().cache_identity,
+            current_cache.descriptor().cache_identity
+        );
+        assert_ne!(old_cache.path(), current_cache.path());
+
+        let catalog = PartitionCacheCatalog::new(root.path());
+        assert!(matches!(
+            catalog.inspect(
+                &key,
+                &source_revision.manifest().revision_identity,
+                &old_mapping,
+            ),
+            Ok(PartitionCacheInspection::Current(ref entry))
+                if entry.descriptor() == old_cache.descriptor()
+        ));
+        assert!(matches!(
+            catalog.inspect(
+                &key,
+                &source_revision.manifest().revision_identity,
+                &current_mapping,
+            ),
+            Ok(PartitionCacheInspection::Current(ref entry))
+                if entry.descriptor() == current_cache.descriptor()
+        ));
+    }
+
+    #[test]
     fn cache_reader_rejects_every_stale_canonical_schema_version() {
         let root = tempfile::tempdir().unwrap();
         source(root.path(), None);
