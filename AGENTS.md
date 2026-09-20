@@ -8,6 +8,12 @@ Before making project changes, read `docs/product-requirements.md` and align the
 
 Use the existing workspace structure and Rust conventions. Keep changes scoped to the crate or module that owns the behavior being changed.
 
+## Repository Skills
+
+- 修改、review、debug 或重構 Osmium implementation／architecture 時，使用 `osmium-engineering`。
+- 操作既有 build、config、data、replay、backtest 或 artifacts 時，使用 `osmium-operator`。
+- 操作問題若需要修改 Rust、architecture 或 domain semantics，從 `osmium-operator` 轉交 `osmium-engineering`。
+
 ## Documentation Language
 
 Write and maintain project documentation in Traditional Chinese. Keep code identifiers, API field names, commands, and established technical terms in English when that is clearer.
