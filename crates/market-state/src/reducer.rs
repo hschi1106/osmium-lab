@@ -483,12 +483,16 @@ fn post_market_phase(signal: MarketSignal) -> Option<MarketPhase> {
                 Some(MarketPhase::Continuous)
             }
             AuctionEvidence::Known(AuctionPurpose::Closing) => Some(MarketPhase::Closed),
-            AuctionEvidence::Known(AuctionPurpose::Periodic) => {
-                Some(MarketPhase::Auction(AuctionState::new(observation)))
-            }
+            AuctionEvidence::Known(AuctionPurpose::Periodic) => Some(MarketPhase::Auction(
+                AuctionState::new(next_periodic_auction_round(observation)),
+            )),
             AuctionEvidence::NoObservation | AuctionEvidence::Unknown => None,
         },
     }
+}
+
+fn next_periodic_auction_round(result: AuctionObservation) -> AuctionObservation {
+    AuctionObservation::periodic_with_evidence(AuctionEvidence::Known(false), result.disposal())
 }
 
 fn apply_trade_observation(

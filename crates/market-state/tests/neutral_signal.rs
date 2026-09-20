@@ -196,28 +196,28 @@ fn closing_uncross_closes_without_erasing_the_last_firm_book() {
 }
 
 #[test]
-fn periodic_uncross_keeps_the_next_periodic_auction_and_repeated_delay_has_no_counter() {
+fn periodic_uncross_resets_delay_for_next_round_and_reasserts_after_explicit_trigger() {
     let reducer = MarketStateReducer::twse_regular();
     let mut state = MarketState::new(instrument("2330"), date());
-    let observation = AuctionObservation::periodic(true, true);
+    let round_n = AuctionObservation::periodic(true, true);
     for micros in [1, 2] {
         apply(
             &reducer,
             &mut state,
-            &auction(micros, observation),
+            &auction(micros, round_n),
             "regular",
             SegmentBoundaryPolicy::Carry,
         );
     }
     assert_eq!(
         state.phase().known(),
-        Some(&MarketPhase::Auction(AuctionState::new(observation)))
+        Some(&MarketPhase::Auction(AuctionState::new(round_n)))
     );
 
     let result = quote(
         3,
         book("100", "101"),
-        Observation::Set(MarketSignal::AuctionUncross(observation)),
+        Observation::Set(MarketSignal::AuctionUncross(round_n)),
     );
     apply(
         &reducer,
@@ -227,14 +227,49 @@ fn periodic_uncross_keeps_the_next_periodic_auction_and_repeated_delay_has_no_co
         SegmentBoundaryPolicy::Carry,
     );
     assert_eq!(
-        state.phase().known(),
-        Some(&MarketPhase::Auction(AuctionState::new(observation)))
+        state.market_signal().known(),
+        Some(&MarketSignal::AuctionUncross(round_n))
     );
-    let Some(MarketPhase::Auction(auction)) = state.phase().known() else {
+    let next_round = AuctionObservation::periodic(false, true);
+    assert_eq!(
+        state.phase().known(),
+        Some(&MarketPhase::Auction(AuctionState::new(next_round)))
+    );
+    let Some(MarketPhase::Auction(next_auction)) = state.phase().known() else {
         panic!("periodic uncross must retain the next auction phase")
     };
-    assert_eq!(auction.delayed(), AuctionEvidence::Known(true));
-    assert_eq!(auction.disposal(), AuctionEvidence::Known(true));
+    assert_eq!(next_auction.delayed(), AuctionEvidence::Known(false));
+    assert_eq!(next_auction.disposal(), AuctionEvidence::Known(true));
+
+    let delayed_round = AuctionObservation::periodic_with_evidence(
+        AuctionEvidence::Known(true),
+        AuctionEvidence::NoObservation,
+    );
+    apply(
+        &reducer,
+        &mut state,
+        &auction(4, delayed_round),
+        "regular",
+        SegmentBoundaryPolicy::Carry,
+    );
+    let Some(MarketPhase::Auction(delayed_auction)) = state.phase().known() else {
+        panic!("explicit delay trigger must retain the periodic auction phase")
+    };
+    assert_eq!(delayed_auction.delayed(), AuctionEvidence::Known(true));
+    assert_eq!(delayed_auction.disposal(), AuctionEvidence::Known(true));
+
+    apply(
+        &reducer,
+        &mut state,
+        &auction(5, delayed_round),
+        "regular",
+        SegmentBoundaryPolicy::Carry,
+    );
+    let Some(MarketPhase::Auction(repeated_auction)) = state.phase().known() else {
+        panic!("repeated delay trigger must retain the periodic auction phase")
+    };
+    assert_eq!(repeated_auction.delayed(), AuctionEvidence::Known(true));
+    assert_eq!(repeated_auction.disposal(), AuctionEvidence::Known(true));
 }
 
 #[test]

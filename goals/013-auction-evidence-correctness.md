@@ -503,4 +503,6 @@ GitHub Actions: not run yet / PR run result
 - Breaking changes：auction observation public getter 改回傳 `AuctionEvidence`；event／state canonical frame 與版本不相容，舊 event、state、cache artifact 必須拒絕或重建；provider trial mapping 不再把無證據資料解讀成 `Periodic`／`false`。
 - Remaining risks：目前仍只有 Teralion provider；來源沒有提供的 disposal／delayed evidence 仍會保持 partial，而非補值。GitHub Actions 尚未執行；Goal 014 再處理 semantic redundancy audit，不在本 goal 擴張 cleanup。
 - Commit：`fix(market-state): preserve partial auction evidence`；本 goal 單一 focused commit，未 push。
+- Follow-up correction：發現 Periodic `AuctionUncross` 會把 round-N 的 `delayed=true` 誤帶入下一輪。已在 reducer 將本次 uncross 的 resolved observation 保留於 `market_signal`，另建立 round-N+1 的 Periodic state：`delayed=Known(false)`、disposal 延續有效 evidence、direction 等 transient evidence 不帶入；後續只有明確 delay trigger 才將新輪設為 `Known(true)`。
+- Follow-up regression / validation：新增 Periodic round boundary、resolved round-N signal、explicit delay trigger、repeated delay reassertion 與 disposal carry assertions；原有 NoObservation carry、Unknown invalidation、VI continuity、unclassified trial 與 unknown-purpose uncross tests 維持通過。`cargo fmt --all --check`、`cargo test -p market-state`（28）、`strategy-api`（29）、`execution-sim`（50）、`osmium-runner`（16）、`cargo test --workspace`（333）與 workspace clippy（`-D warnings`）全部通過。
 - 下一步：014-semantic-redundancy-audit.md
