@@ -1,6 +1,6 @@
 # 006：建立並關閉完整回測 capability matrix
 
-Status: complete
+Status: done
 Depends on: 005-close-market-background-gap.md
 
 ## 目標

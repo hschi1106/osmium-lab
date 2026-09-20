@@ -1,17 +1,18 @@
 use std::{error::Error, fmt};
 
 use crate::{
-    AuctionObservation, AuctionPurpose, BookLevel, BookSide, BookSideKind, CanonicalEncodingError,
-    CanonicalValue, CompleteBookSnapshot, Decimal, InstrumentId, MarketAnnotations, MarketId,
-    MarketSignal, MatchTime, Observation, ObservedTrade, Price, Quantity, QuantityUnit,
-    SourceFormatId, Symbol, TpexQuoteAnnotations, TradeBatchOrdering, TradeError,
-    TradeObservationKind, TradingDate, TwseQuoteAnnotations, UnknownValue, VolatilityDirection,
-    Volume, append_bytes, append_length, append_optional_u64, trade::validate_trade_units,
+    AuctionEvidence, AuctionObservation, AuctionPurpose, BookLevel, BookSide, BookSideKind,
+    CanonicalEncodingError, CanonicalValue, CompleteBookSnapshot, Decimal, InstrumentId,
+    MarketAnnotations, MarketId, MarketSignal, MatchTime, Observation, ObservedTrade, Price,
+    Quantity, QuantityUnit, SourceFormatId, Symbol, TpexQuoteAnnotations, TradeBatchOrdering,
+    TradeError, TradeObservationKind, TradingDate, TwseQuoteAnnotations, UnknownValue,
+    VolatilityDirection, Volume, append_bytes, append_length, append_optional_u64,
+    trade::validate_trade_units,
 };
 
-pub const MARKET_TYPES_VERSION: u16 = 9;
-pub const EVENT_SCHEMA_VERSION: u16 = 7;
-pub const CANONICAL_EVENT_VERSION: u16 = 7;
+pub const MARKET_TYPES_VERSION: u16 = 10;
+pub const EVENT_SCHEMA_VERSION: u16 = 8;
+pub const CANONICAL_EVENT_VERSION: u16 = 8;
 const CANONICAL_MAGIC: &[u8; 4] = b"OSME";
 const CANONICAL_TRADE_BYTES: usize = 16 + 9 + 1;
 const MIN_TRADE_BATCH_SUFFIX_BYTES: usize = 1 + 1 + 1;
@@ -215,6 +216,18 @@ impl IndicativeAuction {
     #[must_use]
     pub const fn observation(&self) -> AuctionObservation {
         self.observation
+    }
+
+    #[must_use]
+    pub fn with_observation(&self, observation: AuctionObservation) -> Self {
+        Self {
+            observation,
+            price: self.price.clone(),
+            quantity: self.quantity.clone(),
+            book: self.book.clone(),
+            cumulative_volume: self.cumulative_volume.clone(),
+            annotations: self.annotations.clone(),
+        }
     }
 
     #[must_use]
@@ -695,28 +708,53 @@ impl<'a> CanonicalParser<'a> {
     }
 
     fn auction_observation(&mut self) -> Result<AuctionObservation, CanonicalDecodingError> {
-        let purpose = AuctionPurpose::from_discriminant(self.u8()?)
-            .ok_or(CanonicalDecodingError::InvalidValue)?;
-        let delayed = match self.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err(CanonicalDecodingError::InvalidValue),
-        };
-        let disposal = match self.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err(CanonicalDecodingError::InvalidValue),
-        };
-        let direction = match self.u8()? {
-            0 => None,
-            1 => Some(
-                VolatilityDirection::from_discriminant(self.u8()?)
-                    .ok_or(CanonicalDecodingError::InvalidValue)?,
-            ),
-            _ => return Err(CanonicalDecodingError::InvalidValue),
-        };
+        let purpose = self.auction_purpose()?;
+        let delayed = self.auction_bool()?;
+        let disposal = self.auction_bool()?;
+        let direction = self.auction_direction()?;
         AuctionObservation::from_parts(purpose, delayed, disposal, direction)
             .ok_or(CanonicalDecodingError::InvalidValue)
+    }
+
+    fn auction_purpose(
+        &mut self,
+    ) -> Result<AuctionEvidence<AuctionPurpose>, CanonicalDecodingError> {
+        match self.u8()? {
+            0 => Ok(AuctionEvidence::NoObservation),
+            1 => Ok(AuctionEvidence::Known(
+                AuctionPurpose::from_discriminant(self.u8()?)
+                    .ok_or(CanonicalDecodingError::InvalidValue)?,
+            )),
+            2 => Ok(AuctionEvidence::Unknown),
+            _ => Err(CanonicalDecodingError::InvalidValue),
+        }
+    }
+
+    fn auction_bool(&mut self) -> Result<AuctionEvidence<bool>, CanonicalDecodingError> {
+        match self.u8()? {
+            0 => Ok(AuctionEvidence::NoObservation),
+            1 => Ok(AuctionEvidence::Known(match self.u8()? {
+                0 => false,
+                1 => true,
+                _ => return Err(CanonicalDecodingError::InvalidValue),
+            })),
+            2 => Ok(AuctionEvidence::Unknown),
+            _ => Err(CanonicalDecodingError::InvalidValue),
+        }
+    }
+
+    fn auction_direction(
+        &mut self,
+    ) -> Result<AuctionEvidence<VolatilityDirection>, CanonicalDecodingError> {
+        match self.u8()? {
+            0 => Ok(AuctionEvidence::NoObservation),
+            1 => Ok(AuctionEvidence::Known(
+                VolatilityDirection::from_discriminant(self.u8()?)
+                    .ok_or(CanonicalDecodingError::InvalidValue)?,
+            )),
+            2 => Ok(AuctionEvidence::Unknown),
+            _ => Err(CanonicalDecodingError::InvalidValue),
+        }
     }
 
     fn market_signal(&mut self) -> Result<MarketSignal, CanonicalDecodingError> {

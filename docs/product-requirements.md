@@ -105,7 +105,9 @@ domain event 集合為：
 - `MarketStatus`：只有累計量與 provider-neutral market signal 的狀態 observation；不宣稱
   提供正式成交或完整 firm book。
 - `IndicativeAuction`：以 `AuctionPurpose::{Opening, Closing, Periodic,
-  VolatilityInterruption}` 與 `delayed`／`disposal` 屬性表達的試算資訊，不是實際成交。
+  VolatilityInterruption}` 與 partial `AuctionObservation` 表達的試算資訊，不是實際成交。
+  `purpose`、`delayed`、`disposal` 與 volatility direction 各自可為 `Known`、
+  `NoObservation` 或 `Unknown`；缺少 evidence 不得補成 `Periodic` 或 `false`。
 
 事件的 market signal 使用單一 provider-neutral taxonomy：`Continuous`、
 `AuctionCollecting(AuctionObservation)`、`AuctionUncross(AuctionObservation)` 與 `Closed`。

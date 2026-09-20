@@ -1,6 +1,6 @@
 # 013：修正 auction partial-knowledge semantics 與 final acceptance 缺口
 
-Status: pending
+Status: done
 Depends on: 012-final-acceptance.md
 Executor: Luna / max
 
@@ -466,41 +466,41 @@ GitHub Actions: not run yet / PR run result
 
 ## 10. 驗收
 
-- [ ] `AuctionObservation` 可表達 purpose/delayed/disposal partial knowledge。
-- [ ] `NoObservation` 與 `Unknown` 行為不同且有 tests。
-- [ ] Teralion unclassified trial 不再映成 `Periodic`。
-- [ ] Teralion 無 disposal evidence 時不產生 Known(false)。
-- [ ] Teralion 無 delayed evidence 時不產生 Known(false)。
-- [ ] VI trigger -> later trial 能保留 VI purpose。
-- [ ] 真正 Periodic semantics regression 通過。
-- [ ] strategy / normal / scheduled execution 不自行猜 unknown。
-- [ ] relevant canonical/schema/mapping versions 正確 bump。
-- [ ] README provider-neutral positioning 正確。
-- [ ] README `config_version` 與 code 一致。
-- [ ] Goal 006～012 status 統一為 `done`。
-- [ ] workspace fmt/test/clippy 全通過。
-- [ ] provider / fixtures / offline smoke 全通過。
-- [ ] production/test/total cloc 已記錄。
-- [ ] 一個 focused commit，未 push。
-- [ ] GitHub Actions 未跑時明確寫未跑，不冒充通過。
+- [x] `AuctionObservation` 可表達 purpose/delayed/disposal partial knowledge。
+- [x] `NoObservation` 與 `Unknown` 行為不同且有 tests。
+- [x] Teralion unclassified trial 不再映成 `Periodic`。
+- [x] Teralion 無 disposal evidence 時不產生 Known(false)。
+- [x] Teralion 無 delayed evidence 時不產生 Known(false)。
+- [x] VI trigger -> later trial 能保留 VI purpose。
+- [x] 真正 Periodic semantics regression 通過。
+- [x] strategy / normal / scheduled execution 不自行猜 unknown。
+- [x] relevant canonical/schema/mapping versions 正確 bump。
+- [x] README provider-neutral positioning 正確。
+- [x] README `config_version` 與 code 一致。
+- [x] Goal 006～012 status 統一為 `done`。
+- [x] workspace fmt/test/clippy 全通過。
+- [x] provider / fixtures / offline smoke 全通過。
+- [x] production/test/total cloc 已記錄。
+- [x] 一個 focused commit，未 push。
+- [x] GitHub Actions 未跑時明確寫未跑，不冒充通過。
 
 ## 執行紀錄
 
-- Baseline revision / working tree：
+- Baseline revision / working tree：`84fa3635019790e6246eccbd600b6d4790e6d077`；Goal 013 開始前 working tree clean，`codex-refactor` 僅比 remote 多本地 goal-definition commit，未覆寫既有使用者修改。
 - Executor / reasoning：Luna max
-- Total Rust LOC before：
-- Production Rust LOC before：
-- Tests Rust LOC before：
-- Correctness defects confirmed：
-- Contract changes：
-- Versions/checksum changes：
-- Regression tests：
-- Full validation：
-- GitHub Actions：
-- Total Rust LOC after / delta：
-- Production Rust LOC after / delta：
-- Tests Rust LOC after / delta：
-- Breaking changes：
-- Remaining risks：
-- Commit：
+- Total Rust LOC before：115 files / 3,674 blank / 271 comment / 42,834 code
+- Production Rust LOC before：77 files / 3,108 blank / 261 comment / 34,417 code
+- Tests Rust LOC before：33 files / 489 blank / 4 comment / 7,043 code
+- Correctness defects confirmed：`AuctionObservation` 原本無法區分 known、未觀察與失效 unknown；TWSE／TPEx `(false, false)` trial 會錯誤成為 `Periodic`；Teralion 缺乏 delayed／disposal evidence 時被 constructor 補成 `false`；reducer、strategy 與 execution 可能因此採用過度具體的 post-state 或 eligibility。
+- Contract changes：新增小型 `AuctionEvidence<T>`，逐欄支援 `Known`／`NoObservation`／`Unknown`；`NoObservation` 沿用同一輪前態、`Unknown` 使該欄失效。Indicative auction 與 market signal 在 reducer 合併 partial observation；purpose 不明的 uncross 只保留 unknown phase，不猜 post-state。TWSE／TPEx 未分類 trial 保留 unclassified，VI status-only 只填明確 purpose／direction，無證據的 delayed／disposal 保持 `NoObservation`。
+- Versions/checksum changes：`MARKET_TYPES_VERSION 9 -> 10`、`EVENT_SCHEMA_VERSION 7 -> 8`、`CANONICAL_EVENT_VERSION 7 -> 8`；`MARKET_STATE_VERSION 6 -> 7`、`STATE_REDUCER_VERSION 5 -> 6`、`CANONICAL_MARKET_STATE_VERSION 6 -> 7`、`CANONICAL_FINAL_STATE_SET_VERSION 6 -> 7`；strategy `market_rule_version 2 -> 3`；TWSE quote/warrant mapping `10/6 -> 11/7`、TPEx quote/warrant mapping `7/6 -> 8/7`、TAIFEX outright/options mapping `4/3 -> 5/4`（calendar spread 未受影響）。Auction canonical layout 與 provider mapping 改變會使 event、state、cache identity／checksum 改變；舊 cache 依 descriptor version 拒絕並重建，未以更新 expected checksum 掩蓋差異。離線 smoke 產生 event checksum `b642c09945985960d20c2d1857874946a03e44868d74e04e2a8403fb6b3cf5e3`、final-state checksum `b52e79639f8762289172e42897f30773413e951d799f971c7488b7bdf44b1fe9`。
+- Regression tests：新增 `NoObservation` carry／`Unknown` invalidation、VI continuity、unclassified trial、unknown uncross、partial IndicativeAuction merge、codec round-trip／invalid encoding／deterministic canonical tests；更新 TWSE／TPEx／TAIFEX fixtures、strategy、normal execution 與 scheduled execution。`cargo test --workspace --locked`：333 passed；Teralion provider：67 passed；market-types：43 passed；market-state：28 passed；strategy-api：29 passed；replay-engine：17 passed；execution-sim：50 passed；osmium-runner：16 passed。
+- Full validation：PASS。`cargo fmt --all -- --check`、workspace clippy（含 `--locked`，`-D warnings`）、workspace tests、fixture generator／diff、compact／bundle verifier、acceptance Python 8 tests、license verifier、release build、offline `data verify -> cache prepare -> replay -> backtest -> inspect`、compiled strategy smoke、clean-machine archive smoke 與 `SOURCE_DATE_EPOCH=0` byte-identical reproducibility 均通過；strategy smoke 核對 `orders: 1`、`fills: 1` 與 strategy id。
+- GitHub Actions：not run yet。未修改 CI trigger，也未把本地結果冒充 GitHub CI；依本 goal 要求不 push，待 PR 或 `workflow_dispatch` 驗證。
+- Total Rust LOC after / delta：115 files / 3,706 blank / 278 comment / 43,420 code（blank +32、comment +7、code +586）
+- Production Rust LOC after / delta：77 files / 3,131 blank / 268 comment / 34,727 code（blank +23、comment +7、code +310）
+- Tests Rust LOC after / delta：33 files / 498 blank / 4 comment / 7,319 code（blank +9、comment +0、code +276）
+- Breaking changes：auction observation public getter 改回傳 `AuctionEvidence`；event／state canonical frame 與版本不相容，舊 event、state、cache artifact 必須拒絕或重建；provider trial mapping 不再把無證據資料解讀成 `Periodic`／`false`。
+- Remaining risks：目前仍只有 Teralion provider；來源沒有提供的 disposal／delayed evidence 仍會保持 partial，而非補值。GitHub Actions 尚未執行；Goal 014 再處理 semantic redundancy audit，不在本 goal 擴張 cleanup。
+- Commit：`fix(market-state): preserve partial auction evidence`；本 goal 單一 focused commit，未 push。
 - 下一步：014-semantic-redundancy-audit.md

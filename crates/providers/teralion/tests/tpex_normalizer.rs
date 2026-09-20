@@ -1,6 +1,7 @@
 use market_types::{
-    AuctionPurpose, EventPayload, InstantTrend, InstrumentId, MarketAnnotations, MarketId,
-    MatchTime, Observation, QuantityUnit, Symbol, TradeObservationKind, TradingDate,
+    AuctionEvidence, AuctionPurpose, EventPayload, InstantTrend, InstrumentId, MarketAnnotations,
+    MarketId, MarketSignal, MatchTime, Observation, QuantityUnit, Symbol, TradeObservationKind,
+    TradingDate, VolatilityDirection,
 };
 use teralion_provider::tpex::{
     InstrumentProfile, KnownSkipReason, NormalizationErrorKind, NormalizerConfig,
@@ -238,8 +239,14 @@ fn trial_quotes_become_opening_and_closing_auction_events() {
     let EventPayload::IndicativeAuction(closing) = report.events()[1].payload() else {
         panic!("expected closing indicative auction")
     };
-    assert_eq!(opening.observation().purpose(), AuctionPurpose::Opening);
-    assert_eq!(closing.observation().purpose(), AuctionPurpose::Closing);
+    assert_eq!(
+        opening.observation().purpose(),
+        AuctionEvidence::Known(AuctionPurpose::Opening)
+    );
+    assert_eq!(
+        closing.observation().purpose(),
+        AuctionEvidence::Known(AuctionPurpose::Closing)
+    );
 }
 
 #[test]
@@ -263,7 +270,10 @@ fn delayed_open_trial_is_typed_as_opening_and_keeps_delayed_flag() {
         let EventPayload::IndicativeAuction(auction) = report.events()[0].payload() else {
             panic!("delayed opening trial must not become a firm quote")
         };
-        assert_eq!(auction.observation().purpose(), AuctionPurpose::Opening);
+        assert_eq!(
+            auction.observation().purpose(),
+            AuctionEvidence::Known(AuctionPurpose::Opening)
+        );
         let market_types::MarketAnnotations::TpexQuote(annotations) = auction.annotations() else {
             panic!("TPEx source annotations must be preserved")
         };
@@ -322,10 +332,13 @@ fn intraday_trials_are_unclassified_and_preserve_trend_annotations() {
     let EventPayload::IndicativeAuction(unclassified) = report.events()[1].payload() else {
         panic!("unclassified trial must be indicative")
     };
-    assert_eq!(stability.observation().purpose(), AuctionPurpose::Periodic);
+    assert_eq!(
+        stability.observation().purpose(),
+        AuctionEvidence::NoObservation
+    );
     assert_eq!(
         unclassified.observation().purpose(),
-        AuctionPurpose::Periodic
+        AuctionEvidence::NoObservation
     );
     let MarketAnnotations::TpexQuote(annotations) = stability.annotations() else {
         panic!("expected TPEx source annotations")
@@ -359,6 +372,15 @@ fn non_trial_volatility_pause_without_book_becomes_status_observation() {
         annotations.limits().instant_trend(),
         InstantTrend::VolatilityInterruptionDown
     );
+    assert!(matches!(
+        status.market_signal(),
+        Observation::Set(MarketSignal::AuctionCollecting(observation))
+            if observation.purpose()
+                == AuctionEvidence::Known(AuctionPurpose::VolatilityInterruption)
+                && observation.direction() == AuctionEvidence::Known(VolatilityDirection::Down)
+                && observation.delayed() == AuctionEvidence::NoObservation
+                && observation.disposal() == AuctionEvidence::NoObservation
+    ));
 }
 
 #[test]

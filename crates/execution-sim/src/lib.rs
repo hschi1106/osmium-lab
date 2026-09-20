@@ -5,8 +5,8 @@ mod scheduled;
 use std::{collections::BTreeMap, collections::BTreeSet, error::Error, fmt};
 
 use market_types::{
-    AuctionPurpose, DomainEvent, EventPayload, InstrumentId, MarketSignal, MatchTime, Price,
-    PricePolicy, Quantity, QuantityUnit,
+    AuctionEvidence, AuctionPurpose, DomainEvent, EventPayload, InstrumentId, MarketSignal,
+    MatchTime, Price, PricePolicy, Quantity, QuantityUnit,
 };
 use replay_engine::EventOccurrence;
 use strategy_api::{
@@ -312,7 +312,8 @@ impl Simulator {
         trading: &TradingContext,
     ) -> Result<Vec<OrderFeedback>, SimulationError> {
         if let Some(MarketSignal::AuctionCollecting(observation)) = trading.market_signal()
-            && observation.purpose() == AuctionPurpose::VolatilityInterruption
+            && observation.purpose()
+                == AuctionEvidence::Known(AuctionPurpose::VolatilityInterruption)
         {
             return Ok(self.cancel_pending_market_orders(event.instrument()));
         }

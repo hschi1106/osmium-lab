@@ -2,9 +2,9 @@
 
 適用 normalizer：
 
-- outright futures：`TeralionTaifexFutures`，mapping version `4`，wire market `taifex_fut`。
+- outright futures：`TeralionTaifexFutures`，mapping version `5`，wire market `taifex_fut`。
 - calendar spreads：`TeralionTaifexCalendarSpreads`，mapping version `2`，wire market `taifex_fut`。
-- index options：`TeralionTaifexOptions`，mapping version `3`，wire market `taifex_opt`。
+- index options：`TeralionTaifexOptions`，mapping version `4`，wire market `taifex_opt`。
 
 上述 profiles 在 domain 中都使用 `MarketId::Taifex`；archive market、mapping identity 與 economics 依明確 instrument contract 選擇，不由 symbol 推定。
 

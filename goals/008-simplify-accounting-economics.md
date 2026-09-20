@@ -1,6 +1,6 @@
 # 008：收斂 economics / accounting 資料流與重複模型
 
-Status: complete
+Status: done
 Depends on: 007-consolidate-execution-paths.md
 
 ## 目標

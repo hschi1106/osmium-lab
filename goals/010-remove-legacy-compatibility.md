@@ -1,6 +1,6 @@
 # 010：移除不再需要的 legacy / compatibility production paths
 
-Status: complete
+Status: done
 Depends on: 009-simplify-config-planner-runner.md
 
 ## 目標

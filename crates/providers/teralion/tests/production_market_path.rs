@@ -3,9 +3,9 @@ use market_state::{
     SessionSegmentId,
 };
 use market_types::{
-    AuctionObservation, AuctionPurpose, DomainEvent, EventPayload, InstrumentId, MarketAnnotations,
-    MarketId, MarketSignal, MarketStatusObservation, MatchTime, MatchingMethod, Observation,
-    SourceFormatId, Symbol, TradingDate,
+    AuctionEvidence, AuctionObservation, AuctionPurpose, DomainEvent, EventPayload, InstrumentId,
+    MarketAnnotations, MarketId, MarketSignal, MarketStatusObservation, MatchTime, MatchingMethod,
+    Observation, SourceFormatId, Symbol, TradingDate,
 };
 use replay_engine::ReplayCore;
 use strategy_api::{
@@ -138,11 +138,12 @@ fn provider_events_reach_production_reducer_and_context_without_background_looku
     );
     assert_eq!(
         trial_context.auction().unwrap().purpose(),
-        AuctionPurpose::Periodic
+        AuctionEvidence::NoObservation
     );
     assert!(matches!(
         core.state(&instrument()).unwrap().phase().known(),
-        Some(MarketPhase::Auction(auction)) if auction.purpose() == AuctionPurpose::Periodic
+        Some(MarketPhase::Auction(auction))
+            if auction.purpose() == AuctionEvidence::NoObservation
     ));
 
     let firm = &report.events()[1];
@@ -185,6 +186,7 @@ fn provider_events_reach_production_reducer_and_context_without_background_looku
     assert!(matches!(
         core.state(&instrument()).unwrap().phase().known(),
         Some(MarketPhase::Auction(auction))
-            if auction.purpose() == AuctionPurpose::Periodic && auction.disposal()
+            if auction.purpose() == AuctionEvidence::Known(AuctionPurpose::Periodic)
+                && auction.disposal() == AuctionEvidence::Known(true)
     ));
 }

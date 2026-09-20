@@ -40,7 +40,9 @@ pub use match_time::{
 pub use observation::{Observation, UnknownValue};
 pub use price::{Price, PriceError};
 pub use quantity::{Quantity, QuantityError, QuantityUnit, QuantityUnitError};
-pub use signal::{AuctionObservation, AuctionPurpose, MarketSignal, VolatilityDirection};
+pub use signal::{
+    AuctionEvidence, AuctionObservation, AuctionPurpose, MarketSignal, VolatilityDirection,
+};
 pub use source_format::{SourceFormatId, SourceFormatIdError};
 pub use symbol::{Symbol, SymbolError};
 pub use trade::{ObservedTrade, TradeBatchOrdering, TradeError, TradeObservationKind};

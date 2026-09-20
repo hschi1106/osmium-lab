@@ -1,6 +1,6 @@
 # 009：簡化 config → planner → runner 的資料流
 
-Status: complete
+Status: done
 Depends on: 008-simplify-accounting-economics.md
 
 ## 目標

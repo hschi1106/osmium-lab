@@ -3,10 +3,11 @@ use market_state::{
     SegmentBoundaryPolicy, SessionSegmentId, StateField, UnavailableReason,
 };
 use market_types::{
-    AuctionObservation, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent,
-    EventPayload, IndicativeAuction, InstrumentId, MarketAnnotations, MarketId, MarketSignal,
-    MatchTime, Observation, Price, Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol,
-    TradingDate, UnknownValue, VolatilityDirection,
+    AuctionEvidence, AuctionObservation, AuctionPurpose, BookLevel, BookSide, BookSideKind,
+    CompleteBookSnapshot, DomainEvent, EventPayload, IndicativeAuction, InstrumentId,
+    MarketAnnotations, MarketId, MarketSignal, MatchTime, Observation, Price, Quantity,
+    QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol, TradingDate, UnknownValue,
+    VolatilityDirection,
 };
 
 fn instrument(symbol: &str) -> InstrumentId {
@@ -232,8 +233,132 @@ fn periodic_uncross_keeps_the_next_periodic_auction_and_repeated_delay_has_no_co
     let Some(MarketPhase::Auction(auction)) = state.phase().known() else {
         panic!("periodic uncross must retain the next auction phase")
     };
-    assert!(auction.delayed());
-    assert!(auction.disposal());
+    assert_eq!(auction.delayed(), AuctionEvidence::Known(true));
+    assert_eq!(auction.disposal(), AuctionEvidence::Known(true));
+}
+
+#[test]
+fn auction_no_observation_carries_same_round_fields_but_unknown_invalidates_only_that_field() {
+    let reducer = MarketStateReducer::twse_regular();
+    let mut state = MarketState::new(instrument("2330"), date());
+    let interruption = AuctionObservation::volatility_interruption_with_evidence(
+        AuctionEvidence::Known(VolatilityDirection::Down),
+        AuctionEvidence::Known(true),
+        AuctionEvidence::NoObservation,
+    );
+    apply(
+        &reducer,
+        &mut state,
+        &quote(
+            1,
+            book("100", "101"),
+            Observation::Set(MarketSignal::AuctionCollecting(interruption)),
+        ),
+        "regular",
+        SegmentBoundaryPolicy::Carry,
+    );
+
+    apply(
+        &reducer,
+        &mut state,
+        &quote(
+            2,
+            book("100", "101"),
+            Observation::Set(MarketSignal::AuctionCollecting(
+                AuctionObservation::unclassified(),
+            )),
+        ),
+        "regular",
+        SegmentBoundaryPolicy::Carry,
+    );
+    let Some(MarketPhase::Auction(auction)) = state.phase().known() else {
+        panic!("partial trial must retain the auction phase")
+    };
+    assert_eq!(
+        auction.purpose(),
+        AuctionEvidence::Known(AuctionPurpose::VolatilityInterruption)
+    );
+    assert_eq!(auction.delayed(), AuctionEvidence::Known(true));
+    assert_eq!(
+        auction.direction(),
+        AuctionEvidence::Known(VolatilityDirection::Down)
+    );
+
+    apply(
+        &reducer,
+        &mut state,
+        &quote(
+            3,
+            book("100", "101"),
+            Observation::Set(MarketSignal::AuctionCollecting(
+                AuctionObservation::unknown_purpose(),
+            )),
+        ),
+        "regular",
+        SegmentBoundaryPolicy::Carry,
+    );
+    let Some(MarketPhase::Auction(auction)) = state.phase().known() else {
+        panic!("unknown purpose still identifies an auction collection event")
+    };
+    assert_eq!(auction.purpose(), AuctionEvidence::Unknown);
+    assert_eq!(auction.delayed(), AuctionEvidence::Known(true));
+}
+
+#[test]
+fn uncross_without_known_purpose_does_not_infer_a_post_state() {
+    let reducer = MarketStateReducer::twse_regular();
+    let mut state = MarketState::new(instrument("2330"), date());
+    apply(
+        &reducer,
+        &mut state,
+        &quote(
+            1,
+            book("100", "101"),
+            Observation::Set(MarketSignal::AuctionUncross(
+                AuctionObservation::unclassified(),
+            )),
+        ),
+        "regular",
+        SegmentBoundaryPolicy::Carry,
+    );
+    assert!(matches!(state.phase(), StateField::Unknown { .. }));
+}
+
+#[test]
+fn indicative_payloads_merge_partial_observations_before_state_publication() {
+    let reducer = MarketStateReducer::twse_regular();
+    let mut state = MarketState::new(instrument("2330"), date());
+    let interruption = AuctionObservation::volatility_interruption_with_evidence(
+        AuctionEvidence::Known(VolatilityDirection::Up),
+        AuctionEvidence::NoObservation,
+        AuctionEvidence::NoObservation,
+    );
+    apply(
+        &reducer,
+        &mut state,
+        &auction(1, interruption),
+        "regular",
+        SegmentBoundaryPolicy::Carry,
+    );
+    apply(
+        &reducer,
+        &mut state,
+        &auction(2, AuctionObservation::unclassified()),
+        "regular",
+        SegmentBoundaryPolicy::Carry,
+    );
+
+    let StateField::Known { value, .. } = state.indicative_auction() else {
+        panic!("indicative payload must be known")
+    };
+    assert_eq!(
+        value.observation().purpose(),
+        AuctionEvidence::Known(AuctionPurpose::VolatilityInterruption)
+    );
+    assert_eq!(
+        value.observation().direction(),
+        AuctionEvidence::Known(VolatilityDirection::Up)
+    );
 }
 
 #[test]

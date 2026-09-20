@@ -1,8 +1,9 @@
 use std::{cmp::Ordering, collections::BTreeSet, error::Error, fmt};
 
 use market_types::{
-    AuctionPurpose, CanonicalEncodingError, DomainEvent, EventPayload, MarketSignal, Observation,
-    QuantityUnit, TradeObservationKind, Volume,
+    AuctionEvidence, AuctionObservation, AuctionPurpose, CanonicalEncodingError, DomainEvent,
+    EventPayload, IndicativeAuction, MarketSignal, Observation, QuantityUnit, TradeObservationKind,
+    UnknownValue, Volume,
 };
 
 use crate::{
@@ -11,8 +12,8 @@ use crate::{
     UnavailableReason,
 };
 
-pub const MARKET_STATE_VERSION: u16 = 6;
-pub const STATE_REDUCER_VERSION: u16 = 5;
+pub const MARKET_STATE_VERSION: u16 = 7;
+pub const STATE_REDUCER_VERSION: u16 = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SegmentBoundaryPolicy {
@@ -203,8 +204,9 @@ impl MarketStateReducer {
                 // Indicative values are timeline observations, but they are not
                 // actual trades or cumulative volume and must not overwrite
                 // executable market state.
+                let observation = merge_with_current_auction(&next, auction.observation());
                 next.set_indicative_auction(StateField::Known {
-                    value: auction.clone(),
+                    value: auction.with_observation(observation),
                     observed_at: event_ref.clone(),
                 });
                 changed.insert(ChangedField::IndicativeAuction);
@@ -305,6 +307,19 @@ impl MarketStateReducer {
         match observation {
             Observation::NoObservation => return,
             Observation::Set(signal) => {
+                let signal = match signal {
+                    MarketSignal::AuctionCollecting(observation) => {
+                        MarketSignal::AuctionCollecting(merge_with_current_auction(
+                            state,
+                            *observation,
+                        ))
+                    }
+                    MarketSignal::AuctionUncross(observation) => MarketSignal::AuctionUncross(
+                        merge_with_current_auction(state, *observation),
+                    ),
+                    MarketSignal::Continuous => MarketSignal::Continuous,
+                    MarketSignal::Closed => MarketSignal::Closed,
+                };
                 if matches!(
                     signal,
                     MarketSignal::Continuous
@@ -314,13 +329,19 @@ impl MarketStateReducer {
                     clear_indicative_auction(state, event_ref, changed);
                 }
                 state.set_market_signal(StateField::Known {
-                    value: *signal,
+                    value: signal,
                     observed_at: event_ref.clone(),
                 });
-                state.set_phase(StateField::Known {
-                    value: post_market_phase(*signal),
-                    observed_at: event_ref.clone(),
-                });
+                match post_market_phase(signal) {
+                    Some(phase) => state.set_phase(StateField::Known {
+                        value: phase,
+                        observed_at: event_ref.clone(),
+                    }),
+                    None => state.set_phase(StateField::Unknown {
+                        raw: UnknownValue::Text("auction purpose unavailable".into()),
+                        observed_at: event_ref.clone(),
+                    }),
+                }
             }
             Observation::Clear => {
                 state.set_market_signal(StateField::Unavailable(UnavailableReason::Cleared {
@@ -415,19 +436,57 @@ impl MarketStateReducer {
     }
 }
 
-fn post_market_phase(signal: MarketSignal) -> MarketPhase {
+fn merge_with_current_auction(
+    state: &MarketState,
+    observation: AuctionObservation,
+) -> AuctionObservation {
+    let Some(previous) = current_auction_observation(state) else {
+        return observation;
+    };
+    if starts_new_auction(previous, observation) {
+        observation
+    } else {
+        observation.merge(previous)
+    }
+}
+
+fn current_auction_observation(state: &MarketState) -> Option<AuctionObservation> {
+    match state.phase().known() {
+        Some(MarketPhase::Auction(auction)) => Some(auction.observation()),
+        Some(MarketPhase::Continuous) | Some(MarketPhase::Closed) | None => state
+            .indicative_auction()
+            .known()
+            .map(IndicativeAuction::observation),
+    }
+}
+
+fn starts_new_auction(previous: AuctionObservation, current: AuctionObservation) -> bool {
+    matches!(
+        (previous.purpose(), current.purpose()),
+        (
+            AuctionEvidence::Known(previous),
+            AuctionEvidence::Known(current)
+        ) if previous != current
+    )
+}
+
+fn post_market_phase(signal: MarketSignal) -> Option<MarketPhase> {
     match signal {
-        MarketSignal::Continuous => MarketPhase::Continuous,
-        MarketSignal::Closed => MarketPhase::Closed,
+        MarketSignal::Continuous => Some(MarketPhase::Continuous),
+        MarketSignal::Closed => Some(MarketPhase::Closed),
         MarketSignal::AuctionCollecting(observation) => {
-            MarketPhase::Auction(AuctionState::new(observation))
+            Some(MarketPhase::Auction(AuctionState::new(observation)))
         }
         MarketSignal::AuctionUncross(observation) => match observation.purpose() {
-            AuctionPurpose::Opening | AuctionPurpose::VolatilityInterruption => {
-                MarketPhase::Continuous
+            AuctionEvidence::Known(AuctionPurpose::Opening)
+            | AuctionEvidence::Known(AuctionPurpose::VolatilityInterruption) => {
+                Some(MarketPhase::Continuous)
             }
-            AuctionPurpose::Closing => MarketPhase::Closed,
-            AuctionPurpose::Periodic => MarketPhase::Auction(AuctionState::new(observation)),
+            AuctionEvidence::Known(AuctionPurpose::Closing) => Some(MarketPhase::Closed),
+            AuctionEvidence::Known(AuctionPurpose::Periodic) => {
+                Some(MarketPhase::Auction(AuctionState::new(observation)))
+            }
+            AuctionEvidence::NoObservation | AuctionEvidence::Unknown => None,
         },
     }
 }

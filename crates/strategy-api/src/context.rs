@@ -2,8 +2,9 @@ use std::{error::Error, fmt};
 
 use market_state::{MarketPhase, MarketStateView, SessionSegmentId, StateField};
 use market_types::{
-    AuctionObservation, AuctionPurpose, CompleteBookSnapshot, DomainEvent, EventPayload, MarketId,
-    MarketSignal, MatchTime, MatchingMethod, Observation, Price, Quantity, TradingDate,
+    AuctionEvidence, AuctionObservation, AuctionPurpose, CompleteBookSnapshot, DomainEvent,
+    EventPayload, MarketId, MarketSignal, MatchTime, MatchingMethod, Observation, Price, Quantity,
+    TradingDate,
 };
 use replay_engine::EventOccurrence;
 
@@ -287,7 +288,7 @@ impl MarketTradingContextEvaluator {
             auction,
             market_signal: signal.as_set().copied(),
             market_rule_name: "market.signal",
-            market_rule_version: 2,
+            market_rule_version: 3,
         })
     }
 }
@@ -332,7 +333,7 @@ fn order_entry_for_signal(
     }
     match signal {
         Observation::Set(MarketSignal::AuctionCollecting(observation)) => {
-            if observation.purpose() == AuctionPurpose::Opening {
+            if observation.purpose() == AuctionEvidence::Known(AuctionPurpose::Opening) {
                 NewOrderEntry::Restricted(OrderRestrictionReason::PreOpenLimitOrdersOnly)
             } else {
                 NewOrderEntry::Restricted(OrderRestrictionReason::AuctionCollecting)
@@ -340,13 +341,17 @@ fn order_entry_for_signal(
         }
         Observation::Set(MarketSignal::AuctionUncross(observation)) => {
             match observation.purpose() {
-                AuctionPurpose::Closing => NewOrderEntry::Blocked(OrderBlockReason::ClosingResult),
-                AuctionPurpose::Periodic => {
+                AuctionEvidence::Known(AuctionPurpose::Closing) => {
+                    NewOrderEntry::Blocked(OrderBlockReason::ClosingResult)
+                }
+                AuctionEvidence::Known(AuctionPurpose::Periodic) => {
                     NewOrderEntry::Restricted(OrderRestrictionReason::AuctionCollecting)
                 }
-                AuctionPurpose::Opening | AuctionPurpose::VolatilityInterruption => {
+                AuctionEvidence::Known(AuctionPurpose::Opening)
+                | AuctionEvidence::Known(AuctionPurpose::VolatilityInterruption) => {
                     NewOrderEntry::Allowed
                 }
+                AuctionEvidence::NoObservation | AuctionEvidence::Unknown => NewOrderEntry::Unknown,
             }
         }
         Observation::Set(MarketSignal::Closed) => {
@@ -354,7 +359,9 @@ fn order_entry_for_signal(
         }
         Observation::Set(MarketSignal::Continuous) => NewOrderEntry::Allowed,
         Observation::NoObservation => match auction {
-            Some(observation) if observation.purpose() == AuctionPurpose::Opening => {
+            Some(observation)
+                if observation.purpose() == AuctionEvidence::Known(AuctionPurpose::Opening) =>
+            {
                 NewOrderEntry::Restricted(OrderRestrictionReason::PreOpenLimitOrdersOnly)
             }
             Some(_) => NewOrderEntry::Restricted(OrderRestrictionReason::AuctionCollecting),

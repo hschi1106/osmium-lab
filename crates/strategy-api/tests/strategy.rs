@@ -2,10 +2,11 @@ use market_state::{
     MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
 };
 use market_types::{
-    AuctionObservation, AuctionPurpose, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot,
-    DomainEvent, EventPayload, IndicativeAuction, InstrumentId, MarketAnnotations, MarketId,
-    MarketSignal, MatchTime, Observation, Price, Quantity, QuantityUnit, QuoteSnapshot,
-    SourceFormatId, Symbol, TradingDate, TwseQuoteAnnotations, VolatilityDirection, Volume,
+    AuctionEvidence, AuctionObservation, AuctionPurpose, BookLevel, BookSide, BookSideKind,
+    CompleteBookSnapshot, DomainEvent, EventPayload, IndicativeAuction, InstrumentId,
+    MarketAnnotations, MarketId, MarketSignal, MatchTime, Observation, Price, Quantity,
+    QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol, TradingDate, TwseQuoteAnnotations,
+    VolatilityDirection, Volume,
 };
 use replay_engine::ReplayCore;
 use strategy_api::{
@@ -205,7 +206,8 @@ impl Strategy for ContextObserver {
             IndicatorValue::Unsigned(context.market_state().state_version()),
         )?;
         if context.trading().auction().is_some_and(|auction| {
-            auction.purpose() == AuctionPurpose::Opening && auction.delayed()
+            auction.purpose() == AuctionEvidence::Known(AuctionPurpose::Opening)
+                && auction.delayed() == AuctionEvidence::Known(true)
         }) {
             output.emit_indicator("delayed_open_seen", IndicatorValue::Bool(true))?;
         }

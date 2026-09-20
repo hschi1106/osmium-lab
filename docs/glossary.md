@@ -9,7 +9,7 @@
 | `match_time` | 交易所事件時間；唯一 replay clock 與事件第一排序鍵。 |
 | domain event | 與 Teralion wire format 分離、通過驗證且具版本的市場事件。 |
 | `MarketSignal` | provider-neutral 的 `Continuous`、`AuctionCollecting`、`AuctionUncross` 或 `Closed` 市場語義；raw provider flags 只在 boundary 解碼。 |
-| `AuctionObservation` | 一輪 call auction 的 purpose、delayed、disposal 與可選 volatility direction。 |
+| `AuctionObservation` | 一輪 call auction 的 partial evidence；purpose、delayed、disposal 與 volatility direction 各自保留 `Known`、`NoObservation` 或 `Unknown`。 |
 | `MarketState` | 由已排序事件歸納的商品狀態，並由 reducer 唯一持有 `MarketSignal` 與 `MarketPhase`。 |
 | `TradingContext` | 由 session、目前 event 與更新後 state 推導的下單、matching 與 fill eligibility。 |
 | explicit universe | strategy 與設定明確列出的 market／symbol 集合。 |

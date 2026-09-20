@@ -2,8 +2,8 @@
 
 適用 normalizer：
 
-- equity：`TeralionTpexQuote`，mapping version `7`。
-- warrant：`TeralionTpexWarrant`，mapping version `6`。
+- equity：`TeralionTpexQuote`，mapping version `8`。
+- warrant：`TeralionTpexWarrant`，mapping version `7`。
 
 ## 1. 支援範圍
 
@@ -50,8 +50,9 @@ QuoteSnapshot(
 realtime intermediate/final group 分別產生 `TradeBatch` 與 `QuoteSnapshot`；若 final 是 status-only pause sentinel，則產生不覆寫 firm book／trade 的 `MarketStatus`。兩者都驗證 final cumulative volume。group 不完整時 strict reject，不從 book 差分、page order 或 `received_at` 推定成交。
 
 目前 normalizer 將所有 `trial=true` record 產生為 `IndicativeAuction`。opening／closing 優先
-使用明確 delayed flag，再使用 marker／session window；盤中 trial 映射為 provider-neutral
-`AuctionPurpose::Periodic`，並保留 instant-trend annotations。明確標示的試算價量、五檔與
+使用明確 delayed flag，再使用 marker／session window；無法由來源證明 purpose 的盤中 trial
+保留為 unclassified partial `AuctionObservation`，不映射為 provider-neutral
+`AuctionPurpose::Periodic`；`Periodic` 只在有明確來源或 neutral evidence 時使用。並保留 instant-trend annotations。明確標示的試算價量、五檔與
 cumulative volume 只進 indicative state，不得覆寫 firm state 或成為一般 fill evidence。
 
 `trial=false` 且有 instant-trend 的 status-only observation 產生 `MarketStatus`，映射為

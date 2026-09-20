@@ -50,26 +50,72 @@ impl VolatilityDirection {
     }
 }
 
+/// Knowledge state for one field of an auction observation.
+///
+/// `NoObservation` means this record did not update the field and a reducer
+/// may carry a same-round value forward. `Unknown` means the source explicitly
+/// invalidated the previous value; it must not be treated as `Known(false)` or
+/// another default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AuctionEvidence<T> {
+    NoObservation,
+    Known(T),
+    Unknown,
+}
+
+impl<T> AuctionEvidence<T> {
+    #[must_use]
+    pub const fn known(value: T) -> Self {
+        Self::Known(value)
+    }
+
+    #[must_use]
+    pub const fn no_observation() -> Self {
+        Self::NoObservation
+    }
+
+    #[must_use]
+    pub const fn unknown() -> Self {
+        Self::Unknown
+    }
+}
+
+impl<T: Copy> AuctionEvidence<T> {
+    #[must_use]
+    pub const fn known_value(self) -> Option<T> {
+        match self {
+            Self::Known(value) => Some(value),
+            Self::NoObservation | Self::Unknown => None,
+        }
+    }
+}
+
 /// Provider-neutral facts about one auction round.
 ///
-/// `delayed` is an observation on this round, not a counter. A provider may
-/// reassert it on subsequent records without creating another auction round.
+/// Every field is partial knowledge. A provider may reassert one field on a
+/// subsequent record without creating another auction round, while omitted
+/// fields remain available for the reducer to merge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AuctionObservation {
-    purpose: AuctionPurpose,
-    delayed: bool,
-    disposal: bool,
-    direction: Option<VolatilityDirection>,
+    purpose: AuctionEvidence<AuctionPurpose>,
+    delayed: AuctionEvidence<bool>,
+    disposal: AuctionEvidence<bool>,
+    direction: AuctionEvidence<VolatilityDirection>,
 }
 
 impl AuctionObservation {
-    pub(crate) const fn from_parts(
-        purpose: AuctionPurpose,
-        delayed: bool,
-        disposal: bool,
-        direction: Option<VolatilityDirection>,
+    pub const fn from_parts(
+        purpose: AuctionEvidence<AuctionPurpose>,
+        delayed: AuctionEvidence<bool>,
+        disposal: AuctionEvidence<bool>,
+        direction: AuctionEvidence<VolatilityDirection>,
     ) -> Option<Self> {
-        if !matches!(purpose, AuctionPurpose::VolatilityInterruption) && direction.is_some() {
+        if matches!(direction, AuctionEvidence::Known(_))
+            && !matches!(
+                purpose,
+                AuctionEvidence::Known(AuctionPurpose::VolatilityInterruption)
+            )
+        {
             return None;
         }
         Some(Self {
@@ -83,10 +129,10 @@ impl AuctionObservation {
     #[must_use]
     pub const fn new(purpose: AuctionPurpose, delayed: bool, disposal: bool) -> Self {
         Self {
-            purpose,
-            delayed,
-            disposal,
-            direction: None,
+            purpose: AuctionEvidence::Known(purpose),
+            delayed: AuctionEvidence::Known(delayed),
+            disposal: AuctionEvidence::Known(disposal),
+            direction: AuctionEvidence::NoObservation,
         }
     }
 
@@ -96,47 +142,149 @@ impl AuctionObservation {
         delayed: bool,
         disposal: bool,
     ) -> Self {
+        Self::volatility_interruption_with_evidence(
+            AuctionEvidence::Known(direction),
+            AuctionEvidence::Known(delayed),
+            AuctionEvidence::Known(disposal),
+        )
+    }
+
+    #[must_use]
+    pub const fn volatility_interruption_with_evidence(
+        direction: AuctionEvidence<VolatilityDirection>,
+        delayed: AuctionEvidence<bool>,
+        disposal: AuctionEvidence<bool>,
+    ) -> Self {
         Self {
-            purpose: AuctionPurpose::VolatilityInterruption,
+            purpose: AuctionEvidence::Known(AuctionPurpose::VolatilityInterruption),
             delayed,
             disposal,
-            direction: Some(direction),
+            direction,
+        }
+    }
+
+    #[must_use]
+    pub const fn unclassified() -> Self {
+        Self {
+            purpose: AuctionEvidence::NoObservation,
+            delayed: AuctionEvidence::NoObservation,
+            disposal: AuctionEvidence::NoObservation,
+            direction: AuctionEvidence::NoObservation,
+        }
+    }
+
+    #[must_use]
+    pub const fn unknown_purpose() -> Self {
+        Self {
+            purpose: AuctionEvidence::Unknown,
+            delayed: AuctionEvidence::NoObservation,
+            disposal: AuctionEvidence::NoObservation,
+            direction: AuctionEvidence::NoObservation,
+        }
+    }
+
+    #[must_use]
+    pub fn merge(self, prior: Self) -> Self {
+        Self {
+            purpose: merge_evidence(prior.purpose, self.purpose),
+            delayed: merge_evidence(prior.delayed, self.delayed),
+            disposal: merge_evidence(prior.disposal, self.disposal),
+            direction: merge_evidence(prior.direction, self.direction),
         }
     }
 
     #[must_use]
     pub const fn opening(delayed: bool, disposal: bool) -> Self {
-        Self::new(AuctionPurpose::Opening, delayed, disposal)
+        Self::opening_with_evidence(
+            AuctionEvidence::Known(delayed),
+            AuctionEvidence::Known(disposal),
+        )
+    }
+
+    #[must_use]
+    pub const fn opening_with_evidence(
+        delayed: AuctionEvidence<bool>,
+        disposal: AuctionEvidence<bool>,
+    ) -> Self {
+        Self {
+            purpose: AuctionEvidence::Known(AuctionPurpose::Opening),
+            delayed,
+            disposal,
+            direction: AuctionEvidence::NoObservation,
+        }
     }
 
     #[must_use]
     pub const fn closing(delayed: bool, disposal: bool) -> Self {
-        Self::new(AuctionPurpose::Closing, delayed, disposal)
+        Self::closing_with_evidence(
+            AuctionEvidence::Known(delayed),
+            AuctionEvidence::Known(disposal),
+        )
+    }
+
+    #[must_use]
+    pub const fn closing_with_evidence(
+        delayed: AuctionEvidence<bool>,
+        disposal: AuctionEvidence<bool>,
+    ) -> Self {
+        Self {
+            purpose: AuctionEvidence::Known(AuctionPurpose::Closing),
+            delayed,
+            disposal,
+            direction: AuctionEvidence::NoObservation,
+        }
     }
 
     #[must_use]
     pub const fn periodic(delayed: bool, disposal: bool) -> Self {
-        Self::new(AuctionPurpose::Periodic, delayed, disposal)
+        Self::periodic_with_evidence(
+            AuctionEvidence::Known(delayed),
+            AuctionEvidence::Known(disposal),
+        )
     }
 
     #[must_use]
-    pub const fn purpose(self) -> AuctionPurpose {
+    pub const fn periodic_with_evidence(
+        delayed: AuctionEvidence<bool>,
+        disposal: AuctionEvidence<bool>,
+    ) -> Self {
+        Self {
+            purpose: AuctionEvidence::Known(AuctionPurpose::Periodic),
+            delayed,
+            disposal,
+            direction: AuctionEvidence::NoObservation,
+        }
+    }
+
+    #[must_use]
+    pub const fn purpose(self) -> AuctionEvidence<AuctionPurpose> {
         self.purpose
     }
 
     #[must_use]
-    pub const fn delayed(self) -> bool {
+    pub const fn delayed(self) -> AuctionEvidence<bool> {
         self.delayed
     }
 
     #[must_use]
-    pub const fn disposal(self) -> bool {
+    pub const fn disposal(self) -> AuctionEvidence<bool> {
         self.disposal
     }
 
     #[must_use]
-    pub const fn direction(self) -> Option<VolatilityDirection> {
+    pub const fn direction(self) -> AuctionEvidence<VolatilityDirection> {
         self.direction
+    }
+}
+
+fn merge_evidence<T: Copy>(
+    prior: AuctionEvidence<T>,
+    current: AuctionEvidence<T>,
+) -> AuctionEvidence<T> {
+    match current {
+        AuctionEvidence::NoObservation => prior,
+        AuctionEvidence::Known(value) => AuctionEvidence::Known(value),
+        AuctionEvidence::Unknown => AuctionEvidence::Unknown,
     }
 }
 
@@ -186,15 +334,51 @@ impl MarketSignal {
 
 impl CanonicalValue for AuctionObservation {
     fn append_canonical(&self, bytes: &mut Vec<u8>) -> Result<(), CanonicalEncodingError> {
-        bytes.push(self.purpose.discriminant());
-        bytes.push(u8::from(self.delayed));
-        bytes.push(u8::from(self.disposal));
-        match self.direction {
-            None => bytes.push(0),
-            Some(direction) => {
+        self.purpose.append_canonical(bytes)?;
+        self.delayed.append_canonical(bytes)?;
+        self.disposal.append_canonical(bytes)?;
+        self.direction.append_canonical(bytes)?;
+        Ok(())
+    }
+}
+
+impl CanonicalValue for AuctionEvidence<AuctionPurpose> {
+    fn append_canonical(&self, bytes: &mut Vec<u8>) -> Result<(), CanonicalEncodingError> {
+        match self {
+            Self::NoObservation => bytes.push(0),
+            Self::Known(purpose) => {
+                bytes.push(1);
+                bytes.push(purpose.discriminant());
+            }
+            Self::Unknown => bytes.push(2),
+        }
+        Ok(())
+    }
+}
+
+impl CanonicalValue for AuctionEvidence<bool> {
+    fn append_canonical(&self, bytes: &mut Vec<u8>) -> Result<(), CanonicalEncodingError> {
+        match self {
+            Self::NoObservation => bytes.push(0),
+            Self::Known(value) => {
+                bytes.push(1);
+                bytes.push(u8::from(*value));
+            }
+            Self::Unknown => bytes.push(2),
+        }
+        Ok(())
+    }
+}
+
+impl CanonicalValue for AuctionEvidence<VolatilityDirection> {
+    fn append_canonical(&self, bytes: &mut Vec<u8>) -> Result<(), CanonicalEncodingError> {
+        match self {
+            Self::NoObservation => bytes.push(0),
+            Self::Known(direction) => {
                 bytes.push(1);
                 bytes.push(direction.discriminant());
             }
+            Self::Unknown => bytes.push(2),
         }
         Ok(())
     }

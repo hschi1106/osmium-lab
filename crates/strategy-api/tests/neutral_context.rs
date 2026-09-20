@@ -1,6 +1,6 @@
 use market_state::{
     MarketPhase, MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy,
-    SessionSegmentId,
+    SessionSegmentId, StateField,
 };
 use market_types::{
     AuctionObservation, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent,
@@ -153,6 +153,31 @@ fn opening_uncross_uses_call_auction_for_this_event_but_continuous_for_post_stat
         next.matching(),
         MatchingState::Enabled(market_types::MatchingMethod::Continuous)
     );
+}
+
+#[test]
+fn unknown_auction_uncross_keeps_call_auction_but_does_not_allow_entry() {
+    let segment = segment();
+    let mut replay = core();
+    let context = evaluate(
+        &mut replay,
+        quote(
+            "2026-07-27T09:00:00+08:00",
+            Observation::Set(MarketSignal::AuctionUncross(
+                AuctionObservation::unclassified(),
+            )),
+        ),
+        &segment,
+    );
+    assert_eq!(
+        context.matching(),
+        MatchingState::Enabled(market_types::MatchingMethod::CallAuction)
+    );
+    assert_eq!(context.new_order_entry(), NewOrderEntry::Unknown);
+    assert!(matches!(
+        replay.state(&instrument()).unwrap().phase(),
+        StateField::Unknown { .. }
+    ));
 }
 
 #[test]

@@ -5,12 +5,12 @@ use market_state::{
     final_state_checksum,
 };
 use market_types::{
-    AuctionObservation, AuctionPurpose, BookLevel, BookSide, BookSideKind, BookSnapshot,
-    CompleteBookSnapshot, DomainEvent, EventKind, EventPayload, IndicativeAuction, InstrumentId,
-    MarketAnnotations, MarketId, MarketSignal, MarketStatusObservation, MatchTime, Observation,
-    ObservedTrade, Price, Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol,
-    TpexQuoteAnnotations, TradeBatch, TradeBatchOrdering, TradeObservationKind, TradingDate,
-    TwseQuoteAnnotations, UnknownValue, VolatilityDirection, Volume,
+    AuctionEvidence, AuctionObservation, AuctionPurpose, BookLevel, BookSide, BookSideKind,
+    BookSnapshot, CompleteBookSnapshot, DomainEvent, EventKind, EventPayload, IndicativeAuction,
+    InstrumentId, MarketAnnotations, MarketId, MarketSignal, MarketStatusObservation, MatchTime,
+    Observation, ObservedTrade, Price, Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId,
+    Symbol, TpexQuoteAnnotations, TradeBatch, TradeBatchOrdering, TradeObservationKind,
+    TradingDate, TwseQuoteAnnotations, UnknownValue, VolatilityDirection, Volume,
 };
 
 fn instrument(symbol: &str) -> InstrumentId {
@@ -681,8 +681,9 @@ fn intraday_stability_updates_only_indicative_state() {
     assert_eq!(state.cumulative_volume(), &firm_volume);
     assert!(
         matches!(state.indicative_auction(), StateField::Known { value, .. }
-        if value.observation().purpose() == AuctionPurpose::VolatilityInterruption
-            && value.observation().direction() == Some(VolatilityDirection::Up))
+        if value.observation().purpose()
+                == AuctionEvidence::Known(AuctionPurpose::VolatilityInterruption)
+            && value.observation().direction() == AuctionEvidence::Known(VolatilityDirection::Up))
     );
     assert_eq!(
         receipt.changed_fields(),
@@ -719,7 +720,8 @@ fn continuous_resume_clears_indicative_state_without_mutating_firm_state() {
     assert!(matches!(
         state.indicative_auction(),
         StateField::Known { value, .. }
-            if value.observation().purpose() == AuctionPurpose::VolatilityInterruption
+            if value.observation().purpose()
+                == AuctionEvidence::Known(AuctionPurpose::VolatilityInterruption)
     ));
     reducer
         .apply(&mut state, &reserved_firm_quote_event(4), &context)
@@ -727,7 +729,8 @@ fn continuous_resume_clears_indicative_state_without_mutating_firm_state() {
     assert!(matches!(
         state.indicative_auction(),
         StateField::Known { value, .. }
-            if value.observation().purpose() == AuctionPurpose::VolatilityInterruption
+            if value.observation().purpose()
+                == AuctionEvidence::Known(AuctionPurpose::VolatilityInterruption)
     ));
 
     let resumed = quote_event(
@@ -792,7 +795,8 @@ fn market_status_does_not_clear_indicative_state_even_with_normal_flags() {
     assert!(matches!(
         state.indicative_auction(),
         StateField::Known { value, .. }
-            if value.observation().purpose() == AuctionPurpose::VolatilityInterruption
+            if value.observation().purpose()
+                == AuctionEvidence::Known(AuctionPurpose::VolatilityInterruption)
     ));
     assert_eq!(state.cumulative_volume().known().unwrap().value(), 11);
 }

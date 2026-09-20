@@ -16,9 +16,9 @@
   <img src="https://img.shields.io/badge/License-AGPL--3.0--only-red" alt="AGPL-3.0-only License">
 </p>
 
-Osmium Lab 是一套以 Rust 建立、使用 Teralion 歷史行情的 market replay 與 backtesting
-平台。它把資料同步、完整性驗證、格式正規化、deterministic replay、策略執行、成交模擬與
-帳務整合成一條可重現的工作流程。
+Osmium Lab 是以 Rust 建立、可接入不同歷史行情供應商的台灣市場 market replay 與
+backtesting platform；目前內建 Teralion provider。它把資料同步、完整性驗證、格式正規化、
+deterministic replay、策略執行、成交模擬與帳務整合成一條可重現的工作流程。
 
 平台以 `match_time` 作為唯一回播時間。下載完成的 verified source 可以跨次回測重用，
 replay cache 則是可刪除、可離線重建的衍生資料。策略只會讀到當下與過去已發生的事件，
@@ -50,7 +50,7 @@ replay cache 則是可刪除、可離線重建的衍生資料。策略只會讀�
 `0.1.0` 已完成公開 release 所需的主要資料與回測流程：
 
 - `plan -> data sync -> data verify -> cache prepare -> replay/backtest -> inspect`
-- 一份 `config_version: 2` YAML 定義 universe、strategy、simulation、economics 與 output。
+- 一份 `config_version: 3` YAML 定義 universe、strategy、simulation、economics 與 output。
 - verified source 採 immutable revision；不完整或損壞資料預設拒絕進入正式回測。
 - replay cache 綁定 source checksum、event schema 與 cache format，可由本地 source 重建。
 - MarketState 原子套用完整五檔、成交、累計量、flags 與 `match_time`。
@@ -157,7 +157,7 @@ target/release/osmium config check --config my-config.yaml
 target/release/osmium plan --config my-config.yaml
 ```
 
-`config_version: 2` 是必要欄位。價格、費率、slippage、multiplier 與金額等 exact numeric
+`config_version: 3` 是必要欄位。價格、費率、slippage、multiplier 與金額等 exact numeric
 values 以 YAML string 表達；設定檔不能包含 API key、cookie、bearer token 或 signed URL。
 
 ### 3. 同步並準備資料

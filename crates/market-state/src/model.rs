@@ -1,9 +1,10 @@
 use std::{cmp::Ordering, error::Error, fmt, str::FromStr};
 
 use market_types::{
-    AuctionObservation, AuctionPurpose, CompleteBookSnapshot, DomainEvent, EventFingerprint,
-    EventKind, IndicativeAuction, InstrumentId, MarketSignal, MatchTime, ObservedTrade,
-    SourceFormatId, TradeBatchOrdering, TradingDate, UnknownValue, VolatilityDirection, Volume,
+    AuctionEvidence, AuctionObservation, AuctionPurpose, CompleteBookSnapshot, DomainEvent,
+    EventFingerprint, EventKind, IndicativeAuction, InstrumentId, MarketSignal, MatchTime,
+    ObservedTrade, SourceFormatId, TradeBatchOrdering, TradingDate, UnknownValue,
+    VolatilityDirection, Volume,
 };
 
 /// A non-empty, byte-exact session segment identifier from a market profile.
@@ -180,22 +181,22 @@ impl AuctionState {
     }
 
     #[must_use]
-    pub const fn purpose(self) -> AuctionPurpose {
+    pub const fn purpose(self) -> AuctionEvidence<AuctionPurpose> {
         self.observation.purpose()
     }
 
     #[must_use]
-    pub const fn delayed(self) -> bool {
+    pub const fn delayed(self) -> AuctionEvidence<bool> {
         self.observation.delayed()
     }
 
     #[must_use]
-    pub const fn disposal(self) -> bool {
+    pub const fn disposal(self) -> AuctionEvidence<bool> {
         self.observation.disposal()
     }
 
     #[must_use]
-    pub const fn direction(self) -> Option<VolatilityDirection> {
+    pub const fn direction(self) -> AuctionEvidence<VolatilityDirection> {
         self.observation.direction()
     }
 }

@@ -5,7 +5,8 @@ use std::{
 };
 
 use market_types::{
-    AuctionPurpose, EventPayload, InstrumentId, MarketId, MatchTime, Symbol, TradingDate,
+    AuctionEvidence, AuctionPurpose, EventPayload, InstrumentId, MarketId, MatchTime, Symbol,
+    TradingDate,
 };
 use teralion_provider::tpex::{NormalizerConfig, TpexNormalizer};
 
@@ -50,11 +51,12 @@ fn synthetic_warrant_fixture_normalizes_offline() {
         |(quotes, opening, closing), event| match event.payload() {
             EventPayload::QuoteSnapshot(_) => (quotes + 1, opening, closing),
             EventPayload::IndicativeAuction(auction) => match auction.observation().purpose() {
-                AuctionPurpose::Opening => (quotes, opening + 1, closing),
-                AuctionPurpose::Closing => (quotes, opening, closing + 1),
-                AuctionPurpose::Periodic | AuctionPurpose::VolatilityInterruption => {
-                    (quotes, opening, closing)
-                }
+                AuctionEvidence::Known(AuctionPurpose::Opening) => (quotes, opening + 1, closing),
+                AuctionEvidence::Known(AuctionPurpose::Closing) => (quotes, opening, closing + 1),
+                AuctionEvidence::Known(AuctionPurpose::Periodic)
+                | AuctionEvidence::Known(AuctionPurpose::VolatilityInterruption)
+                | AuctionEvidence::NoObservation
+                | AuctionEvidence::Unknown => (quotes, opening, closing),
             },
             EventPayload::TradeBatch(_) => panic!("TPEx warrant fixture has no trade prints"),
             EventPayload::BookSnapshot(_) => {

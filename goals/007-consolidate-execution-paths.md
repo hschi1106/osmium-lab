@@ -1,6 +1,6 @@
 # 007：收斂一般與 scheduled execution 的重複邏輯
 
-Status: complete
+Status: done
 Depends on: 006-backtest-capability-closure.md
 
 ## 目標

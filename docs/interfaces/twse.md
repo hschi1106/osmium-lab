@@ -2,8 +2,8 @@
 
 適用 normalizer：
 
-- equity：`TeralionTwseQuote`，mapping version `10`。
-- warrant：`TeralionTwseWarrant`，mapping version `6`。
+- equity：`TeralionTwseQuote`，mapping version `11`。
+- warrant：`TeralionTwseWarrant`，mapping version `7`。
 
 ## 1. 支援範圍
 
@@ -52,12 +52,13 @@ QuoteSnapshot(
 )
 ```
 
-一般 quote 的 `deal=null` 保留為 `NoObservation`，不建立成交。真實 `/ticks` 樣本確認 zero quantity 會出現在具明確 VI trend、空買賣簿的暫緩撮合 observation；TWSE normalizer 現將這種沒有 firm book／trade 的形狀映射為 `MarketStatus`，只攜帶 cumulative volume 與 typed annotations。它不以空陣列清除暫停前最後一份 firm book，也不把零量 recent-price sentinel 當成交。若沒有 VI trend、仍是 intermediate print 或帶有非空 book，則拒絕零量 deal。另以 verified 3026 partition 確認 stability 結束後會大量出現第一檔零價市價委託揭示，現改以獨立 quantity 保存。這些修正令 equity／warrant mapping identity 升為 v10／v6，舊 cache 必須重建。
+一般 quote 的 `deal=null` 保留為 `NoObservation`，不建立成交。真實 `/ticks` 樣本確認 zero quantity 會出現在具明確 VI trend、空買賣簿的暫緩撮合 observation；TWSE normalizer 現將這種沒有 firm book／trade 的形狀映射為 `MarketStatus`，只攜帶 cumulative volume 與 typed annotations。它不以空陣列清除暫停前最後一份 firm book，也不把零量 recent-price sentinel 當成交。若沒有 VI trend、仍是 intermediate print 或帶有非空 book，則拒絕零量 deal。另以 verified 3026 partition 確認 stability 結束後會大量出現第一檔零價市價委託揭示，現改以獨立 quantity 保存。這些修正令 equity／warrant mapping identity 升為 v11／v7，舊 cache 必須重建。
 
 目前 normalizer 將所有 `trial=true` record 產生為 `IndicativeAuction`，不回落為 firm
-`QuoteSnapshot`；opening／closing 由 delayed flag、marker 與 session window 分類。盤中 trial
-映射為 provider-neutral `AuctionPurpose::Periodic`；instant-trend 的方向仍保留在來源
-annotations，只有有明確證據時才映射為 `VolatilityInterruption` observation。明確標示的
+`QuoteSnapshot`；opening／closing 由 delayed flag、marker 與 session window 分類。無法由
+來源證明 purpose 的盤中 trial 保留為 unclassified partial `AuctionObservation`，不映射為
+`AuctionPurpose::Periodic`；`Periodic` 只在有明確來源或 neutral evidence 時使用。instant-trend
+的方向仍保留在來源 annotations，只有有明確證據時才映射為 `VolatilityInterruption` observation。明確標示的
 試算 observation 不可成為 actual trade、firm cumulative volume、一般 mark 或 fill evidence。
 
 `trial=false` 且有 instant-trend 的 status-only observation 產生 `MarketStatus`，signal 映射為

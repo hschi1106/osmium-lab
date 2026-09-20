@@ -1,6 +1,6 @@
 # 011：全 repo 最終 redundancy / dead-code cleanup
 
-Status: complete
+Status: done
 Depends on: 010-remove-legacy-compatibility.md
 
 ## 目標

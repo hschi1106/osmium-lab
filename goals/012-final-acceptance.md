@@ -1,6 +1,6 @@
 # 012：最終 correctness、provider neutrality、performance 與 LOC 驗收
 
-Status: complete
+Status: done
 Depends on: 011-final-redundancy-cleanup.md
 
 ## 目標

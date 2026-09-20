@@ -8,7 +8,7 @@ use execution_sim::{
     ScheduledDepthSimulator, ScheduledOrderStatus, VisibleBookEvidence,
     VisibleTradingStateEvidence,
 };
-use market_types::{AuctionPurpose, DomainEvent, MarketSignal, MatchTime};
+use market_types::{AuctionEvidence, AuctionPurpose, DomainEvent, MarketSignal, MatchTime};
 use replay_engine::{
     CompletedReplay, EventOccurrence, EventStream, OrderingKey, ReplayCore, ReplayPlan,
     ReplayStreamFactory,
@@ -474,7 +474,8 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
         if matches!(
             observation.trading.market_signal(),
             Some(MarketSignal::AuctionCollecting(auction))
-                if auction.purpose() == AuctionPurpose::VolatilityInterruption
+                if auction.purpose()
+                    == AuctionEvidence::Known(AuctionPurpose::VolatilityInterruption)
         ) {
             let feedback = self
                 .simulator

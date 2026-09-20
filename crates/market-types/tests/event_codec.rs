@@ -2,12 +2,12 @@
 mod support;
 
 use market_types::{
-    AuctionObservation, BookLevel, BookSide, BookSideKind, CANONICAL_EVENT_VERSION,
-    CompleteBookSnapshot, DomainEvent, EVENT_SCHEMA_VERSION, EventPayload, IndicativeAuction,
-    InstrumentId, MarketAnnotations, MarketId, MarketStatusObservation, MatchTime, Observation,
-    ObservedTrade, Price, Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol,
-    TpexQuoteAnnotations, TradeBatch, TradeBatchOrdering, TradeObservationKind, TradingDate,
-    Volume,
+    AuctionEvidence, AuctionObservation, AuctionPurpose, BookLevel, BookSide, BookSideKind,
+    CANONICAL_EVENT_VERSION, CompleteBookSnapshot, DomainEvent, EVENT_SCHEMA_VERSION, EventPayload,
+    IndicativeAuction, InstrumentId, MarketAnnotations, MarketId, MarketStatusObservation,
+    MatchTime, Observation, ObservedTrade, Price, Quantity, QuantityUnit, QuoteSnapshot,
+    SourceFormatId, Symbol, TpexQuoteAnnotations, TradeBatch, TradeBatchOrdering,
+    TradeObservationKind, TradingDate, VolatilityDirection, Volume,
 };
 use support::empty_book;
 
@@ -154,6 +154,57 @@ fn canonical_event_changes_for_distinct_observation_semantics() {
     assert_ne!(
         make_event(Observation::NoObservation),
         make_event(Observation::Clear)
+    );
+}
+
+#[test]
+fn auction_evidence_roundtrips_without_collapsing_missing_or_unknown_fields() {
+    let observation = AuctionObservation::from_parts(
+        AuctionEvidence::Known(AuctionPurpose::VolatilityInterruption),
+        AuctionEvidence::NoObservation,
+        AuctionEvidence::Unknown,
+        AuctionEvidence::Known(VolatilityDirection::Up),
+    )
+    .unwrap();
+    let auction = IndicativeAuction::new(
+        observation,
+        Observation::NoObservation,
+        Observation::NoObservation,
+        Observation::NoObservation,
+        Observation::NoObservation,
+        MarketAnnotations::None,
+    )
+    .unwrap();
+    let event = DomainEvent::new(
+        InstrumentId::new(MarketId::Twse, Symbol::new("A").unwrap()),
+        TradingDate::from_epoch_days(0).unwrap(),
+        SourceFormatId::new("X").unwrap(),
+        MatchTime::from_unix_microseconds(1),
+        None,
+        EventPayload::IndicativeAuction(auction),
+    );
+
+    let decoded = DomainEvent::from_canonical_bytes(&event.to_canonical_bytes().unwrap()).unwrap();
+    assert_eq!(decoded, event);
+    let EventPayload::IndicativeAuction(decoded_auction) = decoded.payload() else {
+        panic!("expected indicative auction")
+    };
+    assert_eq!(
+        decoded_auction.observation().delayed(),
+        AuctionEvidence::NoObservation
+    );
+    assert_eq!(
+        decoded_auction.observation().disposal(),
+        AuctionEvidence::Unknown
+    );
+    assert!(
+        AuctionObservation::from_parts(
+            AuctionEvidence::Known(AuctionPurpose::Opening),
+            AuctionEvidence::NoObservation,
+            AuctionEvidence::NoObservation,
+            AuctionEvidence::Known(VolatilityDirection::Up),
+        )
+        .is_none()
     );
 }
 

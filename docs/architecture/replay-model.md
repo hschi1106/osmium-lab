@@ -15,9 +15,9 @@ payload
 
 payload 支援 `QuoteSnapshot`、`BookSnapshot`、`TradeBatch`、`MarketStatus` 與單一 `IndicativeAuction`。
 auction 以 provider-neutral `AuctionObservation` 表達 `AuctionPurpose::{Opening, Closing,
-Periodic, VolatilityInterruption}`，並以 `delayed`、`disposal` 與可選的 volatility direction
-保留來源可支持的屬性。價量使用 checked exact decimal 與具單位的 quantity；unknown 與
-no-observation 不以零值代替。
+Periodic, VolatilityInterruption}` 的 partial evidence；purpose、`delayed`、`disposal` 與
+volatility direction 各自可為 `Known`、`NoObservation` 或 `Unknown`。同一輪中
+`NoObservation` 可沿用前態，`Unknown` 則使該欄位失效；兩者都不以零值代替。
 
 每個 event 另可攜帶 `MarketSignal::{Continuous, AuctionCollecting, AuctionUncross, Closed}`。
 `AuctionCollecting` 與 `AuctionUncross` 共用同一份 `AuctionObservation`；signal 是市場語義，
@@ -115,7 +115,7 @@ reducer 支援 carry 與 reset boundary policy；目前 CLI runner 對每個 pla
 | --- | --- | --- | --- |
 | intraday matching | 當前 `DomainEvent` 的 `MarketSignal`，再由 reducer 產生 `MarketPhase` | `NoObservation` 保留既有 state；初始或 `Unknown` 時 `TradingContext` 回傳 `MatchingState::Unknown`，不猜 `Continuous` | event/cache identity；不另存背景 |
 | disposal | `AuctionObservation` 的 neutral observation；provider 只使用有來源證據的屬性 | 沒有來源證據就不載入處置名單，也不改一般商品 fill/accounting 規則；synthetic neutral event 仍可測試 `disposal=true` | event/cache identity；不另存今日名單 |
-| auction post-state | reducer 依 `AuctionPurpose` 與 `AuctionUncross` 推導 | opening、closing、periodic 各依固定 transition 處理；不以時間或背景補完 | reducer/event version |
+| auction post-state | reducer 依已知 `AuctionPurpose` 與 `AuctionUncross` 推導 | opening、closing、periodic 各依固定 transition 處理；purpose 不明時保留 unknown，不以時間或背景補完 | reducer/event version |
 | order-entry policy | `TradingContext` 讀取 event signal、post-event state 與 session phase | signal/state 未知時回傳 `Unknown`，不放行 order | strategy/execution version |
 | execution fill policy | effective `simulation`、instrument economics 與已驗證 contract 設定 | config 缺失或矛盾時在 config/planner 階段拒絕 | effective config／execution plan checksum |
 | strategy-visible metadata | event、`MarketStateView`、`TradingContext` 與 session context | 只呈現已觀察或已驗證值；不查 provider API | event、strategy 與 run artifact identity |

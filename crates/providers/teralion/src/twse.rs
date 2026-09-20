@@ -1,21 +1,21 @@
 use std::{collections::BTreeMap, error::Error, fmt};
 
 use market_types::{
-    AuctionObservation, BookError, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot,
-    DomainEvent, EventError, EventPayload, IndicativeAuction, InstantTrend, InstrumentId,
-    LimitPosition, MarketAnnotations, MarketId, MarketSignal, MarketStatusObservation, MatchTime,
-    MatchTimeError, Observation, ObservedTrade, Price, PriceError, Quantity, QuantityError,
-    QuantityUnit, QuoteSnapshot, SourceFormatId, TradeBatch, TradeBatchOrdering,
-    TradeObservationKind, TradingDate, TwseQuoteAnnotations, UnknownValue, VolatilityDirection,
-    Volume,
+    AuctionEvidence, AuctionObservation, BookError, BookLevel, BookSide, BookSideKind,
+    CompleteBookSnapshot, DomainEvent, EventError, EventPayload, IndicativeAuction, InstantTrend,
+    InstrumentId, LimitPosition, MarketAnnotations, MarketId, MarketSignal,
+    MarketStatusObservation, MatchTime, MatchTimeError, Observation, ObservedTrade, Price,
+    PriceError, Quantity, QuantityError, QuantityUnit, QuoteSnapshot, SourceFormatId, TradeBatch,
+    TradeBatchOrdering, TradeObservationKind, TradingDate, TwseQuoteAnnotations, UnknownValue,
+    VolatilityDirection, Volume,
 };
 use serde::Deserialize;
 use serde_json::value::RawValue;
 
 pub const MAPPING_NAME: &str = "TeralionTwseQuote";
-pub const MAPPING_VERSION: u16 = 10;
+pub const MAPPING_VERSION: u16 = 11;
 pub const WARRANT_MAPPING_NAME: &str = "TeralionTwseWarrant";
-pub const WARRANT_MAPPING_VERSION: u16 = 6;
+pub const WARRANT_MAPPING_VERSION: u16 = 7;
 
 const STOCK_SNAPSHOT: &str = "STOCK_SNAPSHOT";
 const STOCK_REALTIME: &str = "STOCK_REALTIME";
@@ -648,10 +648,16 @@ impl TwseNormalizer {
             ));
         }
         if status.delayed_open() {
-            return Ok(Some(AuctionObservation::opening(true, false)));
+            return Ok(Some(AuctionObservation::opening_with_evidence(
+                AuctionEvidence::Known(true),
+                AuctionEvidence::NoObservation,
+            )));
         }
         if status.delayed_close() {
-            return Ok(Some(AuctionObservation::closing(true, false)));
+            return Ok(Some(AuctionObservation::closing_with_evidence(
+                AuctionEvidence::Known(true),
+                AuctionEvidence::NoObservation,
+            )));
         }
 
         let opening_window_start = self.session_time("08:30:00");
@@ -665,13 +671,19 @@ impl TwseNormalizer {
         let opening = status.delayed_open() || status.opening_marker() || in_opening_window;
         let closing = status.delayed_close() || status.closing_marker() || in_closing_window;
         match (opening, closing) {
-            (true, false) => Ok(Some(AuctionObservation::opening(false, false))),
-            (false, true) => Ok(Some(AuctionObservation::closing(false, false))),
+            (true, false) => Ok(Some(AuctionObservation::opening_with_evidence(
+                AuctionEvidence::NoObservation,
+                AuctionEvidence::NoObservation,
+            ))),
+            (false, true) => Ok(Some(AuctionObservation::closing_with_evidence(
+                AuctionEvidence::NoObservation,
+                AuctionEvidence::NoObservation,
+            ))),
             // Instant-trend proves a pause direction, not that Teralion's
             // deal/book fields are simulated-auction values. Preserve the
             // annotation and keep the indicative observation unclassified
             // until a real source fixture verifies that mapping.
-            (false, false) => Ok(Some(AuctionObservation::periodic(false, false))),
+            (false, false) => Ok(Some(AuctionObservation::unclassified())),
             (true, true) => Err(NormalizationError::new(
                 record.record_number,
                 record.context.clone(),
@@ -697,9 +709,15 @@ impl TwseNormalizer {
             ));
         }
         let signal = if status.opening_marker() {
-            MarketSignal::AuctionUncross(AuctionObservation::opening(false, false))
+            MarketSignal::AuctionUncross(AuctionObservation::opening_with_evidence(
+                AuctionEvidence::NoObservation,
+                AuctionEvidence::NoObservation,
+            ))
         } else if status.closing_marker() {
-            MarketSignal::AuctionUncross(AuctionObservation::closing(false, false))
+            MarketSignal::AuctionUncross(AuctionObservation::closing_with_evidence(
+                AuctionEvidence::NoObservation,
+                AuctionEvidence::NoObservation,
+            ))
         } else if matches!(
             limits.instant_trend(),
             InstantTrend::VolatilityInterruptionDown | InstantTrend::VolatilityInterruptionUp
@@ -1221,7 +1239,11 @@ fn volatility_observation(annotations: TwseQuoteAnnotations) -> AuctionObservati
             unreachable!("status-only pause has a volatility-interruption trend")
         }
     };
-    AuctionObservation::volatility_interruption(direction, false, false)
+    AuctionObservation::volatility_interruption_with_evidence(
+        AuctionEvidence::Known(direction),
+        AuctionEvidence::NoObservation,
+        AuctionEvidence::NoObservation,
+    )
 }
 
 fn parse_deal(
