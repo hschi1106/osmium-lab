@@ -6,7 +6,47 @@ execution simulation 只根據 strategy intent、已提交的市場事件、更�
 
 所有 order 都需通過 instrument、universe、side、type、quantity unit、price、session 與 capability 驗證。rejected intent 會產生穩定原因，不會進入 ledger。
 
-## 2. Subsequent-event 模型
+Osmium 模擬的是「在版本化 evidence/policy 下可重現的 order lifecycle、fill 與 accounting」，不是
+真實成交保證。它不重建 exchange matching、order-by-order book、queue position、hidden liquidity，
+也不推定 aggressor、source sequence 或未來資料；不重算交易所 trigger 或完整處置證券撮合規則。
+
+## 2. Strategy lifecycle
+
+Strategy 必須由 `StrategyFactory` 建立並註冊至 compiled `StrategyRegistry`；runtime 不載入 plugin。
+Factory 固定 id、version、binary identity 與 parameter schema，並以 validated parameters、explicit
+universe 與 sessions 建立 instance。
+
+```text
+resolve factory + parameters
+  → initialize
+  → on_event / on_timer
+  → atomically commit callback output
+  → order/fill transition
+  → on_feedback
+  → finalize
+```
+
+`StrategyEventContext` 提供目前 occurrence/event、post-event read-only `MarketStateView`、所有 universe
+states、`TradingContext`、session context 與 decision time。`on_timer` 使用 deterministic control time；
+`on_feedback` 只看已提交 transition；`finalize` 取得 final clock/states。API 沒有 mutable state、next
+event、network、wall clock 或 filesystem handle。
+
+`StrategyOutputSink` 永遠可輸出 indicator；subsequent-event runner開啟 order intent；scheduled runner
+開啟 scheduled request、timer 與 cash charge。每個 callback output 先整批驗證，成功才提交；error 或
+panic 不留下 partial output。Canonical strategy parameters/output checksum 進入 run identity/evidence。
+
+## 3. Order intent、acceptance 與 causality
+
+`OrderIntent` 指定 instrument、buy/sell、positive typed quantity，以及 market 或 exact-price limit；
+time-in-force 固定為 Day（ROD）。Acceptance 驗證 universe、instrument policy、quantity unit、price、
+session、matching/new-entry restriction 與 runner capability。Order identity 綁定 strategy、callback
+origin/output sequence與可選 client/batch id。
+
+Origin event 永遠不能填入該 callback 新建的 order。Order/cash/timer output 成功提交後，execution
+owner 才建立 lifecycle transition；fill、cancel、expiry 等 transition 提交後才送 feedback，feedback
+不能改寫既有 order 或 ledger。
+
+## 4. Subsequent-event 模型
 
 `subsequent_event_v1` 是預設 policy。order 在 origin event callback 成功後建立，最早只能由同商品的後續 eligible event 填入。
 
@@ -24,7 +64,7 @@ scheduled simulator 將最新可見交易資格與 firm depth 分開保存。`Ma
 
 同一 event 的 order 依 acceptance sequence 等版本化 allocation 規則處理，避免重複消耗有限 evidence。
 
-## 3. Scheduled visible-depth 模型
+## 5. Scheduled visible-depth 模型
 
 `scheduled_visible_depth_v1` 是 opt-in policy，區分：
 
@@ -67,13 +107,27 @@ release visible observations
 
 scheduled request 的 `activate_at` 已是最終 activation time；runner 不重複套用 order latency。
 
-## 4. Order 與 feedback
+### 5.1 為何有兩個 simulator
+
+這不是兩份 accidental state model：
+
+| Owner | Causal trigger | 必要 state |
+| --- | --- | --- |
+| `Simulator` | 同商品的後續 market event | accepted Day order、event eligibility、該 event evidence |
+| `ScheduledDepthSimulator` | control-time visibility、activation、expiry，加上後續可見 observation | scheduled/active lifecycle、visible-time book、staleness、已消耗 depth、control queue |
+
+前者是 market-event causal fill；後者必須在沒有新 market event 時也能於 control time activate/expire，
+並追蹤 latency 後可見的五檔。把 replay time 與 control time 合併會破壞 no-look-ahead；因此保留兩個
+simulator 是 intrinsic semantics。Acceptance/restriction/fill settlement/accounting 等共同 policy仍由
+`execution-sim` 擁有，不由 runner 複製。
+
+## 6. Order status、fill 與 feedback
 
 order identity 連結 strategy、origin occurrence、output sequence 與可選 client/batch id。狀態依 policy 可能包含 scheduled、active、filled、partially filled、match attempted、expired、cancelled 或 rejected。
 
 fill 保存 order、trigger event/control action、price、quantity、slippage、evidence 與 allocation identity。simulation feedback 只在 order/fill transition 提交後傳給 strategy；feedback callback 不能改寫既有 order 或 ledger。
 
-## 5. Instrument economics
+## 7. Instrument economics
 
 每個 instrument 需明確提供：
 
@@ -84,7 +138,7 @@ fill 保存 order、trigger event/control action、price、quantity、slippage�
 
 equity、futures 與 options 使用分開的 accounting model。options premium 依 `price × economic quantity × multiplier` 移動 cash；futures 依其模型計算 position 與 P&L。無法確認 economics 時拒絕執行，不套用猜測 default。
 
-### 5.1 Economics boundary
+### 7.1 Economics boundary
 
 設定與 runtime 的責任保持單向轉換：
 
@@ -104,7 +158,7 @@ terms，是為了在 planner 驗證來源 reference 與執行 economics 一致�
 constructor 仍做 defensive validation，避免公開 crate API 被繞過 config/planner 後留下 invalid
 state。
 
-## 6. Fee 與 tax
+## 8. Fee 與 tax
 
 charge model 支援：
 
@@ -117,7 +171,7 @@ charge model 支援：
 
 每筆 fill 另保存該次造成的 `fee_delta` 與 `tax_delta`，並以 instrument fill sequence 固定順序。當沖資格在後續反向成交才成立時，系統會在該筆 fill 記錄負的 `tax_delta` 返還先前多計稅額；這是 deterministic adjustment，不代表負稅率。
 
-## 7. Ledger 與績效
+## 9. Ledger 與績效
 
 ledger 原子更新：
 
@@ -134,7 +188,7 @@ marking 使用 plan 中版本化 policy，預設以最後可觀察 mark；midpoi
 
 Scheduled backtest 會發布 `fill-costs.json` 與 `cash-charges.json`，兩者皆使用 exact decimal atoms 並附獨立 checksum。`fill-costs.json` 與 fills 必須一對一；cash charge identity 重複、筆數不一致或 checksum 損壞都不能發布 successful run。
 
-## 8. 可重現與限制揭露
+## 10. 可重現與限制揭露
 
 run identity 保存 fill model、quantity policy、allocation、latency、scheduled policy、depth、staleness、slippage、charges、accounting、marking 與 economics。相同輸入與版本必須產生相同 orders、fills、feedback 與 ledger。
 

@@ -1,6 +1,21 @@
 # 驗證
 
-## Repository checks
+本頁定義 current repository 與 release acceptance commands；不保存一次性 migration log 或外部
+user-owned payload identity。
+
+## Rust quality gates
+
+```sh
+cargo fmt --all --check
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
+```
+
+只有 command 實際以 exit 0 完成才可宣稱 PASS。Focused crate tests 可先跑，但不能取代 final workspace
+gate。
+
+## Synthetic fixtures 與 acceptance tooling
 
 ```sh
 python3 tools/acceptance/generate_synthetic_fixtures.py
@@ -9,48 +24,54 @@ tools/acceptance/verify_compact_fixtures.sh
 tools/acceptance/verify_fixture_bundle.sh \
   --bundle . \
   --manifest fixtures/smoke/manifest.yaml
-tools/release/verify_license.sh
 python3 -m unittest discover -s tools/acceptance -p 'test_*.py'
-cargo fmt --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+tools/release/verify_license.sh
 ```
 
-compact fixture verifier 檢查 synthetic provenance、market/instrument matrix、JSONL shape、時間欄位、檔案大小、manifest path 與 checksum。所有 committed scenarios 都標示 `complete_day: false`，不作為完整市場資料代表。
+Generator 後 fixtures 必須無 diff，證明 committed outputs 可重現。Compact verifier 檢查 synthetic
+provenance、market/instrument matrix、JSONL shape、timestamps、size、manifest path 與 checksum。
+Committed scenarios 都是 `complete_day: false`，只固定 contract cases，不代表完整市場日。
 
-## Stability 驗證邊界
+`source_partition.py` 驗 provider-neutral partition integrity；`stability_lifecycle.py` 驗 neutral
+observations；market adapter另由 wire conformance checker（例如 `verify_teralion_stability.py`）驗證。
+詳細工具參數見 [`tools/acceptance/README.md`](../../tools/acceptance/README.md)。
 
-`source_partition.py` 驗證通用 partition integrity，`stability_lifecycle.py` 驗證 provider-neutral observations 的生命週期；兩者的 unit tests 包含合法序列與拒絕案例。各 adapter 的 wire conformance 另外驗證，例如 `verify_teralion_stability.py`。Adapter certification 不取代 domain isolation、execution eligibility 或 Alpha 新舊策略語意差異驗證。執行方式見 [acceptance tooling](../../tools/acceptance/README.md)。
+## Fresh offline smoke
 
-## 2026-09-14 migration 驗收記錄
+先 build release CLI 與 fixture helper：
 
-核心 revision `964831b2dfc2baab0a6eafa801e1cbffd1bb274d` 通過 320 項 workspace tests、
-fmt、Clippy、四個 benchmarks 的 checksum assertions 與 clean-machine smoke。
-TWSE 3026／TPEx 2948 的 2026-08-10 verified partitions 分別為：
+```sh
+cargo build --release --locked -p osmium-cli --bin osmium
+cargo build --release --locked \
+  --manifest-path tools/acceptance/osmium_fixture_data/Cargo.toml
+```
 
-- `44a8468b3056485a0e5009bb11cb04cf63cd7d47d76770344cc9d02277beee67`
-- `d55cba9ce2e2d833f5227993bfd5b0dfdb7ad324d7d584bdefd3e6e120ad649d`
-
-相同 source 完成 cache v3 rebuild／reuse、3,403 events replay、4 orders／4 fills backtest 與 inspect。
-Event checksum 為 `6ef7cd0bf7bcfb6b7cb976d5cf458308d7cf19416ab1ca65b8337faa576a63ed`；
-final-state checksum 為 `b16d7f36ded1dd6bc191a78bc510f7f5632be4cd9cebf6f1021b8123a65407d0`。
-Source revisions 未變；raw payload 與 run artifacts 由使用者於 repository 外保存。
-
-Alpha 正式 git pin 的 53 tests、fmt、Clippy 通過。TWSE Up、TPEx Up 與 synthetic Down
-完成 production strategy／runner differential；僅 firm isolation、市價委託量表示與版本化 checksums
-屬預期差異。完整 runner 財務比較使用明確的 synthetic clean-fill overlay，不代表真實完整日績效；
-每版本重跑 trace 相同。一次性 harness 保留於 Alpha revision `7e51dce`，Lab 匯出工具與歷史
-計畫保留於 `4ec928f`；日常回歸由目前 workspace tests 與 adapter verifier 負責。
-
-## Smoke flow
-
-CI 使用 `examples/smoke.yaml` 與 `fixtures/smoke/` 準備 source/cache，再於無 credential 環境執行：
+使用 `examples/smoke.yaml` 與 `fixtures/smoke/` 在新的 temporary data/output roots 執行：
 
 ```text
-data verify -> cache prepare -> replay -> backtest -> inspect
+config check
+→ plan
+→ data verify
+→ cache prepare
+→ replay
+→ backtest
+→ inspect
 ```
 
-`examples/smoke-example-strategy.yaml` 另驗證 compiled strategy registry、materialized parameters、order、fill 與 `strategy.json` publication。
+移除 `TERALION_API_KEY` 後執行，證明 source 完成後不需 network/credential。
+`examples/smoke-example-strategy.yaml` 另驗 compiled registry、materialized parameters、order/fill 與
+`strategy.json`。若文件將 `run` 列為 user workflow，也必須在 fresh root測一次有效 `run`。
+
+Determinism 以同一 final version、config、source 與 clean derived roots重跑，event、final-state、
+strategy output、ledger/run checksums 應一致。Version/mapping identity故意改變時，不能只更新 expected
+checksum；需先證明 change 是 identity/semantics預期結果，再建立新 baseline。
+
+## Documentation checks
+
+- 執行 current `osmium --help`、`version` 與各 command `--help` 核對 command/flags。
+- 驗證 Markdown relative links、source path、example config path 與 cross-reference 存在。
+- 搜尋 stale API/version/removed interface 名稱；historical changelog 不視為 current contract。
+- Docs-only change必須確認 `git diff -- crates` 與 Cargo manifests/lockfile為空。
 
 ## Release archive
 
@@ -63,8 +84,12 @@ SOURCE_DATE_EPOCH=0 tools/release/verify_reproducibility.sh \
   --output target/release-repro
 ```
 
-archive 驗證涵蓋 checksum、inventory、SBOM、third-party licenses、離線安裝與 smoke。archive 不得包含 `.env`、credential、`data_root`、raw market payload、`target/` 內容或未授權資料。
+Archive checks涵蓋 inventory、SHA-256、SBOM、third-party licenses、offline installation 與 smoke。
+Archive 不得含 `.env`、credential、user data root、raw market payload、unrelated `target/` files 或
+未授權資料。
 
 ## 外部完整日驗證
 
-需要完整交易日證據時，在 repository 外的 user-owned、authorized `data_root` 執行相同 verify/cache/replay/backtest gates。credential、授權文件、完整日 payload 與受限報告不提交至 repository 或 binary archive。
+需要完整日證據時，在 repository 外的 authorized user-owned data root執行相同
+verify/cache/replay/backtest gates。Credential、license entitlement、完整日 payload 與受限報告不提交
+repository 或 release archive。

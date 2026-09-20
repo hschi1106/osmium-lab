@@ -1,37 +1,50 @@
-# osmium-lab 文件
+# Osmium Lab 文件地圖
 
-本目錄記錄 `osmium-lab` 的產品範圍、現行架構、資料介面與操作方式。文件以目前發布版本的實作為準，不記錄開發里程碑或已淘汰的設計過程。
+正式文件描述目前 release contract；設計取捨以 code、tests 與
+[`traceability.yaml`](traceability.yaml) 對照。請依角色閱讀，避免從 provider 文件推導 core
+語義，或從操作手冊推導架構 ownership。
 
-## 開始使用
+## 第一次使用 Osmium
 
-- [快速開始](quickstart.md)：從設定檢查到離線回測的最短流程。
-- [使用指南](user-guide.md)：資料生命週期、策略整合與常見問題。
-- [設定參考](config-reference.md)：`config_version: 3` 的欄位與驗證規則。
-- [CLI 參考](operations/cli.md)：命令、副作用、輸出格式與 exit status。
+1. [Repository README](../README.md)：產品能力、限制與五分鐘 happy path。
+2. [使用指南](user-guide.md)：從 build、資料準備到 backtest artifacts 的完整流程。
+3. [RunConfig 參考](config-reference.md)：設定欄位、defaults 與 validation。
+4. [CLI 參考](operations/cli.md)：command、flags、output 與 error contract。
+5. [本地資料](operations/local-data.md)：source/cache layout、狀態與復原。
 
-## 產品與架構
+Release archive 使用者可先讀[獨立 quickstart](quickstart.md)；它只依賴 archive 內附的 binary、
+example 與操作文件。
 
-- [產品需求](product-requirements.md)：產品範圍、必要行為與驗收原則；為本專案的需求基準。
-- [架構總覽](architecture/overview.md)：元件責任、依賴方向與線上／離線邊界。
-- [資料流程與儲存](architecture/data-flow.md)：source、cache 與 run artifact 的生命週期。
-- [回播模型](architecture/replay-model.md)：domain event、排序、session、MarketState 與策略 callback。
-- [模擬與帳務](architecture/execution-model.md)：委託、成交證據、排程模型與帳務限制。
+## Strategy developer
 
-## 資料介面
+1. [使用指南：Strategy 開發](user-guide.md#strategy-開發)：compiled registration 與範例。
+2. [執行與帳務模型](architecture/execution-model.md)：callbacks、orders、fills、latency 與 accounting。
+3. [`example-strategy`](../crates/example-strategy/src/lib.rs)：canonical compiled example。
+4. [授權](operations/licensing.md)：Strategy Linking Exception 與 core 邊界。
 
-- [Teralion Feed Archive](interfaces/teralion.md)
-- [TWSE](interfaces/twse.md)
-- [TPEx](interfaces/tpex.md)
-- [TAIFEX](interfaces/taifex.md)
+## Core／architecture developer
 
-## 操作與維護
+1. [產品需求](product-requirements.md)：scope 與 correctness firewall。
+2. [架構總覽](architecture/overview.md)：元件 ownership 與依賴方向。
+3. [資料流程](architecture/data-flow.md)：source、cache、lineage 與 artifacts。
+4. [回播模型](architecture/replay-model.md)：DomainEvent、observation、auction 與 MarketState。
+5. [執行與帳務模型](architecture/execution-model.md)：strategy、execution 與 reconciliation。
+6. [ADR-0006](architecture/decisions/0006-external-strategies-and-cash-charges.md)：外部 strategy 與 cash charge 邊界。
 
-- [本地資料](operations/local-data.md)：目錄結構、狀態、檢查與復原。
-- [驗證](operations/validation.md)：repository checks、smoke test 與 release archive 驗證。
-- [發布](operations/release.md)：發布內容與部署前提。
-- [授權](operations/licensing.md)：AGPL-3.0-only、Strategy Linking Exception 與資料邊界。
-- [支援政策](operations/support.md)：支援邊界與問題分級。
-- [追溯矩陣](traceability.yaml)：需求、實作與驗證入口。
-- [詞彙表](glossary.md)
+## Provider／market-data developer
 
-外部資料格式連結是介面判讀參考；實際支援範圍仍以 normalizer、fixture 與測試固定的契約為準。
+1. [Teralion adapter contract](interfaces/teralion.md)：network、credential、source 與 mapping identity。
+2. [TWSE mapping](interfaces/twse.md)、[TPEx mapping](interfaces/tpex.md)、
+   [TAIFEX mapping](interfaces/taifex.md)：market-specific wire evidence 與 reject 規則。
+3. [資料流程](architecture/data-flow.md)：verified source 與 cache publication。
+4. [回播模型](architecture/replay-model.md)：provider-neutral event semantics。
+
+## Operations／release maintainer
+
+1. [CLI 參考](operations/cli.md)與[本地資料](operations/local-data.md)。
+2. [驗證](operations/validation.md)：repository、fixture、offline smoke 與 docs checks。
+3. [發布](operations/release.md)：archive contract 與 release steps。
+4. [支援](operations/support.md)與[授權](operations/licensing.md)。
+
+共通詞彙見[詞彙表](glossary.md)。外部資料格式連結只作來源判讀參考；實際支援範圍由 current
+normalizer、fixture 與 tests 固定。

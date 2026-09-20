@@ -84,11 +84,15 @@ TAIFEX after-hours segment 可以跨日，但仍歸屬 planner 指定的 trading
 `market_order_quantity`。後者保存交易所用零 wire price 表達的市價委託聚合量，不是價格；
 best bid／ask、mark、slippage 與 execution depth 只讀取 priced levels。
 
-`Observation` 的更新規則：
+`Observation<T>` 的更新規則：
 
 - `NoObservation`：保留既有 field。
 - `Set(value)`：以目前 event 與 value 取代。
-- 明確 unknown：保存 unknown reason，不推定 value。
+- `Clear`：來源明確移除可用值，state 記錄 unavailable。
+- `Unknown(raw)`：來源明確使既有 knowledge 失效並保存 raw reason，不推定 value。
+
+因此 `NoObservation != Unknown != Known(false)`：沒有新觀察、知道舊知識已失效、以及明確觀察到
+false 是三種不同事實。
 
 `QuoteSnapshot` 更新完整 firm book，並依 observation 更新 firm trade 與 volume；`BookSnapshot`
 取代 firm book。`TradeBatch` 更新最近正式成交與可用 cumulative volume，不修改 book。
@@ -96,18 +100,66 @@ best bid／ask、mark、slippage 與 execution depth 只讀取 priced levels。
 成交，因此保留既有 firm book／trade。`IndicativeAuction` 只更新獨立的試算欄位與
 `AuctionCollecting` signal，不建立實際成交，也不覆寫 firm book／trade／volume。
 
-reducer 對 `MarketSignal` 的規則固定且不看 wall clock：`Continuous` 結束既有 auction
-context；`AuctionCollecting` 更新同一輪 observation；repeated `delayed=true` 只是
-reassertion，不產生 round counter；`AuctionUncross` 依 purpose 將 post-state 設為
-continuous、closed 或下一個 periodic auction。`Closed` 保留最後 firm observation。session
-boundary 可依 `Carry` 或 `ResetObservableFields` 清除 auction context；`NoObservation`
-保留既有 signal，`Unknown` 則保留 unknown，不推測 continuous。
+### 4.1 Auction evidence 與 round lifecycle
+
+`AuctionObservation` 的 `purpose`、`delayed`、`disposal`、`direction` 各自使用
+`AuctionEvidence<T>`：
+
+| Same-round input | Resolved evidence |
+| --- | --- |
+| `NoObservation` | retain previous field |
+| `Known(value)` | replace/reassert field |
+| `Unknown` | invalidate previous knowledge |
+
+`AuctionCollecting` 更新同一輪 partial evidence。Repeated `delayed=Known(true)` 只是 reassertion，
+不建立 round counter。Unclassified trial 不會被時間或頻率猜成 `Periodic`；purpose unknown 時，
+direction 等獨立 evidence 仍可保留。
+
+`AuctionUncross` 同時是「本次 round result event」與 lifecycle boundary。Reducer 必須先 resolve 本輪
+evidence，讓本 event 的 matching/context 看見正確 call-auction result，再建立 post-event state。兩者
+不能混為同一物件：
+
+```text
+round N state:
+  purpose  = Periodic
+  delayed  = true
+  disposal = true
+        ↓ AuctionUncross
+current result event / matching context:
+  purpose  = Periodic
+  delayed  = true          # 本輪已 resolved 的結果
+  matching = CallAuction
+        ↓ reducer post-state
+round N+1 state:
+  purpose  = Periodic
+  delayed  = false         # 新一輪預設尚未 delayed
+  disposal = true          # 有效 instrument/day evidence 可延續
+        ↓ explicit delay trigger
+round N+1 state:
+  delayed  = true
+```
+
+新一輪的 `delayed` 是 `Known(false)`，不是 `NoObservation`；上一輪 direction 等 transient evidence
+不會無條件帶入。其他已知 purpose 的 boundary：
+
+| Uncross purpose | Current event matching | Post-event `MarketPhase` |
+| --- | --- | --- |
+| `Opening` | `CallAuction` | `Continuous` |
+| `Closing` | `CallAuction` | `Closed` |
+| `Periodic` | `CallAuction` | next `Auction(Periodic, delayed=false)` |
+| `VolatilityInterruption` | `CallAuction` | `Continuous` |
+| unknown / no purpose evidence | auction event，但不可推定後態 | `Unknown` |
+
+`Continuous` 結束既有 auction context；`Closed` 保留最後 firm observation。Session boundary 可依
+`Carry` 或 `ResetObservableFields` 清除 observable/auction context；目前 CLI runner 在每個 planned
+segment 使用 `ResetObservableFields`。Top-level market signal 的 `NoObservation` 保留前態，
+`Unknown` 不推測為 continuous。
 
 reducer 先驗證整個 transition，再一次提交。非法價格、數量單位、時間倒退或 cumulative-volume policy 違反時，state 不變。strategy 取得的 `MarketStateView` 沒有 mutation API。
 
 reducer 支援 carry 與 reset boundary policy；目前 CLI runner 對每個 planned segment 使用 `ResetObservableFields`，在下一 segment 首個 event 前重設 observable fields。
 
-### 4.1 Market background audit
+### 4.2 Market background contract
 
 回播不建立額外的 `MarketBackground` 或 instrument-day profile。各欄位的 production source 如下：
 
@@ -143,20 +195,11 @@ fill eligibility 改成 continuous；下一個 event 才讀取 post-state。Warm
 更新 state 並呼叫 strategy，但不作正式 fill；CoolDown 不接受新 order 或 fill。origin event
 永遠不能填入該 callback 新建的 order。
 
-## 6. Strategy lifecycle
+## 6. Strategy visibility boundary
 
-```text
-resolve factory and parameters
-  -> initialize
-  -> session / timer / event callbacks
-  -> commit callback output
-  -> simulation feedback callbacks
-  -> finalize
-```
-
-`StrategyEventContext` 提供目前 occurrence、event、selected state、所有 universe states、TradingContext、session context 與 decision time。所有 state 都是 post-event read-only view；universe states 由 `ReplayStateViews` 直接唯讀遍歷 replay core 的 deterministic state map，不在每個 callback 建立暫存 `Vec`。API 不提供 next-event 或 future-state access。
-
-`StrategyOutputSink` 的 indicator、order intent、scheduled request 與 timer 依 runner capability 開放。callback 成功才提交 output；error 或 panic 使 run failed。strategy parameter 與 output 使用 canonical encoding，以固定 identity 參與重現性檢查。
+Replay 只保證 callback 看見目前 event 已 atomic commit 後的 read-only state，以及 deterministic
+universe state order；API 不提供 next event 或 future state。Strategy lifecycle、output capabilities、
+orders 與 feedback 的 canonical contract 見[執行與帳務模型](execution-model.md#2-strategy-lifecycle)。
 
 ## 7. 版本 identity
 
@@ -177,4 +220,4 @@ run manifest v4 的 `versions` 保存 event／canonical event、MarketState／re
 
 其他直接影響 replay 的 identity 包含 normalizer mapping、ordering rule、session calendar/profile/window、replay plan、MarketState reducer 與 canonical checksum version。任何不相容內容都需拒絕；cache 可由 compatible verified source 重建。
 
-來源格式的具體 mapping 見 [介面文件](../README.md#資料介面)。
+來源格式的具體 mapping 見[Teralion 介面](../interfaces/teralion.md)及其市場文件連結。

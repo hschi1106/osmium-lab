@@ -112,7 +112,7 @@ capability_matrix:
       status: model_scope
       production_owner: [crates/providers/teralion, crates/market-state, crates/osmium-cli, crates/execution-sim]
       evidence:
-        - crates/providers/teralion/tests/twse_m5_warrant_fixture.rs
+        - crates/providers/teralion/tests/twse_m5_fixture.rs
         - crates/providers/teralion/tests/twse_normalizer.rs
       limitation: uses EquityV1; warrant-specific exchange matching is out of scope
     - id: MARKET-TPEX-EQUITY
@@ -168,7 +168,7 @@ capability_matrix:
       claim: periodic auction and disposal observation
       status: supported
       production_owner: [crates/market-types, crates/market-state, crates/providers/teralion]
-      evidence: [crates/market-state/tests/neutral_signal.rs#periodic_uncross_keeps_the_next_periodic_auction_and_repeated_delay_has_no_counter, crates/providers/teralion/tests/production_market_path.rs]
+      evidence: [crates/market-state/tests/neutral_signal.rs#periodic_uncross_resets_delay_for_next_round_and_reasserts_after_explicit_trigger, crates/providers/teralion/tests/production_market_path.rs]
       limitation: disposal is only source-supported event evidence; no instrument-day background lookup
     - id: STATE-VI
       claim: volatility interruption
@@ -363,13 +363,13 @@ capability_matrix:
 requirements:
   DATA-01:
     implementation:
-      - crates/data-sync/src/query.rs
-      - crates/data-sync/src/cursor.rs
-      - crates/data-sync/src/sync.rs
-      - crates/data-sync/src/transport.rs
+      - crates/providers/teralion/src/query.rs
+      - crates/providers/teralion/src/cursor.rs
+      - crates/providers/teralion/src/sync.rs
+      - crates/providers/teralion/src/transport.rs
     verification:
-      - crates/data-sync/src/cursor.rs
-      - crates/data-sync/src/sync.rs
+      - crates/providers/teralion/src/cursor.rs
+      - crates/providers/teralion/src/sync.rs
   DATA-02:
     implementation:
       - crates/data-sync/src/storage.rs
@@ -399,7 +399,7 @@ requirements:
       - crates/providers/teralion/src/tpex.rs
       - crates/providers/teralion/src/taifex.rs
     verification:
-      - crates/market-types/tests/domain_events.rs
+      - crates/market-types/tests/event_codec.rs
       - crates/providers/teralion/tests/twse_normalizer.rs
       - crates/providers/teralion/tests/tpex_normalizer.rs
       - crates/providers/teralion/tests/taifex_fixtures.rs
@@ -477,11 +477,11 @@ requirements:
     verification: [crates/replay-engine/tests/replay.rs]
   NFR-03:
     implementation:
-      - crates/data-sync/src/query.rs
+      - crates/providers/teralion/src/query.rs
       - crates/osmium-config/src/lib.rs
       - crates/osmium-runner/src/artifacts.rs
     verification:
-      - crates/data-sync/src/query.rs
+      - crates/providers/teralion/src/query.rs
       - crates/osmium-config/src/lib.rs
       - crates/osmium-runner/src/artifacts.rs
 
