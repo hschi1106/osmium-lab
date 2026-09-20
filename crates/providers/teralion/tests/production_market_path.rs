@@ -24,7 +24,7 @@ fn date() -> TradingDate {
 
 fn normalizer() -> TwseNormalizer {
     TwseNormalizer::new(
-        NormalizerConfig::new(
+        NormalizerConfig::twse(
             instrument(),
             date(),
             MatchTime::parse("2026-07-27T08:55:00+08:00").unwrap(),

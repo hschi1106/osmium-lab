@@ -30,7 +30,7 @@ fn synthetic_regular_fixture_normalizes_offline() {
             .map(Result::unwrap)
     });
     let normalizer = TpexNormalizer::new(
-        NormalizerConfig::new(
+        NormalizerConfig::tpex(
             InstrumentId::new(MarketId::Tpex, Symbol::new("SYNTH-TPEX-EQ").unwrap()),
             TradingDate::parse("2026-07-20").unwrap(),
             MatchTime::parse("2026-07-20T08:55:00+08:00").unwrap(),

@@ -394,6 +394,7 @@ requirements:
   REPLAY-01:
     implementation:
       - crates/market-types/src/event.rs
+      - crates/providers/teralion/src/equity_quote.rs
       - crates/providers/teralion/src/twse.rs
       - crates/providers/teralion/src/tpex.rs
       - crates/providers/teralion/src/taifex.rs

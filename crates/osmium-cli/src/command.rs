@@ -897,7 +897,6 @@ pub enum CommandError {
     Simulation(execution_sim::SimulationError),
     ScheduledSimulation(execution_sim::ScheduledSimulationError),
     Accounting(execution_sim::AccountingError),
-    Backtest(osmium_runner::BacktestError),
     MultiBacktest(osmium_runner::MultiBacktestError),
     Artifact(osmium_runner::ArtifactError),
     Io(std::io::Error),
@@ -931,8 +930,7 @@ impl CommandError {
             Self::Provider(_) | Self::Partition(_) => ExitCategory::Source,
             Self::CacheBuild(_) | Self::CacheRead(_) | Self::CacheMissing => ExitCategory::Cache,
             Self::Replay(_) => ExitCategory::Replay,
-            Self::Backtest(_)
-            | Self::MultiBacktest(_)
+            Self::MultiBacktest(_)
             | Self::Simulation(_)
             | Self::ScheduledSimulation(_)
             | Self::Accounting(_) => ExitCategory::Simulation,
@@ -970,7 +968,6 @@ convert!(Strategy, strategy_api::DeclarationError);
 convert!(Simulation, execution_sim::SimulationError);
 convert!(ScheduledSimulation, execution_sim::ScheduledSimulationError);
 convert!(Accounting, execution_sim::AccountingError);
-convert!(Backtest, osmium_runner::BacktestError);
 convert!(MultiBacktest, osmium_runner::MultiBacktestError);
 convert!(Artifact, osmium_runner::ArtifactError);
 convert!(Partition, data_sync::PartitionRepositoryError);

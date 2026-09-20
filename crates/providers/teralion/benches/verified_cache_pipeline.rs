@@ -149,7 +149,7 @@ fn main() {
         .publish(query.identity(), source_report.terminal)
         .unwrap();
 
-    let normalizer = teralion_provider::twse::NormalizerConfig::new(
+    let normalizer = teralion_provider::twse::NormalizerConfig::twse(
         instrument.clone(),
         date,
         MatchTime::parse("2026-07-20T08:55:00+08:00").unwrap(),

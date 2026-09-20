@@ -239,10 +239,10 @@ liquidity 已被重建。
 
 | market／instrument | production path | regression evidence | 實際 execution／accounting claim |
 | --- | --- | --- | --- |
-| TWSE equity | `TwseNormalizer` → `twse_regular` → `EquityV1` | `crates/providers/teralion/tests/twse_full_fixture.rs`、`crates/osmium-runner/src/lib.rs#multi_market_backtest_reconciles_equity_and_option_economics` | 模型支援；quantity 為 `TradingUnit` |
-| TWSE warrant | `TwseNormalizer::new_warrant` → `twse_warrant` → `EquityV1` | `crates/providers/teralion/tests/twse_m5_warrant_fixture.rs`、`crates/providers/teralion/tests/twse_normalizer.rs` | 模型支援；沿用 equity accounting，不宣稱 warrant-specific exchange matching |
-| TPEx equity | `TpexNormalizer` → `tpex_regular` → `EquityV1` | `crates/providers/teralion/tests/tpex_full_fixture.rs`、`crates/providers/teralion/tests/tpex_normalizer.rs` | 模型支援；quantity 為 `TradingUnit` |
-| TPEx warrant | `TpexNormalizer::new_warrant` → `tpex_warrant` → `EquityV1` | `crates/providers/teralion/tests/tpex_m5_warrant_fixture.rs`、`crates/providers/teralion/tests/tpex_normalizer.rs` | 模型支援；沿用 equity accounting，不宣稱 warrant-specific exchange matching |
+| TWSE equity | `QuoteNormalizer`（TWSE profile）→ `twse_regular` → `EquityV1` | `crates/providers/teralion/tests/twse_full_fixture.rs`、`crates/osmium-runner/src/lib.rs#multi_market_backtest_reconciles_equity_and_option_economics` | 模型支援；quantity 為 `TradingUnit` |
+| TWSE warrant | `QuoteNormalizer`（TWSE warrant profile）→ `twse_warrant` → `EquityV1` | `crates/providers/teralion/tests/twse_m5_warrant_fixture.rs`、`crates/providers/teralion/tests/twse_normalizer.rs` | 模型支援；沿用 equity accounting，不宣稱 warrant-specific exchange matching |
+| TPEx equity | `QuoteNormalizer`（TPEx profile）→ `tpex_regular` → `EquityV1` | `crates/providers/teralion/tests/tpex_full_fixture.rs`、`crates/providers/teralion/tests/tpex_normalizer.rs` | 模型支援；quantity 為 `TradingUnit` |
+| TPEx warrant | `QuoteNormalizer`（TPEx warrant profile）→ `tpex_warrant` → `EquityV1` | `crates/providers/teralion/tests/tpex_m5_warrant_fixture.rs`、`crates/providers/teralion/tests/tpex_normalizer.rs` | 模型支援；沿用 equity accounting，不宣稱 warrant-specific exchange matching |
 | TAIFEX future | `TaifexNormalizer::new_futures` → `taifex_futures` → `FuturesV1` | `crates/providers/teralion/tests/taifex_fixtures.rs`、`crates/osmium-runner/src/lib.rs#multi_backtest_isolates_instruments_and_respects_latency` | 模型支援；multiplier、contract shape 與 session profile 必須明確 |
 | TAIFEX option | `TaifexNormalizer::new_options` → `taifex_options` → `OptionsV1` | `crates/providers/teralion/tests/taifex_m5_option_fixture.rs`、`crates/execution-sim/src/accounting.rs#options_v1_moves_premium_cash_with_contract_multiplier`、`crates/osmium-runner/src/lib.rs#multi_market_backtest_reconciles_equity_and_option_economics` | 模型支援；premium cash 使用 `price × quantity × multiplier` |
 

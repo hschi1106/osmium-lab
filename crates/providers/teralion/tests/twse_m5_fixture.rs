@@ -35,7 +35,7 @@ fn fixture_lines() -> Vec<String> {
 
 fn warrant_normalizer() -> TwseNormalizer {
     TwseNormalizer::new(
-        NormalizerConfig::new_warrant(
+        NormalizerConfig::twse_warrant(
             InstrumentId::new(MarketId::Twse, Symbol::new("SYNTH-TWSE-W").unwrap()),
             TradingDate::parse("2026-07-20").unwrap(),
             MatchTime::parse("2026-07-20T08:55:00+08:00").unwrap(),
@@ -101,7 +101,7 @@ fn m5_warrant_profile_rejects_wrong_market_and_equity_profile_rejects_warrant_fo
     ));
 
     let equity = TwseNormalizer::new(
-        NormalizerConfig::new(
+        NormalizerConfig::twse(
             InstrumentId::new(MarketId::Twse, Symbol::new("SYNTH-TWSE-W").unwrap()),
             TradingDate::parse("2026-07-20").unwrap(),
             MatchTime::parse("2026-07-20T08:55:00+08:00").unwrap(),

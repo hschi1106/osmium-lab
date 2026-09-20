@@ -30,7 +30,7 @@ fn synthetic_regular_fixture_normalizes_offline() {
             .map(Result::unwrap)
     });
     let normalizer = TwseNormalizer::new(
-        NormalizerConfig::new(
+        NormalizerConfig::twse(
             InstrumentId::new(MarketId::Twse, Symbol::new("SYNTH-TWSE-EQ").unwrap()),
             TradingDate::parse("2026-07-20").unwrap(),
             MatchTime::parse("2026-07-20T08:55:00+08:00").unwrap(),

@@ -206,6 +206,36 @@ fn auction_evidence_roundtrips_without_collapsing_missing_or_unknown_fields() {
         )
         .is_none()
     );
+
+    let partial = AuctionObservation::from_parts(
+        AuctionEvidence::Unknown,
+        AuctionEvidence::NoObservation,
+        AuctionEvidence::NoObservation,
+        AuctionEvidence::Known(VolatilityDirection::Down),
+    )
+    .expect("partial fields may retain direction while purpose is unknown");
+    let partial_event = DomainEvent::new(
+        InstrumentId::new(MarketId::Twse, Symbol::new("A").unwrap()),
+        TradingDate::from_epoch_days(0).unwrap(),
+        SourceFormatId::new("X").unwrap(),
+        MatchTime::from_unix_microseconds(2),
+        None,
+        EventPayload::IndicativeAuction(
+            IndicativeAuction::new(
+                partial,
+                Observation::NoObservation,
+                Observation::NoObservation,
+                Observation::NoObservation,
+                Observation::NoObservation,
+                MarketAnnotations::None,
+            )
+            .unwrap(),
+        ),
+    );
+    assert_eq!(
+        DomainEvent::from_canonical_bytes(&partial_event.to_canonical_bytes().unwrap()).unwrap(),
+        partial_event
+    );
 }
 
 #[test]

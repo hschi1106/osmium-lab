@@ -10,7 +10,7 @@ use teralion_provider::twse::{
 
 fn normalizer() -> TwseNormalizer {
     TwseNormalizer::new(
-        NormalizerConfig::new(
+        NormalizerConfig::twse(
             InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap()),
             TradingDate::parse("2026-07-27").unwrap(),
             MatchTime::parse("2026-07-27T08:55:00+08:00").unwrap(),

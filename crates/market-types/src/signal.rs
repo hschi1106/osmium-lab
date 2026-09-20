@@ -111,9 +111,11 @@ impl AuctionObservation {
         direction: AuctionEvidence<VolatilityDirection>,
     ) -> Option<Self> {
         if matches!(direction, AuctionEvidence::Known(_))
-            && !matches!(
+            && matches!(
                 purpose,
-                AuctionEvidence::Known(AuctionPurpose::VolatilityInterruption)
+                AuctionEvidence::Known(
+                    AuctionPurpose::Opening | AuctionPurpose::Closing | AuctionPurpose::Periodic
+                )
             )
         {
             return None;

@@ -10,7 +10,7 @@ use teralion_provider::tpex::{
 
 fn normalizer() -> TpexNormalizer {
     TpexNormalizer::new(
-        NormalizerConfig::new(
+        NormalizerConfig::tpex(
             InstrumentId::new(MarketId::Tpex, Symbol::new("6488").unwrap()),
             TradingDate::parse("2026-07-20").unwrap(),
             MatchTime::parse("2026-07-20T08:55:00+08:00").unwrap(),
@@ -22,7 +22,7 @@ fn normalizer() -> TpexNormalizer {
 
 fn warrant_normalizer() -> TpexNormalizer {
     TpexNormalizer::new(
-        NormalizerConfig::new_warrant(
+        NormalizerConfig::tpex_warrant(
             InstrumentId::new(MarketId::Tpex, Symbol::new("6488").unwrap()),
             TradingDate::parse("2026-07-20").unwrap(),
             MatchTime::parse("2026-07-20T08:55:00+08:00").unwrap(),
@@ -495,6 +495,49 @@ fn realtime_pair_is_grouped_by_match_time_and_emits_trade_then_quote() {
         panic!("expected final quote second")
     };
     assert_eq!(snapshot.cumulative_volume().as_set().unwrap().value(), 12);
+}
+
+#[test]
+fn realtime_group_rejects_mixed_trial_state_across_all_intermediates() {
+    let match_time = "2026-07-20T09:28:49.274622+08:00";
+    let continuous = quote(
+        "STOCK_REALTIME",
+        match_time,
+        true,
+        ("[]", "[]"),
+        r#"{"price":100,"quantity":1}"#,
+        10,
+        (16, 0),
+    );
+    let trial = quote(
+        "STOCK_REALTIME",
+        match_time,
+        true,
+        ("[]", "[]"),
+        r#"{"price":101,"quantity":1}"#,
+        11,
+        (128, 0),
+    );
+    let (bids, asks) = complete_book();
+    let final_quote = quote(
+        "STOCK_REALTIME",
+        match_time,
+        false,
+        (bids, asks),
+        r#"{"price":102,"quantity":1}"#,
+        12,
+        (16, 0),
+    );
+
+    let error = normalizer()
+        .normalize_json_lines([continuous, trial, final_quote])
+        .unwrap_err();
+    assert!(matches!(
+        error.kind(),
+        NormalizationErrorKind::UnsupportedRealtimeMatchGroup(
+            RealtimeGroupError::MixedAuctionTrialState
+        )
+    ));
 }
 
 #[test]

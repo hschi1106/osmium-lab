@@ -1,4 +1,5 @@
 mod cursor;
+pub mod equity_quote;
 mod provider;
 mod query;
 mod sync;

@@ -266,11 +266,16 @@ pub fn normalizer_config_for(
     let trading_date = key.trading_date();
     let config = match profile {
         MappingProfile::TwseEquity => PartitionNormalizerConfig::Twse(
-            TwseNormalizerConfig::new(instrument, trading_date, replay_start, replay_end_exclusive)
-                .map_err(invalid_normalizer_config)?,
+            TwseNormalizerConfig::twse(
+                instrument,
+                trading_date,
+                replay_start,
+                replay_end_exclusive,
+            )
+            .map_err(invalid_normalizer_config)?,
         ),
         MappingProfile::TwseWarrant => PartitionNormalizerConfig::Warrant(
-            TwseNormalizerConfig::new_warrant(
+            TwseNormalizerConfig::twse_warrant(
                 instrument,
                 trading_date,
                 replay_start,
@@ -279,11 +284,16 @@ pub fn normalizer_config_for(
             .map_err(invalid_normalizer_config)?,
         ),
         MappingProfile::TpexEquity => PartitionNormalizerConfig::Tpex(
-            TpexNormalizerConfig::new(instrument, trading_date, replay_start, replay_end_exclusive)
-                .map_err(invalid_normalizer_config)?,
+            TpexNormalizerConfig::tpex(
+                instrument,
+                trading_date,
+                replay_start,
+                replay_end_exclusive,
+            )
+            .map_err(invalid_normalizer_config)?,
         ),
         MappingProfile::TpexWarrant => PartitionNormalizerConfig::TpexWarrant(
-            TpexNormalizerConfig::new_warrant(
+            TpexNormalizerConfig::tpex_warrant(
                 instrument,
                 trading_date,
                 replay_start,
