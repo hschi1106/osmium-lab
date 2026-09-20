@@ -1,75 +1,17 @@
 # Agent Instructions
 
-This repository is `osmium-lab`, a Rust market replay and backtesting platform. The product requirements are [docs/product-requirements.md](docs/product-requirements.md). Treat that file as the source of truth for product scope, architecture, terminology, and delivery priorities.
+`osmium-lab` 是 Rust market replay 與 backtesting platform。Domain truth 以 canonical docs 為準；不確定時從 [`docs/README.md`](docs/README.md) 導航。Code 與 tests 是 executable truth。若需求與 canonical contract 衝突，修改前先指出。
 
-## Start Here
+## Skills
 
-Before making project changes, read `docs/product-requirements.md` and align the work with it. If a requested change appears to conflict with the product requirements, call out the conflict before editing code.
+- 修改、review、debug、test 或設計 implementation／architecture：使用 `osmium-engineering`。
+- 操作既有 build 的 config、data、cache、replay、backtest 或 artifacts：使用 `osmium-operator`。
+- 操作問題若需要 Rust、architecture 或 domain semantic change，轉交 `osmium-engineering`。
 
-Use the existing workspace structure and Rust conventions. Keep changes scoped to the crate or module that owns the behavior being changed.
+## Repository rules
 
-## Repository Skills
-
-- 修改、review、debug 或重構 Osmium implementation／architecture 時，使用 `osmium-engineering`。
-- 操作既有 build、config、data、replay、backtest 或 artifacts 時，使用 `osmium-operator`。
-- 操作問題若需要修改 Rust、architecture 或 domain semantics，從 `osmium-operator` 轉交 `osmium-engineering`。
-
-## Documentation Language
-
-Write and maintain project documentation in Traditional Chinese. Keep code identifiers, API field names, commands, and established technical terms in English when that is clearer.
-
-## Change Scope
-
-Do not modify the project at large scale in a single pass. Split work into small, reviewable commits or commit-sized changes.
-
-Prefer this workflow:
-
-1. Identify the smallest useful step.
-2. Implement only that step.
-3. Run focused validation.
-4. Explain what changed and how to test it.
-5. Continue with the next step only after the previous step is clear.
-
-Avoid broad rewrites, speculative abstractions, large file moves, and unrelated formatting churn unless the user explicitly asks for them.
-
-## Spec Alignment
-
-Preserve the main architecture described in `docs/product-requirements.md`:
-
-- Verified local source data is reusable across backtests.
-- Derived replay caches are rebuildable artifacts.
-- Teralion wire format and domain events must stay separated.
-- `match_time` is the only replay time, with deterministic tie-breaking.
-- Market state is based on trades and complete five-level snapshots, without reconstructing queue position.
-- Strategies read market state but do not mutate it.
-- The replayer should open only the streams required by the strategy universe.
-
-If implementation details are not yet defined, choose the simplest design that keeps these boundaries intact.
-
-## Communication Requirements
-
-For every code or documentation change, tell the user:
-
-- What files changed.
-- What behavior, API, or documentation changed.
-- Why the change was kept to this scope.
-- How to test or inspect the change.
-
-If tests cannot be run, explain why and provide the closest manual verification step.
-
-## Validation
-
-Use focused checks first. For Rust changes, prefer:
-
-```sh
-cargo fmt --check
-cargo test
-```
-
-Use narrower commands when the change only affects one crate or module. Do not claim a change is verified unless the relevant command actually ran successfully.
-
-## Git Hygiene
-
-Respect existing user changes. Do not revert, overwrite, or clean unrelated work unless the user explicitly asks.
-
-When commits are requested, keep each commit centered on one logical change and use a message that describes the user-visible or architectural effect.
+- Project documentation 使用繁體中文；code identifiers、API fields、commands 與既有 technical terms 可保留 English。
+- 修改限於擁有該行為的 crate／module，採 small reviewable change；避免 broad rewrite、speculative abstraction、無關 formatting 或 file move。
+- 保留使用者既有變更；未經明確要求不得 revert、overwrite、clean、rebase 或 force-push。
+- 先跑與範圍相符的 focused validation；只有實際成功的 command 才能宣稱已驗證。無法執行時說明原因與最接近的 manual check。
+- Commit 維持單一 logical change。回報 changed files、behavior／docs impact、scope 理由與 verification。
