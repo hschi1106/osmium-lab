@@ -54,7 +54,7 @@ entries.each do |entry|
   abort("synthetic fixture symbol must use SYNTH- prefix") unless entry.fetch("symbol").to_s.start_with?("SYNTH-")
   abort("fixture entry must be synthetic-redistributable") unless entry["redistribution"] == "synthetic-redistributable"
   relative = entry.fetch("path").to_s
-  abort("synthetic fixture must live under fixtures/teralion: #{relative}") unless relative.start_with?("fixtures/teralion/")
+  abort("synthetic fixture must live under fixtures/providers/teralion: #{relative}") unless relative.start_with?("fixtures/providers/teralion/")
   path = safe_path(root, relative)
   abort("synthetic fixture path is missing: #{relative}") unless File.directory?(path)
   manifest_paths << relative
@@ -101,18 +101,18 @@ entries.each do |entry|
 
 end
 
-metadata_paths = Dir.glob(File.join(root, "fixtures/teralion/**/metadata.yaml")).map do |file|
+metadata_paths = Dir.glob(File.join(root, "fixtures/providers/teralion/**/metadata.yaml")).map do |file|
   Pathname.new(File.dirname(file)).relative_path_from(Pathname.new(root)).to_s
 end.sort
 abort("manifest and synthetic fixture directories differ") unless metadata_paths == manifest_paths.sort
 abort("synthetic fixture tree exceeds 10 MiB: #{total_bytes}") if total_bytes > MAX_TOTAL_BYTES
 required = [
-  "fixtures/teralion/twse/SYNTH-TWSE-EQ/2026-07-20",
-  "fixtures/teralion/twse/SYNTH-TWSE-W/2026-07-20",
-  "fixtures/teralion/tpex/SYNTH-TPEX-EQ/2026-07-20",
-  "fixtures/teralion/tpex/SYNTH-TPEX-W/2026-07-20",
-  "fixtures/teralion/taifex/SYNTH-FUT/2026-07-20",
-  "fixtures/teralion/taifex/SYNTH-OPT/2026-07-20"
+  "fixtures/providers/teralion/twse/SYNTH-TWSE-EQ/2026-07-20",
+  "fixtures/providers/teralion/twse/SYNTH-TWSE-W/2026-07-20",
+  "fixtures/providers/teralion/tpex/SYNTH-TPEX-EQ/2026-07-20",
+  "fixtures/providers/teralion/tpex/SYNTH-TPEX-W/2026-07-20",
+  "fixtures/providers/teralion/taifex/SYNTH-FUT/2026-07-20",
+  "fixtures/providers/teralion/taifex/SYNTH-OPT/2026-07-20"
 ]
 abort("synthetic fixture matrix is incomplete") unless (required - manifest_paths).empty?
 puts "synthetic_fixtures=verified entries=#{entries.length} jsonl_files=#{jsonl_files.length} records=#{total_records} bytes=#{total_bytes}"

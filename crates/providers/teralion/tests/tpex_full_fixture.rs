@@ -5,14 +5,15 @@ use std::{
 };
 
 use market_types::{
-    EventPayload, IndicativeAuctionKind, InstrumentId, MarketId, MatchTime, Symbol, TradingDate,
+    AuctionEvidence, AuctionPurpose, EventPayload, InstrumentId, MarketId, MatchTime, Symbol,
+    TradingDate,
 };
-use tpex_normalizer::{NormalizerConfig, TpexNormalizer};
+use teralion_provider::tpex::{NormalizerConfig, TpexNormalizer};
 
 #[test]
 fn synthetic_regular_fixture_normalizes_offline() {
     let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../fixtures/teralion/tpex/SYNTH-TPEX-EQ/2026-07-20/regular-quotes");
+        .join("../../../fixtures/providers/teralion/tpex/SYNTH-TPEX-EQ/2026-07-20/regular-quotes");
     let mut shards = fs::read_dir(&fixture_dir)
         .unwrap()
         .map(|entry| entry.unwrap().path())
@@ -29,7 +30,7 @@ fn synthetic_regular_fixture_normalizes_offline() {
             .map(Result::unwrap)
     });
     let normalizer = TpexNormalizer::new(
-        NormalizerConfig::new(
+        NormalizerConfig::tpex(
             InstrumentId::new(MarketId::Tpex, Symbol::new("SYNTH-TPEX-EQ").unwrap()),
             TradingDate::parse("2026-07-20").unwrap(),
             MatchTime::parse("2026-07-20T08:55:00+08:00").unwrap(),
@@ -50,11 +51,17 @@ fn synthetic_regular_fixture_normalizes_offline() {
         |(quotes, trades, opening, closing), event| match event.payload() {
             EventPayload::QuoteSnapshot(_) => (quotes + 1, trades, opening, closing),
             EventPayload::TradeBatch(_) => (quotes, trades + 1, opening, closing),
-            EventPayload::IndicativeAuction(auction) => match auction.kind() {
-                IndicativeAuctionKind::Opening => (quotes, trades, opening + 1, closing),
-                IndicativeAuctionKind::Closing => (quotes, trades, opening, closing + 1),
-                IndicativeAuctionKind::IntradayStability { .. }
-                | IndicativeAuctionKind::IntradayUnclassified => (quotes, trades, opening, closing),
+            EventPayload::IndicativeAuction(auction) => match auction.observation().purpose() {
+                AuctionEvidence::Known(AuctionPurpose::Opening) => {
+                    (quotes, trades, opening + 1, closing)
+                }
+                AuctionEvidence::Known(AuctionPurpose::Closing) => {
+                    (quotes, trades, opening, closing + 1)
+                }
+                AuctionEvidence::Known(AuctionPurpose::Periodic)
+                | AuctionEvidence::Known(AuctionPurpose::VolatilityInterruption)
+                | AuctionEvidence::NoObservation
+                | AuctionEvidence::Unknown => (quotes, trades, opening, closing),
             },
             EventPayload::BookSnapshot(_) => {
                 panic!("TPEx M4 fixture must not produce BookSnapshot")

@@ -2,11 +2,12 @@
 mod support;
 
 use market_types::{
-    BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventPayload,
-    IndicativeAuction, IndicativeAuctionKind, InstrumentId, MarketAnnotations, MarketId,
-    MarketStatusObservation, MatchTime, Observation, ObservedTrade, Price, Quantity, QuantityUnit,
-    QuoteSnapshot, SourceFormatId, Symbol, TpexQuoteAnnotations, TradeBatch, TradeBatchOrdering,
-    TradeObservationKind, TradingDate, Volume,
+    AuctionEvidence, AuctionObservation, AuctionPurpose, BookLevel, BookSide, BookSideKind,
+    CANONICAL_EVENT_VERSION, CompleteBookSnapshot, DomainEvent, EVENT_SCHEMA_VERSION, EventPayload,
+    IndicativeAuction, InstrumentId, MarketAnnotations, MarketId, MarketStatusObservation,
+    MatchTime, Observation, ObservedTrade, Price, Quantity, QuantityUnit, QuoteSnapshot,
+    SourceFormatId, Symbol, TpexQuoteAnnotations, TradeBatch, TradeBatchOrdering,
+    TradeObservationKind, TradingDate, VolatilityDirection, Volume,
 };
 use support::empty_book;
 
@@ -30,8 +31,8 @@ fn canonical_quote_frame_has_the_documented_field_order() {
 
     let mut expected = Vec::new();
     expected.extend_from_slice(b"OSME");
-    expected.extend_from_slice(&6_u16.to_be_bytes());
-    expected.extend_from_slice(&6_u16.to_be_bytes());
+    expected.extend_from_slice(&CANONICAL_EVENT_VERSION.to_be_bytes());
+    expected.extend_from_slice(&EVENT_SCHEMA_VERSION.to_be_bytes());
     expected.push(1);
     expected.extend_from_slice(&1_u32.to_be_bytes());
     expected.push(b'A');
@@ -46,6 +47,7 @@ fn canonical_quote_frame_has_the_documented_field_order() {
     expected.push(1);
     expected.push(0);
     expected.extend_from_slice(&0_u64.to_be_bytes());
+    expected.push(0);
     expected.push(0);
 
     let canonical = event.to_canonical_bytes().unwrap();
@@ -152,6 +154,96 @@ fn canonical_event_changes_for_distinct_observation_semantics() {
     assert_ne!(
         make_event(Observation::NoObservation),
         make_event(Observation::Clear)
+    );
+}
+
+#[test]
+fn auction_evidence_roundtrips_without_collapsing_missing_or_unknown_fields() {
+    let observation = AuctionObservation::from_parts(
+        AuctionEvidence::Known(AuctionPurpose::VolatilityInterruption),
+        AuctionEvidence::NoObservation,
+        AuctionEvidence::Unknown,
+        AuctionEvidence::Known(VolatilityDirection::Up),
+    )
+    .unwrap();
+    let auction = IndicativeAuction::new(
+        observation,
+        Observation::NoObservation,
+        Observation::NoObservation,
+        Observation::NoObservation,
+        Observation::NoObservation,
+        MarketAnnotations::None,
+    )
+    .unwrap();
+    let event = DomainEvent::new(
+        InstrumentId::new(MarketId::Twse, Symbol::new("A").unwrap()),
+        TradingDate::from_epoch_days(0).unwrap(),
+        SourceFormatId::new("X").unwrap(),
+        MatchTime::from_unix_microseconds(1),
+        None,
+        EventPayload::IndicativeAuction(auction),
+    );
+
+    let decoded = DomainEvent::from_canonical_bytes(&event.to_canonical_bytes().unwrap()).unwrap();
+    assert_eq!(decoded, event);
+    let EventPayload::IndicativeAuction(decoded_auction) = decoded.payload() else {
+        panic!("expected indicative auction")
+    };
+    assert_eq!(
+        decoded_auction.observation().delayed(),
+        AuctionEvidence::NoObservation
+    );
+    assert_eq!(
+        decoded_auction.observation().disposal(),
+        AuctionEvidence::Unknown
+    );
+    for purpose in [
+        AuctionPurpose::Opening,
+        AuctionPurpose::Closing,
+        AuctionPurpose::Periodic,
+    ] {
+        for direction in [VolatilityDirection::Up, VolatilityDirection::Down] {
+            assert!(
+                AuctionObservation::from_parts(
+                    AuctionEvidence::Known(purpose),
+                    AuctionEvidence::NoObservation,
+                    AuctionEvidence::NoObservation,
+                    AuctionEvidence::Known(direction),
+                )
+                .is_none(),
+                "non-VI purpose cannot carry a volatility direction"
+            );
+        }
+    }
+
+    let partial = AuctionObservation::from_parts(
+        AuctionEvidence::Unknown,
+        AuctionEvidence::NoObservation,
+        AuctionEvidence::NoObservation,
+        AuctionEvidence::Known(VolatilityDirection::Down),
+    )
+    .expect("partial fields may retain direction while purpose is unknown");
+    let partial_event = DomainEvent::new(
+        InstrumentId::new(MarketId::Twse, Symbol::new("A").unwrap()),
+        TradingDate::from_epoch_days(0).unwrap(),
+        SourceFormatId::new("X").unwrap(),
+        MatchTime::from_unix_microseconds(2),
+        None,
+        EventPayload::IndicativeAuction(
+            IndicativeAuction::new(
+                partial,
+                Observation::NoObservation,
+                Observation::NoObservation,
+                Observation::NoObservation,
+                Observation::NoObservation,
+                MarketAnnotations::None,
+            )
+            .unwrap(),
+        ),
+    );
+    assert_eq!(
+        DomainEvent::from_canonical_bytes(&partial_event.to_canonical_bytes().unwrap()).unwrap(),
+        partial_event
     );
 }
 
@@ -310,7 +402,7 @@ fn canonical_decoder_rejects_trailing_bytes_and_survives_frame_mutations() {
         )),
         encode(EventPayload::IndicativeAuction(
             IndicativeAuction::new(
-                IndicativeAuctionKind::Opening,
+                AuctionObservation::opening(false, false),
                 Observation::NoObservation,
                 Observation::NoObservation,
                 Observation::NoObservation,

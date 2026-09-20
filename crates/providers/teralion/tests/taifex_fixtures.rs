@@ -6,16 +6,16 @@ use std::{
 };
 
 use market_types::{
-    EventPayload, IndicativeAuctionKind, InstrumentId, MarketId, MatchTime, Observation, Price,
-    QuantityUnit, Symbol, TradingDate,
+    AuctionEvidence, AuctionPurpose, EventPayload, InstrumentId, MarketId, MatchTime, Observation,
+    Price, QuantityUnit, Symbol, TradingDate,
 };
-use taifex_normalizer::{
+use teralion_provider::taifex::{
     KnownSkipReason, NormalizationErrorKind, NormalizerConfig, TaifexNormalizer,
 };
 
 fn fixture_root(symbol: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
-        "../../../fixtures/teralion/taifex/{symbol}/2026-07-20"
+        "../../../fixtures/providers/teralion/taifex/{symbol}/2026-07-20"
     ))
 }
 
@@ -89,12 +89,15 @@ fn synthetic_futures_fixture_normalizes_with_opening_events_only() {
                 EventPayload::IndicativeAuction(auction) => Some(auction),
                 _ => None,
             })
-            .all(|auction| auction.kind() == IndicativeAuctionKind::Opening)
+            .all(|auction| {
+                auction.observation().purpose() == AuctionEvidence::Known(AuctionPurpose::Opening)
+            })
     );
     assert!(report.events().iter().any(|event| matches!(
         event.payload(),
         EventPayload::IndicativeAuction(auction)
-            if auction.kind() == IndicativeAuctionKind::Opening
+            if auction.observation().purpose()
+                == AuctionEvidence::Known(AuctionPurpose::Opening)
     )));
 }
 
@@ -119,7 +122,10 @@ fn i022_zero_zero_is_a_no_observation_opening_event() {
     let EventPayload::IndicativeAuction(auction) = event.payload() else {
         panic!("I022 must map to opening auction event")
     };
-    assert_eq!(auction.kind(), IndicativeAuctionKind::Opening);
+    assert_eq!(
+        auction.observation().purpose(),
+        AuctionEvidence::Known(AuctionPurpose::Opening)
+    );
     assert_eq!(auction.price(), &Observation::NoObservation);
     assert_eq!(auction.quantity(), &Observation::NoObservation);
     assert_eq!(auction.book(), &Observation::NoObservation);

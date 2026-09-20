@@ -171,15 +171,15 @@ mod tests {
         MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
     };
     use market_types::{
-        BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventPayload,
-        IndicativeAuction, IndicativeAuctionKind, MarketAnnotations, MarketId, MatchTime,
+        AuctionObservation, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent,
+        EventPayload, IndicativeAuction, MarketAnnotations, MarketId, MarketSignal, MatchTime,
         Observation, QuoteSnapshot, SourceFormatId, Symbol, TradingDate, TwseQuoteAnnotations,
         Volume,
     };
     use replay_engine::ReplayCore;
     use strategy_api::{
-        RawStrategyParameter, SessionSegment, StrategyOutputSink, StrategyRegistry,
-        TwseTradingContextEvaluator,
+        MarketTradingContextEvaluator, RawStrategyParameter, SessionSegment, StrategyOutputSink,
+        StrategyRegistry,
     };
 
     use super::*;
@@ -283,7 +283,7 @@ mod tests {
         let payload = if annotations.status().trial() {
             EventPayload::IndicativeAuction(
                 IndicativeAuction::new(
-                    IndicativeAuctionKind::Opening,
+                    AuctionObservation::opening(false, false),
                     Observation::NoObservation,
                     Observation::NoObservation,
                     Observation::Set(book),
@@ -300,7 +300,8 @@ mod tests {
                     Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
                     MarketAnnotations::TwseQuote(annotations),
                 )
-                .unwrap(),
+                .unwrap()
+                .with_market_signal(Observation::Set(MarketSignal::Continuous)),
             )
         };
         DomainEvent::new(
@@ -361,9 +362,13 @@ mod tests {
         for event in &events {
             let commit = core.apply_ordered(event).unwrap();
             let state = core.state(&twse).unwrap().view();
-            let trading = TwseTradingContextEvaluator
-                .evaluate(event, commit.occurrence(), state, &segment)
-                .unwrap();
+            let trading = MarketTradingContextEvaluator::evaluate(
+                event,
+                commit.occurrence(),
+                state,
+                &segment,
+            )
+            .unwrap();
             let mut sink = StrategyOutputSink::with_order_intents();
             strategy
                 .on_event(

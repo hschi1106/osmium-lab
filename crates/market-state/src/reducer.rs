@@ -1,17 +1,19 @@
 use std::{cmp::Ordering, collections::BTreeSet, error::Error, fmt};
 
 use market_types::{
-    CanonicalEncodingError, DomainEvent, EventPayload, InstantTrend, LimitPosition,
-    MarketAnnotations, Observation, QuantityUnit, TradeObservationKind, Volume,
+    AuctionEvidence, AuctionObservation, AuctionPurpose, CanonicalEncodingError, DomainEvent,
+    EventPayload, IndicativeAuction, MarketSignal, Observation, QuantityUnit, TradeObservationKind,
+    UnknownValue, Volume,
 };
 
 use crate::{
-    AppliedEventRef, CumulativeVolumePolicy, MarketState, MarketStateProfile, ProfileError,
-    SessionSegmentId, StateField, TradeObservation, UnavailableReason,
+    AppliedEventRef, AuctionState, CumulativeVolumePolicy, MarketPhase, MarketState,
+    MarketStateProfile, ProfileError, SessionSegmentId, StateField, TradeObservation,
+    UnavailableReason,
 };
 
-pub const MARKET_STATE_VERSION: u16 = 5;
-pub const STATE_REDUCER_VERSION: u16 = 4;
+pub const MARKET_STATE_VERSION: u16 = 7;
+pub const STATE_REDUCER_VERSION: u16 = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SegmentBoundaryPolicy {
@@ -111,7 +113,6 @@ impl MarketStateReducer {
             .validate_event(event)
             .map_err(StateTransitionError::Profile)?;
         validate_realtime_shape(event)?;
-        validate_equity_trial_shape(event)?;
 
         let event_ref =
             AppliedEventRef::from_event(event).map_err(StateTransitionError::CanonicalEncoding)?;
@@ -139,7 +140,8 @@ impl MarketStateReducer {
                     ChangedField::RecentTrade,
                     ChangedField::CumulativeVolume,
                     ChangedField::IndicativeAuction,
-                    ChangedField::LastAnnotations,
+                    ChangedField::MarketSignal,
+                    ChangedField::Phase,
                 ]);
                 boundary_action = Some(BoundaryAction::ResetObservableFields);
             } else if context.segment_boundary_policy == SegmentBoundaryPolicy::Carry {
@@ -150,9 +152,6 @@ impl MarketStateReducer {
         }
 
         let mut warning_codes = BTreeSet::new();
-        if firm_event_confirms_matching_resumed(event) {
-            clear_indicative_auction(&mut next, &event_ref, &mut changed);
-        }
         match event.payload() {
             EventPayload::QuoteSnapshot(snapshot) => {
                 next.set_book(StateField::Known {
@@ -175,11 +174,6 @@ impl MarketStateReducer {
                     &mut changed,
                     &mut warning_codes,
                 )?;
-                next.set_last_annotations(StateField::Known {
-                    value: snapshot.annotations().clone(),
-                    observed_at: event_ref.clone(),
-                });
-                changed.insert(ChangedField::LastAnnotations);
             }
             EventPayload::BookSnapshot(snapshot) => {
                 next.set_book(StateField::Known {
@@ -187,11 +181,6 @@ impl MarketStateReducer {
                     observed_at: event_ref.clone(),
                 });
                 changed.insert(ChangedField::Book);
-                next.set_last_annotations(StateField::Known {
-                    value: snapshot.annotations().clone(),
-                    observed_at: event_ref.clone(),
-                });
-                changed.insert(ChangedField::LastAnnotations);
             }
             EventPayload::TradeBatch(batch) => {
                 next.set_recent_trade(StateField::Known {
@@ -210,26 +199,17 @@ impl MarketStateReducer {
                     &mut changed,
                     &mut warning_codes,
                 )?;
-                next.set_last_annotations(StateField::Known {
-                    value: batch.annotations().clone(),
-                    observed_at: event_ref.clone(),
-                });
-                changed.insert(ChangedField::LastAnnotations);
             }
             EventPayload::IndicativeAuction(auction) => {
                 // Indicative values are timeline observations, but they are not
                 // actual trades or cumulative volume and must not overwrite
                 // executable market state.
+                let observation = merge_with_current_auction(&next, auction.observation());
                 next.set_indicative_auction(StateField::Known {
-                    value: auction.clone(),
+                    value: auction.with_observation(observation),
                     observed_at: event_ref.clone(),
                 });
                 changed.insert(ChangedField::IndicativeAuction);
-                next.set_last_annotations(StateField::Known {
-                    value: auction.annotations().clone(),
-                    observed_at: event_ref.clone(),
-                });
-                changed.insert(ChangedField::LastAnnotations);
             }
             EventPayload::MarketStatus(status) => {
                 self.apply_volume_observation(
@@ -240,13 +220,14 @@ impl MarketStateReducer {
                     &mut changed,
                     &mut warning_codes,
                 )?;
-                next.set_last_annotations(StateField::Known {
-                    value: status.annotations().clone(),
-                    observed_at: event_ref.clone(),
-                });
-                changed.insert(ChangedField::LastAnnotations);
             }
         }
+        self.apply_market_signal(
+            &mut next,
+            &event.payload().market_signal(),
+            &event_ref,
+            &mut changed,
+        );
 
         next.finish_event(event_ref.clone(), new_version);
         changed.insert(ChangedField::LastEvent);
@@ -314,6 +295,75 @@ impl MarketStateReducer {
             return Err(StateTransitionError::MatchTimeRegression);
         }
         Ok(())
+    }
+
+    fn apply_market_signal(
+        &self,
+        state: &mut MarketState,
+        observation: &Observation<MarketSignal>,
+        event_ref: &AppliedEventRef,
+        changed: &mut BTreeSet<ChangedField>,
+    ) {
+        match observation {
+            Observation::NoObservation => return,
+            Observation::Set(signal) => {
+                let signal = match signal {
+                    MarketSignal::AuctionCollecting(observation) => {
+                        MarketSignal::AuctionCollecting(merge_with_current_auction(
+                            state,
+                            *observation,
+                        ))
+                    }
+                    MarketSignal::AuctionUncross(observation) => MarketSignal::AuctionUncross(
+                        merge_with_current_auction(state, *observation),
+                    ),
+                    MarketSignal::Continuous => MarketSignal::Continuous,
+                    MarketSignal::Closed => MarketSignal::Closed,
+                };
+                if matches!(
+                    signal,
+                    MarketSignal::Continuous
+                        | MarketSignal::AuctionUncross(_)
+                        | MarketSignal::Closed
+                ) {
+                    clear_indicative_auction(state, event_ref, changed);
+                }
+                state.set_market_signal(StateField::Known {
+                    value: signal,
+                    observed_at: event_ref.clone(),
+                });
+                match post_market_phase(signal) {
+                    Some(phase) => state.set_phase(StateField::Known {
+                        value: phase,
+                        observed_at: event_ref.clone(),
+                    }),
+                    None => state.set_phase(StateField::Unknown {
+                        raw: UnknownValue::Text("auction purpose unavailable".into()),
+                        observed_at: event_ref.clone(),
+                    }),
+                }
+            }
+            Observation::Clear => {
+                state.set_market_signal(StateField::Unavailable(UnavailableReason::Cleared {
+                    cleared_at: event_ref.clone(),
+                }));
+                state.set_phase(StateField::Unavailable(UnavailableReason::Cleared {
+                    cleared_at: event_ref.clone(),
+                }));
+            }
+            Observation::Unknown(raw) => {
+                state.set_market_signal(StateField::Unknown {
+                    raw: raw.clone(),
+                    observed_at: event_ref.clone(),
+                });
+                state.set_phase(StateField::Unknown {
+                    raw: raw.clone(),
+                    observed_at: event_ref.clone(),
+                });
+            }
+        }
+        changed.insert(ChangedField::MarketSignal);
+        changed.insert(ChangedField::Phase);
     }
 
     fn apply_volume_observation(
@@ -386,6 +436,65 @@ impl MarketStateReducer {
     }
 }
 
+fn merge_with_current_auction(
+    state: &MarketState,
+    observation: AuctionObservation,
+) -> AuctionObservation {
+    let Some(previous) = current_auction_observation(state) else {
+        return observation;
+    };
+    if starts_new_auction(previous, observation) {
+        observation
+    } else {
+        observation.merge(previous)
+    }
+}
+
+fn current_auction_observation(state: &MarketState) -> Option<AuctionObservation> {
+    match state.phase().known() {
+        Some(MarketPhase::Auction(auction)) => Some(auction.observation()),
+        Some(MarketPhase::Continuous) | Some(MarketPhase::Closed) | None => state
+            .indicative_auction()
+            .known()
+            .map(IndicativeAuction::observation),
+    }
+}
+
+fn starts_new_auction(previous: AuctionObservation, current: AuctionObservation) -> bool {
+    matches!(
+        (previous.purpose(), current.purpose()),
+        (
+            AuctionEvidence::Known(previous),
+            AuctionEvidence::Known(current)
+        ) if previous != current
+    )
+}
+
+fn post_market_phase(signal: MarketSignal) -> Option<MarketPhase> {
+    match signal {
+        MarketSignal::Continuous => Some(MarketPhase::Continuous),
+        MarketSignal::Closed => Some(MarketPhase::Closed),
+        MarketSignal::AuctionCollecting(observation) => {
+            Some(MarketPhase::Auction(AuctionState::new(observation)))
+        }
+        MarketSignal::AuctionUncross(observation) => match observation.purpose() {
+            AuctionEvidence::Known(AuctionPurpose::Opening)
+            | AuctionEvidence::Known(AuctionPurpose::VolatilityInterruption) => {
+                Some(MarketPhase::Continuous)
+            }
+            AuctionEvidence::Known(AuctionPurpose::Closing) => Some(MarketPhase::Closed),
+            AuctionEvidence::Known(AuctionPurpose::Periodic) => Some(MarketPhase::Auction(
+                AuctionState::new(next_periodic_auction_round(observation)),
+            )),
+            AuctionEvidence::NoObservation | AuctionEvidence::Unknown => None,
+        },
+    }
+}
+
+fn next_periodic_auction_round(result: AuctionObservation) -> AuctionObservation {
+    AuctionObservation::periodic_with_evidence(AuctionEvidence::Known(false), result.disposal())
+}
+
 fn apply_trade_observation(
     state: &mut MarketState,
     observation: &Observation<market_types::ObservedTrade>,
@@ -431,53 +540,6 @@ fn clear_indicative_auction(
     }
 }
 
-fn firm_event_confirms_matching_resumed(event: &DomainEvent) -> bool {
-    if matches!(
-        event.payload(),
-        EventPayload::IndicativeAuction(_) | EventPayload::MarketStatus(_)
-    ) {
-        return false;
-    }
-    let annotations = event.payload().annotations();
-    match annotations {
-        MarketAnnotations::None => true,
-        MarketAnnotations::TwseQuote(annotations) => matching_resumed_from_flags(
-            annotations.status().trial(),
-            annotations.status().reserved_bits(),
-            annotations.limits().instant_trend(),
-            [
-                annotations.limits().trade(),
-                annotations.limits().best_bid(),
-                annotations.limits().best_ask(),
-            ],
-        ),
-        MarketAnnotations::TpexQuote(annotations) => matching_resumed_from_flags(
-            annotations.status().trial(),
-            annotations.status().reserved_bits(),
-            annotations.limits().instant_trend(),
-            [
-                annotations.limits().trade(),
-                annotations.limits().best_bid(),
-                annotations.limits().best_ask(),
-            ],
-        ),
-    }
-}
-
-fn matching_resumed_from_flags(
-    trial: bool,
-    reserved_status_bits: u8,
-    instant_trend: InstantTrend,
-    limit_positions: [LimitPosition; 3],
-) -> bool {
-    !trial
-        && reserved_status_bits == 0
-        && instant_trend == InstantTrend::Normal
-        && limit_positions
-            .into_iter()
-            .all(|position| position != LimitPosition::Reserved)
-}
-
 fn validate_realtime_shape(event: &DomainEvent) -> Result<(), StateTransitionError> {
     let error = match event.instrument().market() {
         market_types::MarketId::Twse => StateTransitionError::InvalidTwseRealtimeShape,
@@ -501,22 +563,6 @@ fn validate_realtime_shape(event: &DomainEvent) -> Result<(), StateTransitionErr
         EventPayload::MarketStatus(_) => Ok(()),
         EventPayload::BookSnapshot(_) | EventPayload::TradeBatch(_) => Err(error),
     }
-}
-
-fn validate_equity_trial_shape(event: &DomainEvent) -> Result<(), StateTransitionError> {
-    let trial = match event.payload().annotations() {
-        MarketAnnotations::TwseQuote(annotations) => annotations.status().trial(),
-        MarketAnnotations::TpexQuote(annotations) => annotations.status().trial(),
-        MarketAnnotations::None => return Ok(()),
-    };
-    if !trial || matches!(event.payload(), EventPayload::IndicativeAuction(_)) {
-        return Ok(());
-    }
-    Err(match event.instrument().market() {
-        market_types::MarketId::Twse => StateTransitionError::InvalidTwseTrialShape,
-        market_types::MarketId::Tpex => StateTransitionError::InvalidTpexTrialShape,
-        market_types::MarketId::Taifex => return Ok(()),
-    })
 }
 
 fn compare_within_instrument(left: &AppliedEventRef, right: &AppliedEventRef) -> Ordering {
@@ -600,7 +646,8 @@ pub enum ChangedField {
     RecentTrade,
     CumulativeVolume,
     IndicativeAuction,
-    LastAnnotations,
+    MarketSignal,
+    Phase,
     LastEvent,
 }
 
@@ -621,8 +668,6 @@ pub enum StateTransitionError {
     OrderingRegression,
     InvalidTwseRealtimeShape,
     InvalidTpexRealtimeShape,
-    InvalidTwseTrialShape,
-    InvalidTpexTrialShape,
     CumulativeVolumeRegression {
         previous: u64,
         next: u64,
@@ -660,12 +705,6 @@ impl fmt::Display for StateTransitionError {
             }
             Self::InvalidTpexRealtimeShape => {
                 formatter.write_str("invalid TPEx STOCK_REALTIME domain event shape")
-            }
-            Self::InvalidTwseTrialShape => {
-                formatter.write_str("TWSE trial observation must be an indicative auction")
-            }
-            Self::InvalidTpexTrialShape => {
-                formatter.write_str("TPEx trial observation must be an indicative auction")
             }
             Self::CumulativeVolumeRegression { previous, next } => write!(
                 formatter,

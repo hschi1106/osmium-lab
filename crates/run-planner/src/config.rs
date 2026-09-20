@@ -660,9 +660,12 @@ impl InstrumentReferenceConfig {
     fn is_valid(&self) -> bool {
         !self.underlying.trim().is_empty()
             && self.strike > Decimal::ZERO
-            && self.multiplier > Decimal::ZERO
-            && self.units_per_trading_unit != 0
-            && !self.provenance.trim().is_empty()
+            && valid_economics_terms(
+                self.quantity_unit,
+                self.units_per_trading_unit,
+                self.multiplier,
+                &self.provenance,
+            )
     }
 }
 
@@ -946,6 +949,13 @@ impl EffectiveRunConfig {
     }
 
     #[must_use]
+    pub fn contract_for(&self, instrument: &InstrumentId) -> Option<&InstrumentContractConfig> {
+        self.instrument_contracts
+            .iter()
+            .find(|contract| contract.instrument() == instrument)
+    }
+
+    #[must_use]
     pub const fn session_kinds(&self) -> &[SessionKind] {
         &self.session_kinds
     }
@@ -1008,7 +1018,8 @@ impl EffectiveRunConfig {
         output.extend_from_slice(&SOURCE_POLICY_VERSION.to_be_bytes());
         output.extend_from_slice(&CACHE_POLICY_VERSION.to_be_bytes());
         output.extend_from_slice(&REPLAY_DATA_POLICY_VERSION.to_be_bytes());
-        output.push(self.source as u8);
+        append_len(self.source.as_bytes().len(), &mut output)?;
+        output.extend_from_slice(self.source.as_bytes());
 
         append_len(self.trading_dates.len(), &mut output)?;
         for date in &self.trading_dates {
@@ -1168,11 +1179,12 @@ fn validate_economics(
                 value.instrument.clone(),
             ));
         }
-        if value.quantity_unit == QuantityUnit::SourceUnit
-            || value.units_per_trading_unit == 0
-            || value.multiplier <= Decimal::ZERO
-            || value.provenance.is_empty()
-        {
+        if !valid_economics_terms(
+            value.quantity_unit,
+            value.units_per_trading_unit,
+            value.multiplier,
+            &value.provenance,
+        ) {
             return Err(ConfigError::InvalidInstrumentEconomics(
                 value.instrument.clone(),
             ));
@@ -1188,6 +1200,18 @@ fn validate_economics(
         }
     }
     Ok(by_instrument.into_values().collect())
+}
+
+fn valid_economics_terms(
+    quantity_unit: QuantityUnit,
+    units_per_trading_unit: u64,
+    multiplier: Decimal,
+    provenance: &str,
+) -> bool {
+    quantity_unit != QuantityUnit::SourceUnit
+        && units_per_trading_unit != 0
+        && multiplier > Decimal::ZERO
+        && !provenance.trim().is_empty()
 }
 
 fn append_simulation(

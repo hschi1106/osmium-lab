@@ -6,16 +6,16 @@ use std::{
 };
 
 use market_types::{
-    EventPayload, IndicativeAuctionKind, InstrumentId, MarketId, MatchTime, Observation,
+    AuctionEvidence, AuctionPurpose, EventPayload, InstrumentId, MarketId, MatchTime, Observation,
     QuantityUnit, Symbol, TradingDate,
 };
-use taifex_normalizer::{
+use teralion_provider::taifex::{
     InstrumentProfile, KnownSkipReason, NormalizationErrorKind, NormalizerConfig, TaifexNormalizer,
 };
 
 fn fixture_lines() -> Vec<String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../fixtures/teralion/taifex/SYNTH-OPT/2026-07-20");
+        .join("../../../fixtures/providers/teralion/taifex/SYNTH-OPT/2026-07-20");
     let mut paths = ["after-hours", "regular"]
         .into_iter()
         .flat_map(|segment| {
@@ -97,7 +97,10 @@ fn synthetic_option_fixture_normalizes_cross_session_events() {
             }
             EventPayload::IndicativeAuction(auction) => {
                 payloads.2 += 1;
-                assert_eq!(auction.kind(), IndicativeAuctionKind::Opening);
+                assert_eq!(
+                    auction.observation().purpose(),
+                    AuctionEvidence::Known(AuctionPurpose::Opening)
+                );
                 assert_eq!(auction.quantity(), &Observation::NoObservation);
             }
             EventPayload::QuoteSnapshot(_) => {

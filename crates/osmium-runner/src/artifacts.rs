@@ -9,7 +9,6 @@ use std::{
 
 use strategy_api::{ResolvedStrategyMetadata, StrategyParameterValue};
 
-use crate::CompletedBacktest;
 use crate::CompletedMultiBacktest;
 use crate::CompletedScheduledMultiBacktest;
 
@@ -32,16 +31,73 @@ fn run_version_set() -> serde_json::Value {
     })
 }
 
-pub fn publish_backtest(
-    output: &Path,
-    completed: &CompletedBacktest,
+#[allow(clippy::too_many_arguments)]
+fn base_files(
+    strategy_output: &strategy_api::StrategyOutput,
+    strategy_metadata: &ResolvedStrategyMetadata,
     plan_identity: &[u8; 32],
+    execution_plan: Vec<u8>,
     source_revision: &str,
     cache_identity: &str,
-    strategy_metadata: &ResolvedStrategyMetadata,
+    event_checksum: &str,
+    state_checksum: &str,
+) -> Result<BTreeMap<&'static str, Vec<u8>>, ArtifactError> {
+    validate_strategy_metadata(strategy_output, strategy_metadata)?;
+    let strategy = strategy_output
+        .to_canonical_bytes()
+        .map_err(|error| ArtifactError::Encoding(error.to_string()))?;
+    let mut files = BTreeMap::from([
+        (
+            "effective-config.yaml",
+            format!("config_checksum: {}\n", hex(plan_identity)).into_bytes(),
+        ),
+        ("execution-plan.yaml", execution_plan),
+        (
+            "data-lineage.yaml",
+            format!("source_revision: {source_revision}\n").into_bytes(),
+        ),
+        (
+            "cache-lineage.yaml",
+            format!("cache_identity: {cache_identity}\n").into_bytes(),
+        ),
+        (
+            "strategy.json",
+            encode_strategy_metadata(strategy_metadata)?,
+        ),
+        (
+            "event-stream.blake3",
+            format!("{event_checksum}\n").into_bytes(),
+        ),
+        (
+            "final-state.blake3",
+            format!("{state_checksum}\n").into_bytes(),
+        ),
+        ("warnings.yaml", b"warnings: []\n".to_vec()),
+    ]);
+    insert_hashed(
+        &mut files,
+        "strategy-output.bin",
+        "strategy-output.blake3",
+        strategy,
+    );
+    Ok(files)
+}
+
+fn insert_hashed(
+    files: &mut BTreeMap<&'static str, Vec<u8>>,
+    data_name: &'static str,
+    checksum_name: &'static str,
+    bytes: Vec<u8>,
+) {
+    files.insert(checksum_name, format!("{}\n", hash(&bytes)).into_bytes());
+    files.insert(data_name, bytes);
+}
+
+fn publish_artifacts(
+    output: &Path,
+    mut files: BTreeMap<&'static str, Vec<u8>>,
+    mut manifest: serde_json::Value,
 ) -> Result<(), ArtifactError> {
-    let accounting_version = completed.ledger.accounting_version();
-    validate_strategy_metadata(&completed.strategy_output, strategy_metadata)?;
     if output.exists() {
         return Err(ArtifactError::OutputExists(output.to_path_buf()));
     }
@@ -55,119 +111,19 @@ pub fn publish_backtest(
     if staging.exists() {
         return Err(ArtifactError::OutputExists(staging));
     }
-    fs::create_dir(&staging)?;
-
-    let strategy = completed
-        .strategy_output
-        .to_canonical_bytes()
-        .map_err(|error| ArtifactError::Encoding(error.to_string()))?;
-    let orders = encode_orders(completed)?;
-    let fills = encode_fills(completed);
-    let ledger = encode_ledger(completed);
-    let event_checksum = hex(completed.replay.summary().event_checksum().as_bytes());
-    let state_checksum = hex(completed.replay.summary().final_state_checksum().as_bytes());
-
-    let mut files = BTreeMap::<&str, Vec<u8>>::new();
-    files.insert(
-        "effective-config.yaml",
-        format!("config_checksum: {}\n", hex(plan_identity)).into_bytes(),
-    );
-    files.insert(
-        "execution-plan.yaml",
-        format!("plan_identity: {}\n", hex(plan_identity)).into_bytes(),
-    );
-    files.insert(
-        "data-lineage.yaml",
-        format!("source_revision: {source_revision}\n").into_bytes(),
-    );
-    files.insert(
-        "cache-lineage.yaml",
-        format!("cache_identity: {cache_identity}\n").into_bytes(),
-    );
-    files.insert(
-        "strategy.json",
-        encode_strategy_metadata(strategy_metadata)?,
-    );
-    files.insert(
-        "event-stream.blake3",
-        format!("{event_checksum}\n").into_bytes(),
-    );
-    files.insert(
-        "final-state.blake3",
-        format!("{state_checksum}\n").into_bytes(),
-    );
-    files.insert(
-        "replay-summary.json",
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "format": "osmium-replay-summary-v1",
-            "status": "strategy_simulated",
-            "event_count": completed.replay.summary().event_count(),
-            "event_checksum": event_checksum,
-            "final_state_checksum": state_checksum,
-        }))
-        .map_err(|error| ArtifactError::Encoding(error.to_string()))?,
-    );
-    files.insert("strategy-output.bin", strategy.clone());
-    files.insert(
-        "strategy-output.blake3",
-        format!("{}\n", hash(&strategy)).into_bytes(),
-    );
-    files.insert("orders.bin", orders.clone());
-    files.insert("orders.blake3", format!("{}\n", hash(&orders)).into_bytes());
-    files.insert("fills.bin", fills.clone());
-    files.insert("fills.blake3", format!("{}\n", hash(&fills)).into_bytes());
-    files.insert("ledger.bin", ledger.clone());
-    files.insert("ledger.blake3", format!("{}\n", hash(&ledger)).into_bytes());
-    files.insert(
-        "positions.yaml",
-        format!("2330: {}\n", completed.performance.position).into_bytes(),
-    );
-    files.insert(
-        "performance.yaml",
-        format!(
-            "initial_cash_atoms: {}\nfinal_cash_atoms: {}\nrealized_pnl_atoms: {}\nunrealized_pnl_atoms: {}\ntotal_fee_atoms: {}\ntotal_tax_atoms: {}\n",
-            completed.performance.initial_cash.atoms(),
-            completed.performance.final_cash.atoms(),
-            completed.performance.realized_pnl.atoms(),
-            completed.performance.unrealized_pnl.map_or_else(|| "unavailable".to_owned(), |value| value.atoms().to_string()),
-            completed.performance.total_fee.atoms(),
-            completed.performance.total_tax.atoms(),
-        ).into_bytes(),
-    );
-    files.insert("warnings.yaml", b"warnings: []\n".to_vec());
-    files.insert(
-        "run-summary.yaml",
-        format!(
-            "status: successful\nevents: {}\norders: {}\nfills: {}\n",
-            completed.replay.summary().event_count(),
-            completed.simulator.orders().len(),
-            completed.simulator.fills().len()
-        )
-        .into_bytes(),
-    );
     let checksums = files
         .iter()
         .map(|(name, bytes)| ((*name).to_owned(), hash(bytes)))
         .collect::<BTreeMap<_, _>>();
-    let manifest = serde_json::json!({
-        "run_manifest_version": RUN_MANIFEST_VERSION,
-        "versions": run_version_set(),
-        "accounting_version": accounting_version,
-        "status": "successful",
-        "completion_quality": "full",
-        "plan_identity": hex(plan_identity),
-        "source_revision": source_revision,
-        "cache_identity": cache_identity,
-        "event_count": completed.replay.summary().event_count(),
-        "order_count": completed.simulator.orders().len(),
-        "fill_count": completed.simulator.fills().len(),
-        "artifact_checksums": checksums,
-    });
+    manifest["artifact_checksums"] = serde_json::to_value(checksums)
+        .map_err(|error| ArtifactError::Encoding(error.to_string()))?;
     files.insert(
         "run-manifest.yaml",
         serde_json::to_vec_pretty(&manifest)
             .map_err(|error| ArtifactError::Encoding(error.to_string()))?,
     );
+
+    fs::create_dir(&staging)?;
     for (name, bytes) in files {
         write_file(&staging.join(name), &bytes)?;
     }
@@ -186,27 +142,7 @@ pub fn publish_multi_backtest(
     strategy_metadata: &ResolvedStrategyMetadata,
 ) -> Result<(), ArtifactError> {
     let accounting_version = completed.ledger.accounting_version();
-    validate_strategy_metadata(&completed.strategy_output, strategy_metadata)?;
-    if output.exists() {
-        return Err(ArtifactError::OutputExists(output.to_path_buf()));
-    }
-    let parent = output.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)?;
-    let name = output
-        .file_name()
-        .ok_or_else(|| ArtifactError::InvalidOutput(output.to_path_buf()))?
-        .to_string_lossy();
-    let staging = parent.join(format!(".{name}.osmium-staging"));
-    if staging.exists() {
-        return Err(ArtifactError::OutputExists(staging));
-    }
-    fs::create_dir(&staging)?;
-
-    let strategy = completed
-        .strategy_output
-        .to_canonical_bytes()
-        .map_err(|error| ArtifactError::Encoding(error.to_string()))?;
-    let orders = encode_multi_orders(completed)?;
+    let orders = encode_orders(completed.simulator.orders().into_iter())?;
     let fills = encode_multi_fills(completed);
     let ledger = encode_multi_ledger(completed);
     let ledger_checksum = hash(&ledger);
@@ -214,46 +150,19 @@ pub fn publish_multi_backtest(
     let performance = encode_multi_performance(completed, &ledger_checksum);
     let event_checksum = hex(completed.replay.summary().event_checksum().as_bytes());
     let state_checksum = hex(completed.replay.summary().final_state_checksum().as_bytes());
-    let mut files = BTreeMap::<&str, Vec<u8>>::new();
-    files.insert(
-        "effective-config.yaml",
-        format!("config_checksum: {}\n", hex(plan_identity)).into_bytes(),
-    );
-    files.insert(
-        "execution-plan.yaml",
+    let mut files = base_files(
+        &completed.strategy_output,
+        strategy_metadata,
+        plan_identity,
         format!("plan_identity: {}\n", hex(plan_identity)).into_bytes(),
-    );
-    files.insert(
-        "data-lineage.yaml",
-        format!("source_revision: {source_revision}\n").into_bytes(),
-    );
-    files.insert(
-        "cache-lineage.yaml",
-        format!("cache_identity: {cache_identity}\n").into_bytes(),
-    );
-    files.insert(
-        "strategy.json",
-        encode_strategy_metadata(strategy_metadata)?,
-    );
-    files.insert(
-        "event-stream.blake3",
-        format!("{event_checksum}\n").into_bytes(),
-    );
-    files.insert(
-        "final-state.blake3",
-        format!("{state_checksum}\n").into_bytes(),
-    );
-    files.insert("strategy-output.bin", strategy.clone());
-    files.insert(
-        "strategy-output.blake3",
-        format!("{}\n", hash(&strategy)).into_bytes(),
-    );
-    files.insert("orders.bin", orders.clone());
-    files.insert("orders.blake3", format!("{}\n", hash(&orders)).into_bytes());
-    files.insert("fills.bin", fills.clone());
-    files.insert("fills.blake3", format!("{}\n", hash(&fills)).into_bytes());
-    files.insert("ledger.bin", ledger.clone());
-    files.insert("ledger.blake3", format!("{ledger_checksum}\n").into_bytes());
+        source_revision,
+        cache_identity,
+        &event_checksum,
+        &state_checksum,
+    )?;
+    insert_hashed(&mut files, "orders.bin", "orders.blake3", orders);
+    insert_hashed(&mut files, "fills.bin", "fills.blake3", fills);
+    insert_hashed(&mut files, "ledger.bin", "ledger.blake3", ledger);
     files.insert("positions.yaml", positions);
     files.insert("performance.yaml", performance);
     files.insert(
@@ -282,11 +191,6 @@ pub fn publish_multi_backtest(
         )
         .into_bytes(),
     );
-    files.insert("warnings.yaml", b"warnings: []\n".to_vec());
-    let checksums = files
-        .iter()
-        .map(|(name, bytes)| ((*name).to_owned(), hash(bytes)))
-        .collect::<BTreeMap<_, _>>();
     let manifest = serde_json::json!({
         "run_manifest_version": RUN_MANIFEST_VERSION,
         "versions": run_version_set(),
@@ -299,20 +203,8 @@ pub fn publish_multi_backtest(
         "event_count": completed.replay.summary().event_count(),
         "order_count": completed.simulator.order_count(),
         "fill_count": completed.simulator.fill_count(),
-        "artifact_checksums": checksums,
     });
-    files.insert(
-        "run-manifest.yaml",
-        serde_json::to_vec_pretty(&manifest)
-            .map_err(|error| ArtifactError::Encoding(error.to_string()))?,
-    );
-    for (name, bytes) in files {
-        write_file(&staging.join(name), &bytes)?;
-    }
-    File::open(&staging)?.sync_all()?;
-    fs::rename(&staging, output)?;
-    File::open(parent)?.sync_all()?;
-    Ok(())
+    publish_artifacts(output, files, manifest)
 }
 
 pub fn publish_scheduled_multi_backtest(
@@ -324,26 +216,6 @@ pub fn publish_scheduled_multi_backtest(
     strategy_metadata: &ResolvedStrategyMetadata,
 ) -> Result<(), ArtifactError> {
     let accounting_version = completed.ledger.accounting_version();
-    validate_strategy_metadata(&completed.strategy_output, strategy_metadata)?;
-    if output.exists() {
-        return Err(ArtifactError::OutputExists(output.to_path_buf()));
-    }
-    let parent = output.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)?;
-    let name = output
-        .file_name()
-        .ok_or_else(|| ArtifactError::InvalidOutput(output.to_path_buf()))?
-        .to_string_lossy();
-    let staging = parent.join(format!(".{name}.osmium-staging"));
-    if staging.exists() {
-        return Err(ArtifactError::OutputExists(staging));
-    }
-    fs::create_dir(&staging)?;
-
-    let strategy = completed
-        .strategy_output
-        .to_canonical_bytes()
-        .map_err(|error| ArtifactError::Encoding(error.to_string()))?;
     let orders = encode_scheduled_orders(completed)?;
     let fills = encode_scheduled_fills(completed)?;
     let execution_trace = encode_scheduled_execution_trace(completed)?;
@@ -353,65 +225,34 @@ pub fn publish_scheduled_multi_backtest(
     let ledger_checksum = hash(&ledger);
     let event_checksum = hex(completed.replay.summary().event_checksum().as_bytes());
     let state_checksum = hex(completed.replay.summary().final_state_checksum().as_bytes());
-    let mut files = BTreeMap::<&str, Vec<u8>>::new();
-    files.insert(
-        "effective-config.yaml",
-        format!("config_checksum: {}\n", hex(plan_identity)).into_bytes(),
-    );
-    files.insert(
-        "execution-plan.yaml",
+    let mut files = base_files(
+        &completed.strategy_output,
+        strategy_metadata,
+        plan_identity,
         format!(
             "plan_identity: {}\nexecution_policy: scheduled_visible_depth_v1\n",
             hex(plan_identity)
         )
         .into_bytes(),
-    );
-    files.insert(
-        "data-lineage.yaml",
-        format!("source_revision: {source_revision}\n").into_bytes(),
-    );
-    files.insert(
-        "cache-lineage.yaml",
-        format!("cache_identity: {cache_identity}\n").into_bytes(),
-    );
-    files.insert(
-        "strategy.json",
-        encode_strategy_metadata(strategy_metadata)?,
-    );
-    files.insert(
-        "event-stream.blake3",
-        format!("{event_checksum}\n").into_bytes(),
-    );
-    files.insert(
-        "final-state.blake3",
-        format!("{state_checksum}\n").into_bytes(),
-    );
-    files.insert("strategy-output.bin", strategy.clone());
-    files.insert(
-        "strategy-output.blake3",
-        format!("{}\n", hash(&strategy)).into_bytes(),
-    );
-    files.insert("orders.bin", orders.clone());
-    files.insert("orders.blake3", format!("{}\n", hash(&orders)).into_bytes());
-    files.insert("fills.bin", fills.clone());
-    files.insert("fills.blake3", format!("{}\n", hash(&fills)).into_bytes());
-    files.insert("execution-trace.bin", execution_trace.clone());
-    files.insert(
-        "execution-trace.blake3",
-        format!("{}\n", hash(&execution_trace)).into_bytes(),
-    );
-    files.insert("fill-costs.json", fill_costs.clone());
-    files.insert(
-        "fill-costs.blake3",
-        format!("{}\n", hash(&fill_costs)).into_bytes(),
-    );
-    files.insert("cash-charges.json", cash_charges.clone());
-    files.insert(
-        "cash-charges.blake3",
-        format!("{}\n", hash(&cash_charges)).into_bytes(),
-    );
-    files.insert("ledger.bin", ledger.clone());
-    files.insert("ledger.blake3", format!("{ledger_checksum}\n").into_bytes());
+        source_revision,
+        cache_identity,
+        &event_checksum,
+        &state_checksum,
+    )?;
+    for (data_name, checksum_name, bytes) in [
+        ("orders.bin", "orders.blake3", orders),
+        ("fills.bin", "fills.blake3", fills),
+        (
+            "execution-trace.bin",
+            "execution-trace.blake3",
+            execution_trace,
+        ),
+        ("fill-costs.json", "fill-costs.blake3", fill_costs),
+        ("cash-charges.json", "cash-charges.blake3", cash_charges),
+        ("ledger.bin", "ledger.blake3", ledger),
+    ] {
+        insert_hashed(&mut files, data_name, checksum_name, bytes);
+    }
     files.insert(
         "positions.yaml",
         encode_multi_positions_parts(&completed.performance, accounting_version, &ledger_checksum),
@@ -451,11 +292,6 @@ pub fn publish_scheduled_multi_backtest(
         )
         .into_bytes(),
     );
-    files.insert("warnings.yaml", b"warnings: []\n".to_vec());
-    let checksums = files
-        .iter()
-        .map(|(name, bytes)| ((*name).to_owned(), hash(bytes)))
-        .collect::<BTreeMap<_, _>>();
     let manifest = serde_json::json!({
         "run_manifest_version": RUN_MANIFEST_VERSION,
         "versions": run_version_set(),
@@ -470,20 +306,8 @@ pub fn publish_scheduled_multi_backtest(
         "order_count": completed.simulator.orders().len(),
         "fill_count": completed.simulator.fills().len(),
         "execution_fill_count": completed.simulator.execution_fills().len(),
-        "artifact_checksums": checksums,
     });
-    files.insert(
-        "run-manifest.yaml",
-        serde_json::to_vec_pretty(&manifest)
-            .map_err(|error| ArtifactError::Encoding(error.to_string()))?,
-    );
-    for (name, bytes) in files {
-        write_file(&staging.join(name), &bytes)?;
-    }
-    File::open(&staging)?.sync_all()?;
-    fs::rename(&staging, output)?;
-    File::open(parent)?.sync_all()?;
-    Ok(())
+    publish_artifacts(output, files, manifest)
 }
 
 fn encode_strategy_metadata(metadata: &ResolvedStrategyMetadata) -> Result<Vec<u8>, ArtifactError> {
@@ -567,46 +391,9 @@ pub struct InspectSummary {
     pub fill_count: u64,
 }
 
-fn encode_orders(completed: &CompletedBacktest) -> Result<Vec<u8>, ArtifactError> {
-    let mut bytes = b"OSORDERS1".to_vec();
-    bytes.extend_from_slice(&(completed.simulator.orders().len() as u64).to_be_bytes());
-    for order in completed.simulator.orders() {
-        bytes.extend_from_slice(order.id().as_bytes());
-        let intent = order
-            .intent()
-            .to_canonical_bytes()
-            .map_err(|error| ArtifactError::Encoding(error.to_string()))?;
-        bytes.extend_from_slice(&(intent.len() as u32).to_be_bytes());
-        bytes.extend_from_slice(&intent);
-        bytes.extend_from_slice(&order.filled().to_be_bytes());
-        bytes.extend_from_slice(&order.remaining().to_be_bytes());
-        bytes.push(order.status() as u8);
-    }
-    Ok(bytes)
-}
-
-fn encode_fills(completed: &CompletedBacktest) -> Vec<u8> {
-    let fills = completed.simulator.fills();
-    let control_triggers = fills.iter().any(|fill| fill.control_sequence().is_some());
-    let mut bytes = if control_triggers {
-        b"OSFILLS2".to_vec()
-    } else {
-        b"OSFILLS1".to_vec()
-    };
-    bytes.extend_from_slice(&(fills.len() as u64).to_be_bytes());
-    for fill in fills {
-        bytes.extend_from_slice(fill.order_id().as_bytes());
-        append_fill_trigger(&mut bytes, fill, control_triggers);
-        bytes.extend_from_slice(&fill.match_time().as_unix_microseconds().to_be_bytes());
-        bytes.push(fill.side() as u8);
-        bytes.extend_from_slice(&fill.price().to_canonical_bytes());
-        bytes.extend_from_slice(&fill.quantity().to_canonical_bytes());
-    }
-    bytes
-}
-
-fn encode_multi_orders(completed: &CompletedMultiBacktest) -> Result<Vec<u8>, ArtifactError> {
-    let orders = completed.simulator.orders();
+fn encode_orders<'a>(
+    orders: impl ExactSizeIterator<Item = &'a execution_sim::SimOrder>,
+) -> Result<Vec<u8>, ArtifactError> {
     let mut bytes = b"OSORDERS1".to_vec();
     bytes.extend_from_slice(&(orders.len() as u64).to_be_bytes());
     for order in orders {
@@ -1030,14 +817,6 @@ fn quantity_unit_name(unit: market_types::QuantityUnit) -> &'static str {
     }
 }
 
-fn encode_ledger(completed: &CompletedBacktest) -> Vec<u8> {
-    let mut bytes = b"OSLEDGER1".to_vec();
-    bytes.extend_from_slice(&completed.ledger.cash().to_canonical_bytes());
-    bytes.extend_from_slice(&completed.ledger.position().to_be_bytes());
-    bytes.extend_from_slice(&completed.ledger.realized_pnl().to_canonical_bytes());
-    bytes
-}
-
 fn write_file(path: &Path, bytes: &[u8]) -> Result<(), io::Error> {
     let mut file = OpenOptions::new().create_new(true).write(true).open(path)?;
     file.write_all(bytes)?;
@@ -1134,9 +913,11 @@ mod tests {
     }
 
     #[test]
-    fn inspect_rejects_legacy_manifest_version() {
-        let path =
-            std::env::temp_dir().join(format!("osmium-legacy-manifest-{}", std::process::id()));
+    fn inspect_rejects_unsupported_manifest_version() {
+        let path = std::env::temp_dir().join(format!(
+            "osmium-unsupported-manifest-{}",
+            std::process::id()
+        ));
         if path.exists() {
             fs::remove_dir_all(&path).unwrap();
         }

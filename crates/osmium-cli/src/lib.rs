@@ -74,16 +74,10 @@ pub struct ParsedInvocation {
 }
 
 mod command;
-mod market_replay;
-mod market_replay_ui;
 pub use command::{
     BuiltInStrategyRegistry, Command, CommandError, CommandKind, StrategyRegistryProvider, execute,
     execute_config_check, execute_config_check_with_registry_provider, execute_inspect,
     execute_with_registry_provider, load_config_with_registry_provider,
-};
-pub use market_replay::{
-    MarketReplay, MarketReplayError, PLAYBACK_SPEEDS_MILLI, PlaybackSpeed, PlaybackStatus,
-    ReplayHistory, TradeRow,
 };
 
 pub const USAGE: &str = "\
@@ -96,7 +90,6 @@ Usage:
   osmium replay --config <file>
   osmium backtest --config <file> --output <new-directory>
   osmium run --config <file> [--output <new-directory>]
-  osmium display --config <file>
   osmium cache prepare --config <file>
   osmium inspect --run <run-directory>
 
@@ -105,14 +98,13 @@ Non-interactive output options:
   --quiet               Suppress successful command output
   --no-color            Disable terminal color
 
-config_version 3 is required. Legacy config_version 1 is not supported. Output directories
-must not already exist.
+config_version 3 is required. Output directories must not already exist.
 ";
 
 /// Runs the complete Osmium CLI with additional compiled strategy factories.
 ///
-/// Parsing, dispatch, output formatting, TUI commands and exit categories remain owned by this
-/// crate. External binaries only provide strategy registration and their argument iterator.
+/// Parsing, dispatch, output formatting and exit categories remain owned by this crate. External
+/// binaries only provide strategy registration and their argument iterator.
 pub fn run_with_registry_provider(
     args: impl IntoIterator<Item = OsString>,
     provider: impl StrategyRegistryProvider + 'static,
@@ -155,13 +147,6 @@ pub fn run_with_registry_provider(
         }) => match execute_config_check_with_registry_provider(&path, provider.as_ref()) {
             Ok(summary) => emit_success("config check", output, &summary),
             Err(error) => emit_error("config check", output, &error.to_string(), error.category()),
-        },
-        Ok(ParsedInvocation {
-            command: ParsedCommand::MarketReplay(command),
-            output,
-        }) => match execute_market_replay_with_registry_provider(&command, Arc::clone(&provider)) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(error) => emit_error("display", output, &error.to_string(), error.category()),
         },
         Ok(ParsedInvocation {
             command: ParsedCommand::Command(command),
@@ -226,25 +211,7 @@ pub enum ParsedCommand {
     Init(PathBuf),
     ConfigCheck(PathBuf),
     Command(Command),
-    MarketReplay(MarketReplayCommand),
     Inspect(PathBuf),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MarketReplayCommand {
-    config: PathBuf,
-}
-
-impl MarketReplayCommand {
-    #[must_use]
-    pub const fn new(config: PathBuf) -> Self {
-        Self { config }
-    }
-
-    #[must_use]
-    pub fn config(&self) -> &Path {
-        &self.config
-    }
 }
 
 pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<ParsedInvocation, CliError> {
@@ -310,17 +277,6 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<ParsedInvo
         };
         return Ok(ParsedInvocation {
             command: parse_command(kind, args)?,
-            output,
-        });
-    }
-    if command == "display" {
-        if output.format != OutputFormat::Human || output.quiet || output.no_color {
-            return Err(CliError::usage(
-                "display is interactive and does not accept output options",
-            ));
-        }
-        return Ok(ParsedInvocation {
-            command: parse_display(args)?,
             output,
         });
     }
@@ -546,32 +502,6 @@ fn parse_config_check(args: impl Iterator<Item = OsString>) -> Result<ParsedComm
     })?))
 }
 
-fn parse_display(args: impl Iterator<Item = OsString>) -> Result<ParsedCommand, CliError> {
-    let mut config = None;
-    let mut args = args;
-    while let Some(flag) = args.next() {
-        if flag == "--help" || flag == "-h" {
-            return Ok(ParsedCommand::Help);
-        }
-        let value = args.next().ok_or_else(|| {
-            CliError::usage(format!("missing value for {}", flag.to_string_lossy()))
-        })?;
-        if flag == "--config" && config.is_none() {
-            config = Some(PathBuf::from(value));
-        } else if flag == "--config" {
-            return Err(CliError::usage("duplicate option: --config"));
-        } else {
-            return Err(CliError::usage(format!(
-                "unknown display option: {}",
-                flag.to_string_lossy()
-            )));
-        }
-    }
-    Ok(ParsedCommand::MarketReplay(MarketReplayCommand::new(
-        config.ok_or_else(|| CliError::usage("missing required --config option"))?,
-    )))
-}
-
 fn parse_command(
     kind: CommandKind,
     args: impl Iterator<Item = OsString>,
@@ -608,18 +538,6 @@ fn parse_command(
         config: config.ok_or_else(|| CliError::usage("missing required --config option"))?,
         output,
     }))
-}
-
-pub fn execute_market_replay(command: &MarketReplayCommand) -> Result<(), CliError> {
-    market_replay_ui::run(command.config()).map_err(CliError::MarketReplay)
-}
-
-pub fn execute_market_replay_with_registry_provider(
-    command: &MarketReplayCommand,
-    provider: Arc<dyn StrategyRegistryProvider>,
-) -> Result<(), CliError> {
-    market_replay_ui::run_with_registry_provider(command.config(), provider)
-        .map_err(CliError::MarketReplay)
 }
 
 const INIT_CONFIG: &str = r#"# Edit the placeholders before running `osmium config check`.
@@ -687,7 +605,6 @@ pub fn init_config(path: &Path) -> Result<(), CliError> {
 #[derive(Debug)]
 pub enum CliError {
     Usage(Box<str>),
-    MarketReplay(MarketReplayError),
     Io(std::io::Error),
 }
 
@@ -705,7 +622,6 @@ impl CliError {
     pub const fn category(&self) -> ExitCategory {
         match self {
             Self::Usage(_) => ExitCategory::Usage,
-            Self::MarketReplay(_) => ExitCategory::Replay,
             Self::Io(_) => ExitCategory::Internal,
         }
     }
@@ -720,7 +636,6 @@ impl fmt::Display for CliError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Usage(message) => formatter.write_str(message),
-            Self::MarketReplay(source) => write!(formatter, "{source}"),
             Self::Io(source) => write!(formatter, "{source}"),
         }
     }
@@ -729,7 +644,6 @@ impl fmt::Display for CliError {
 impl Error for CliError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::MarketReplay(source) => Some(source),
             Self::Io(source) => Some(source),
             Self::Usage(_) => None,
         }
@@ -813,19 +727,15 @@ mod tests {
     }
 
     #[test]
-    fn display_accepts_a_frozen_config_path() {
-        assert_eq!(
-            parse_args([
-                "display".into(),
-                "--config".into(),
-                "examples/config.yaml".into(),
-            ])
-            .unwrap()
-            .command,
-            ParsedCommand::MarketReplay(MarketReplayCommand::new("examples/config.yaml".into()))
-        );
-        assert!(parse_args(["display".into()]).is_err());
-        assert!(parse_args(["market".into(), "replay".into()]).is_err());
+    fn display_is_an_ordinary_unknown_command() {
+        let error = parse_args([
+            "display".into(),
+            "--config".into(),
+            "examples/config.yaml".into(),
+        ])
+        .unwrap_err();
+        assert_eq!(error.to_string(), "unknown command: display");
+        assert_eq!(error.exit_code(), 2);
     }
 
     #[test]

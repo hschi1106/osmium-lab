@@ -230,7 +230,7 @@ def manifest_entry(profile: Profile, checksum: str, records: int) -> list[str]:
     sessions = ", ".join(profile.sessions)
     lines = [
         f"  - id: synthetic-{profile.market}-{profile.kind}",
-        f"    path: fixtures/teralion/{profile.market}/{profile.symbol}/{DATE}",
+        f"    path: fixtures/providers/teralion/{profile.market}/{profile.symbol}/{DATE}",
         f"    market: {profile.market}",
     ]
     if profile.source_market != profile.market:
@@ -283,7 +283,7 @@ def write_smoke(repository: Path) -> None:
 
 def main() -> None:
     repository = Path(__file__).resolve().parents[2]
-    root = repository / "fixtures/teralion"
+    root = repository / "fixtures/providers/teralion"
     if root.exists():
         shutil.rmtree(root)
     root.mkdir(parents=True)

@@ -7,15 +7,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use data_sync::{
-    ArchiveKind, ArchiveMarket, ArchiveTimestamp, CacheBuilder, StagingRevision,
-    TeralionCredential, TeralionQuery, TeralionRequest, TeralionSync, TeralionTransport,
-    TransportError, normalizer_config_for,
-};
+use data_sync::StagingRevision;
 use market_types::{InstrumentClass, InstrumentId, MarketId, UtcOffsetMinutes};
-use osmium_config::{RunConfig, load};
-use run_planner::SourcePartitionKey;
+use osmium_config::{load, plan};
+use run_planner::{ExecutionPlan, PlannedPartition, SourcePartitionKey};
 use strategy_api::{AcceptanceStrategyFactory, SessionKind, StrategyRegistry};
+use teralion_provider::{
+    ArchiveKind, ArchiveMarket, ArchiveTimestamp, TeralionCredential, TeralionQuery,
+    TeralionRequest, TeralionSync, TeralionTransport, TransportError, normalizer_config_for,
+    prepare_cache,
+};
 
 #[derive(Debug)]
 struct FixtureTransport {
@@ -194,17 +195,17 @@ fn kinds_for(instrument: &InstrumentId) -> &'static [ArchiveKind] {
 }
 
 fn replay_window(
-    config: &RunConfig,
-    key: &SourcePartitionKey,
+    partition: &PlannedPartition,
 ) -> Result<(ArchiveTimestamp, ArchiveTimestamp), Box<dyn Error>> {
-    let plan = config.session_plan_for(key)?;
-    let start = plan
+    let start = partition
+        .session_plan()
         .windows()
         .iter()
         .map(|window| window.replay_start())
         .min()
         .ok_or("session plan has no replay windows")?;
-    let end = plan
+    let end = partition
+        .session_plan()
         .windows()
         .iter()
         .map(|window| window.replay_end_exclusive())
@@ -218,16 +219,18 @@ fn replay_window(
 }
 
 fn prepare_partition(
-    config: &RunConfig,
+    execution: &ExecutionPlan,
     fixture_root: &Path,
     data_root: &Path,
-    key: &SourcePartitionKey,
+    partition: &PlannedPartition,
 ) -> Result<(), Box<dyn Error>> {
-    let (start, end) = replay_window(config, key)?;
-    let selection = config
-        .selection_for(key.instrument())
+    let key = partition.key();
+    let (start, end) = replay_window(partition)?;
+    let contract = execution
+        .config()
+        .contract_for(key.instrument())
         .ok_or("fixture partition has no instrument selection")?;
-    let class = selection.class();
+    let class = contract.class();
     let query = match class {
         InstrumentClass::Warrant | InstrumentClass::Option => TeralionQuery::ticks_for_market(
             key.instrument().clone(),
@@ -263,15 +266,14 @@ fn prepare_partition(
     )?;
     staging.stage_daily_instrument(daily_query.identity(), &daily)?;
     let published = staging.publish(query.identity(), report.terminal)?;
-    let session_plan = config.session_plan_for(key)?;
     let normalizer = normalizer_config_for(
         key.source(),
         key,
         class,
-        selection.contract_shape(),
-        &session_plan,
+        contract.shape(),
+        partition.session_plan(),
     )?;
-    let cache = CacheBuilder::new(data_root).build_partition(key, normalizer)?;
+    let cache = prepare_cache(data_root, key, normalizer)?;
     println!(
         "partition={:?}/{}@{} pages={} records={} source_revision={} cache_identity={}",
         key.instrument().market(),
@@ -340,8 +342,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     registry.register(AcceptanceStrategyFactory::new()?)?;
     registry.register(example_strategy::PriceThresholdBuyOnceFactory::new()?)?;
     let config = load(config_path, &registry)?;
-    for key in config.partition_keys()? {
-        prepare_partition(&config, &fixture_root, &data_root, &key)?;
+    let bundle = plan(&config, |source, market, class, shape| {
+        teralion_provider::normalizer_mapping_for(source, market, class, shape)
+            .map_err(|error| error.to_string())
+    })?;
+    for partition in bundle.execution.partitions() {
+        prepare_partition(&bundle.execution, &fixture_root, &data_root, partition)?;
     }
     Ok(())
 }

@@ -1,78 +1,69 @@
-# TPEx Teralion 介面
+# TPEx Teralion mapping
 
-適用 normalizer：
+本頁只定義 TPEx source evidence → neutral domain mapping。共通 observation、auction lifecycle 與
+MarketState 見[回播模型](../architecture/replay-model.md)；orders/fills 見
+[執行模型](../architecture/execution-model.md)。
 
-- equity：`TeralionTpexQuote`，mapping version `6`。
-- warrant：`TeralionTpexWarrant`，mapping version `6`。
+## Mapping identity 與範圍
 
-## 1. 支援範圍
+- equity：`TeralionTpexQuote` mapping version `9`。
+- warrant：`TeralionTpexWarrant` mapping version `8`。
 
 | Profile | Timeline formats | Known skip |
 | --- | --- | --- |
-| Equity | `STOCK_SNAPSHOT`、`STOCK_REALTIME` | `INTRADAY_ODDLOT_REALTIME` |
-| Warrant | `WARRANT_SNAPSHOT`、`WARRANT_REALTIME` | `INTRADAY_ODDLOT_REALTIME` |
+| Equity | `STOCK_SNAPSHOT`, `STOCK_REALTIME` | `INTRADAY_ODDLOT_REALTIME` |
+| Warrant | `WARRANT_SNAPSHOT`, `WARRANT_REALTIME` | `INTRADAY_ODDLOT_REALTIME` |
 
-regular session 為 09:00–13:30，download 與 replay window 為 `[08:55, 13:35)`。archive selection 使用 `received_at`；event、state 與 strategy 只使用 `match_time`。
+Regular session 是 09:00–13:30，planner margin 後 window 為 `[08:55, 13:35)`。Known odd-lot format
+只記 source/skip reason；unknown、wrong profile 或 malformed format 在 strict mode reject。
 
-## 2. Wire 與 snapshot
+## Wire 與 complete book
 
-- `type=quote`、`market=tpex`，symbol 與 profile 必須符合 partition。
-- `bids`／`asks` 各為 0–5 檔且由 best 到較差排列。
-- 每筆 quote 是完整 snapshot，trailing empty slots 不沿用上一筆資料。
-- price 使用 exact decimal；quantity 與 cumulative volume 使用 `TradingUnit`。
-- 最佳第一檔 wire price 為 `0` 時表示市價委託揭示；quantity 存入 `BookSide.market_order_quantity`，不建立零價 `BookLevel`。零價出現在其他檔位時拒絕；best bid／ask、mark 與 fill evidence 只使用 priced levels。
-- 一般 quote 的 `deal=null` 映射為 `NoObservation`。`deal.quantity=0` 只有在 `limit_flags` 明確表示 volatility-interruption trend、不是 intermediate print，且買賣簿皆為空時，才視為 pause sentinel；整筆 observation 映射為 `MarketStatus`，只更新 cumulative volume 與 annotations，不清空先前 firm book／trade。其他 zero-quantity deal 拒絕，避免把非法輸入靜默當成缺值。唯讀查詢 Teralion `/ticks` 的 2026-08-10 TPEx 2948 stability 序列觀察到 trigger 記錄為 `status_flags=16`、`limit_flags=2`、零量 deal、空簿；後續 trial 記錄有 deal／book、`status_flags=128` 且 cumulative volume 不變，約 120 秒後正式成交令累計量增加。相同 immutable revision 已通過 partition integrity 與 Teralion adapter lifecycle conformance；raw rows 保留在 ignored validation root，不納入 repository。
-- `status_flags` 與 `limit_flags` 以 `TpexQuoteAnnotations` 保存。
+Record 必須是 `type=quote`、`market=tpex`，symbol/format/session符合 partition。Price 是 exact
+decimal，quantity/cumulative volume 是 `TradingUnit`。Bid/ask 各 0–5 檔、依 best 到較差排序，
+price/quantity 成對；每筆是完整 snapshot，不沿用 trailing levels。
 
-`open_price`、`high_price`、`low_price` 保留在 source lineage，不會在缺少正式 domain 欄位時塞入 `QuoteSnapshot`。
+第一檔 wire price `0` 表示市價委託揭示，其量存入 `BookSide.market_order_quantity`；不建立零價
+level。其他檔位零價 reject，best price/mark/fill depth只用 priced levels。`open_price`、
+`high_price`、`low_price` 留在 source lineage，不塞入缺少正式欄位的 domain event。
 
-## 3. 交易狀態 bit 語意
+## Source flags → neutral evidence
 
-依 TPEx IP 行情網路規格，`status_flags` bit 7 是試算揭示；bit 6／5 分別是試算後延後開盤／收盤註記，bit 4 是撮合方式，bit 3／2 是開盤／收盤註記。`limit_flags` 最低兩 bit 為瞬間價格趨勢：`00` 一般揭示、`01` 暫緩撮合且瞬間趨跌、`10` 暫緩撮合且瞬間趨漲、`11` 保留。延後開收盤 bit 只有在 trial 狀態下有意義。
+`status_flags` bit 7 是 trial，bit 6/5 是 delayed opening/closing，bit 4 是撮合方式，bit 3/2 是
+opening/closing marker。`limit_flags` 低兩 bit表示 normal/down/up/reserved instant trend。
 
-TPEx 對暫緩撮合的揭示語意指出：價格欄位代表最近成交價、成交量為 0，且不揭示買賣價量。故 instant-trend 是 matching 暫停及方向訊號，**不能單獨證明**該筆 Teralion `deal`／book 是 indicative auction trial。上述真實樣本確認 trigger 的 Teralion JSON 欄位形狀符合 raw wire 描述；trial 與正式撮合的區分則由 `status_flags`、累計量變化及序列共同支持，不可只看一個 flag。
+| Source evidence | Neutral output |
+| --- | --- |
+| firm quote + complete book | `QuoteSnapshot` |
+| firm `deal=null` | trade `NoObservation` |
+| realtime intermediate prints | source-ordered `TradeBatch` |
+| trial record | `IndicativeAuction` + partial `AuctionObservation` |
+| non-trial VI trend + zero-quantity deal + empty book | `MarketStatus` + `AuctionCollecting(VolatilityInterruption)` |
 
-參考：[TPEx 上櫃股票 IP 行情網路規格書 V.12.18](https://dsp.tpex.org.tw/storage/regular_system/%E4%B8%8A%E6%AB%83%E8%82%A1%E7%A5%A8IP%E8%A1%8C%E6%83%85%E7%B6%B2%E8%A6%8F%E6%A0%BC%E6%9B%B8%28V.12.18_TCPIP%29.pdf)。
+Zero-quantity pause sentinel 不建立 trade、不清空 firm book/trade。其他 zero-quantity deal reject。
+Trial record不成為 actual trade、firm cumulative volume、mark 或 fill evidence。Opening/closing 優先
+使用 explicit delayed flag，再看 marker/session window；來源不能證明 purpose 的盤中 trial 保留
+unclassified evidence，不猜 `Periodic`。Normalizer 不依固定兩分鐘 duration合成 start/end/resume。
 
-## 4. Domain mapping
+## Realtime group validation
 
-一般完整 quote 產生：
+同一 market/date/symbol/format/`match_time` group 的 intermediate records 形成 `TradeBatch`，final
+形成 `QuoteSnapshot` 或 status-only `MarketStatus`。Normalizer要求：
 
-```text
-QuoteSnapshot(
-  complete book,
-  optional ObservedTrade,
-  cumulative volume observation,
-  TpexQuoteAnnotations
-)
-```
+- intermediate 都有 trade、沒有 book；
+- intermediate auction/trial phase彼此一致，且與 final一致；
+- 恰有一筆 final，book/shape合法；
+- final cumulative volume 與 intermediate relationship一致。
 
-realtime intermediate/final group 分別產生 `TradeBatch` 與 `QuoteSnapshot`；若 final 是 status-only pause sentinel，則產生不覆寫 firm book／trade 的 `MarketStatus`。兩者都驗證 final cumulative volume。group 不完整時 strict reject，不從 book 差分、page order 或 `received_at` 推定成交。
+任何條件不符都 reject 整組，不由 book diff、page order、`received_at` 或最大 cumulative volume
+修補。這項 group-phase validation 是 mapping v9/v8 的一部分；舊 mapping cache必須重建。
 
-目前 normalizer 將所有 `trial=true` record 產生為 `IndicativeAuction`。opening／closing 優先
-使用明確 delayed flag，再使用 marker／session window；盤中 trial 保守分類為
-`IntradayUnclassified`，並保留 instant-trend annotations。Alpha 只能把該 trial 與先前同商品、
-同交易日的明確暫緩撮合 trigger 關聯；目前已驗證的真實序列仍不支持由單筆 trial 的 trend 推定 lifecycle，因此維持這個分類邊界。明確標示的試算價量、五檔與 cumulative volume 只進
-indicative state，不得覆寫 firm state 或成為一般 fill evidence。
+## Warrant 與限制
 
-`trial=false` 且有 instant-trend 的 status-only observation 產生 `MarketStatus`、保留原始 annotation 並限制 matching；normalizer 不依兩分鐘
-duration 合成 lifecycle event。真實 TPEx 樣本的正式撮合 record 在約 120 秒後以 `trial=false`
-出現、成交量與 cumulative volume 增加，之後才恢復逐筆揭示。`EquityIndicativeObservation` 只接受 typed `IndicativeAuction`，不再接受
-trial `QuoteSnapshot` workaround。
+Warrant 有獨立 format registry/mapping。Underlying、expiry、strike、option side、currency、quantity
+unit 與 multiplier 必須來自 reference/economics。Normalizer 不產生 sequence、aggressor、queue、
+latency、disposal rule或 exchange trigger；source 沒 sequence 時由 canonical content tie-break只保證
+determinism，不宣稱交易所全域順序。
 
-## 5. Reject／skip policy
-
-identity mismatch、unknown format、缺少必要欄位、無效時間、非法價量、超過五檔、level ordering 錯誤或不完整 match group 均在 strict mode 拒絕。known odd-lot format 只保留 source 與 skip reason，不進 cache timeline。
-
-normalizer 不產生 sequence、aggressor、queue、latency 或未經來源證實的 market semantics。source 沒有 sequence 時，以 canonical content tie-break 保證可重現。
-
-## 6. Warrant profile
-
-warrant profile 使用獨立 format registry 與 mapping identity，不套用 equity format 名稱。underlying、expiry、strike、option side、currency、quantity unit 與 multiplier 需由 reference／economics 明確提供。
-
-repository fixture 位於 [`fixtures/teralion/tpex`](../../fixtures/teralion/tpex)，只固定合成的 quote、auction、annotation 與 state mapping，不代表完整交易日。零價市價委託的 source contract 依 TPEx IP 行情格式固定；目前 2948 validation partition 未出現該形狀，故另以 adapter regression 驗證。
-
-官方參考：[TPEx 上櫃股票 IP 行情網路規格書](https://dsp.tpex.org.tw/storage/regular_system/%E4%B8%8A%E6%AB%83%E8%82%A1%E7%A5%A8IP%E8%A1%8C%E6%83%85%E7%B6%B2%E8%B7%AF%E8%A6%8F%E6%A0%BC%E6%9B%B8%28V.12.18_TCPIP%29.pdf)。共通規則見 [回播模型](../architecture/replay-model.md)。
-## 7. Stability 暫緩撮合
-
-TPEx 的瞬間價格穩定措施期間只接受限價 ROD，並刪除既有一般市價委託。平台依來源 annotations 將 matching 標為 indicative；一般與 scheduled execution 都會拒絕 pause 中新進場的 market ROD，並取消已進場但尚未完成的 market ROD，limit ROD 則依各自 fill policy 保留。尚未 activation 的 scheduled request 尚未送至交易所，不會僅因 trigger 取消；試算價量不作正式 fill evidence。此處只建模已觀察到的限制，不推算 stability start/end。來源依據：[TPEx 交易制度說明](https://www.tpex.org.tw/zh-tw/mainboard/trading/rules/continuous.html)。目前 `OrderIntent` 只建模 ROD，IOC／FOK 不在支援範圍。
+Fixtures：[`fixtures/providers/teralion/tpex`](../../fixtures/providers/teralion/tpex)。官方參考：
+[TPEx 上櫃股票 IP 行情網路規格書](https://dsp.tpex.org.tw/storage/regular_system/%E4%B8%8A%E6%AB%83%E8%82%A1%E7%A5%A8IP%E8%A1%8C%E6%83%85%E7%B6%B2%E8%B7%AF%E8%A6%8F%E6%A0%BC%E6%9B%B8%28V.12.18_TCPIP%29.pdf)。

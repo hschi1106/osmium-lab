@@ -5,7 +5,8 @@ mod scheduled;
 use std::{collections::BTreeMap, collections::BTreeSet, error::Error, fmt};
 
 use market_types::{
-    DomainEvent, EventPayload, InstrumentId, MatchTime, Price, PricePolicy, Quantity, QuantityUnit,
+    AuctionEvidence, AuctionPurpose, DomainEvent, EventPayload, InstrumentId, MarketSignal,
+    MatchTime, Price, PricePolicy, Quantity, QuantityUnit,
 };
 use replay_engine::EventOccurrence;
 use strategy_api::{
@@ -20,8 +21,8 @@ pub const FILL_MODEL_VERSION: u16 = 2;
 pub use accounting::{
     ACCOUNTING_VERSION, AccountingError, AccountingModel, CashChargeIdentity, CashChargeRecord,
     ChargeBasis, ChargeModel, ChargeSides, DayTradeTaxModel, FillCostRecord, InstrumentEconomics,
-    InstrumentLedgerConfig, InstrumentPerformance, LEGACY_ACCOUNTING_VERSION, Ledger, MultiLedger,
-    MultiPerformanceSummary, PerformanceSummary, RoundingPolicy, assess_fill_charge,
+    InstrumentLedgerConfig, InstrumentPerformance, Ledger, MultiLedger, MultiPerformanceSummary,
+    PerformanceSummary, RoundingPolicy, assess_fill_charge,
 };
 pub use depth::{
     AtomicDepthFill, AtomicDepthLeg, ConsumableDepth, DepthSweepError, DepthSweepResult, LevelFill,
@@ -266,15 +267,7 @@ impl Simulator {
                 reason: RejectionReason::PriceNotAllowedByInstrumentProfile,
             });
         }
-        let entry_allowed = match trading.new_order_entry() {
-            NewOrderEntry::Allowed => true,
-            NewOrderEntry::Restricted(OrderRestrictionReason::PreOpenLimitOrdersOnly)
-            | NewOrderEntry::Restricted(OrderRestrictionReason::IndicativeMarket) => {
-                matches!(intent.order_type(), OrderType::Limit { .. })
-            }
-            NewOrderEntry::Blocked(_) | NewOrderEntry::Unknown => false,
-        };
-        if !entry_allowed {
+        if !entry_allowed(trading.new_order_entry(), intent.order_type()) {
             return Ok(OrderFeedback::Rejected {
                 reason: RejectionReason::NewOrderEntryBlocked,
             });
@@ -318,13 +311,10 @@ impl Simulator {
         occurrence: &EventOccurrence,
         trading: &TradingContext,
     ) -> Result<Vec<OrderFeedback>, SimulationError> {
-        if matches!(
-            trading.matching(),
-            MatchingState::Indicative(
-                strategy_api::IndicativeReason::VolatilityInterruptionDown
-                    | strategy_api::IndicativeReason::VolatilityInterruptionUp
-            )
-        ) {
+        if let Some(MarketSignal::AuctionCollecting(observation)) = trading.market_signal()
+            && observation.purpose()
+                == AuctionEvidence::Known(AuctionPurpose::VolatilityInterruption)
+        {
             return Ok(self.cancel_pending_market_orders(event.instrument()));
         }
         if !matches!(trading.matching(), MatchingState::Enabled(_)) {
@@ -525,6 +515,17 @@ fn evidence(event: &DomainEvent, mode: EvidenceMode, side: OrderSide) -> Option<
             .first()
             .map(|trade| (trade.price(), trade.quantity())),
         _ => None,
+    }
+}
+
+fn entry_allowed(entry: NewOrderEntry, order_type: OrderType) -> bool {
+    match entry {
+        NewOrderEntry::Allowed => true,
+        NewOrderEntry::Restricted(OrderRestrictionReason::PreOpenLimitOrdersOnly)
+        | NewOrderEntry::Restricted(OrderRestrictionReason::AuctionCollecting) => {
+            matches!(order_type, OrderType::Limit { .. })
+        }
+        NewOrderEntry::Blocked(_) | NewOrderEntry::Unknown => false,
     }
 }
 
@@ -758,10 +759,10 @@ mod tests {
         MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
     };
     use market_types::{
-        BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, EventPayload, IndicativeAuction,
-        IndicativeAuctionKind, MarketAnnotations, MarketId, Observation, ObservedTrade,
-        QuoteSnapshot, SourceFormatId, Symbol, TradeObservationKind, TradingDate,
-        TwseQuoteAnnotations, Volume,
+        AuctionObservation, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, EventPayload,
+        IndicativeAuction, MarketAnnotations, MarketId, Observation, ObservedTrade, QuoteSnapshot,
+        SourceFormatId, Symbol, TradeObservationKind, TradingDate, TwseQuoteAnnotations,
+        VolatilityDirection, Volume,
     };
     use replay_engine::ReplayCore;
 
@@ -815,7 +816,20 @@ mod tests {
             Observation::Set(Volume::new(cumulative, QuantityUnit::TradingUnit)),
             MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0x10, limit_flags)),
         )
-        .unwrap();
+        .unwrap()
+        .with_market_signal(Observation::Set(match limit_flags {
+            0x01 => MarketSignal::AuctionCollecting(AuctionObservation::volatility_interruption(
+                VolatilityDirection::Down,
+                false,
+                false,
+            )),
+            0x02 => MarketSignal::AuctionCollecting(AuctionObservation::volatility_interruption(
+                VolatilityDirection::Up,
+                false,
+                false,
+            )),
+            _ => MarketSignal::Continuous,
+        }));
         DomainEvent::new(
             template.instrument().clone(),
             template.trading_date(),
@@ -902,7 +916,7 @@ mod tests {
             None,
             EventPayload::IndicativeAuction(
                 IndicativeAuction::new(
-                    IndicativeAuctionKind::Opening,
+                    AuctionObservation::opening(false, false),
                     Observation::Set(Price::parse("100").unwrap()),
                     Observation::Set(Quantity::new(1, QuantityUnit::TradingUnit).unwrap()),
                     Observation::Set(snapshot.book().clone()),
@@ -953,14 +967,13 @@ mod tests {
 
         let normal_commit = core.apply_ordered(&normal_event).unwrap();
         let normal_state = core.state(&instrument).unwrap().view();
-        let normal_context = strategy_api::TwseTradingContextEvaluator
-            .evaluate(
-                &normal_event,
-                normal_commit.occurrence(),
-                normal_state,
-                &segment,
-            )
-            .unwrap();
+        let normal_context = strategy_api::MarketTradingContextEvaluator::evaluate(
+            &normal_event,
+            normal_commit.occurrence(),
+            normal_state,
+            &segment,
+        )
+        .unwrap();
         let accepted = simulator
             .submit(
                 "test.stability",
@@ -999,17 +1012,16 @@ mod tests {
 
         let pause_commit = core.apply_ordered(&pause_event).unwrap();
         let pause_state = core.state(&instrument).unwrap().view();
-        let pause_context = strategy_api::TwseTradingContextEvaluator
-            .evaluate(
-                &pause_event,
-                pause_commit.occurrence(),
-                pause_state,
-                &segment,
-            )
-            .unwrap();
+        let pause_context = strategy_api::MarketTradingContextEvaluator::evaluate(
+            &pause_event,
+            pause_commit.occurrence(),
+            pause_state,
+            &segment,
+        )
+        .unwrap();
         assert_eq!(
             pause_context.new_order_entry(),
-            NewOrderEntry::Restricted(OrderRestrictionReason::IndicativeMarket)
+            NewOrderEntry::Restricted(OrderRestrictionReason::AuctionCollecting)
         );
         assert_eq!(
             simulator

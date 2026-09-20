@@ -1,4 +1,4 @@
-schema_version: 4
+schema_version: 5
 source_of_truth: docs/product-requirements.md
 
 contracts:
@@ -7,18 +7,30 @@ contracts:
     implementation: crates/osmium-cli
     documentation: docs/operations/cli.md
   run_config:
-    version: 2
+    version: 3
     implementation: crates/osmium-config
     documentation: docs/config-reference.md
+  effective_plan:
+    version: 2
+    implementation: crates/osmium-config/src/lib.rs
+    documentation: docs/architecture/data-flow.md
   run_manifest:
-    version: 3
+    version: 4
     implementation: crates/osmium-runner/src/artifacts.rs
   event_schema:
-    version: 4
+    version: 9
+    implementation: crates/market-types/src/event.rs
+    documentation: docs/architecture/replay-model.md
+  canonical_event:
+    version: 9
+    implementation: crates/market-types/src/event.rs
+    documentation: docs/architecture/replay-model.md
+  market_types:
+    version: 11
     implementation: crates/market-types/src/event.rs
     documentation: docs/architecture/replay-model.md
   replay_cache:
-    version: 1
+    version: 3
     implementation: crates/data-sync/src/cache.rs
     documentation: docs/architecture/data-flow.md
   accounting:
@@ -29,17 +41,335 @@ contracts:
     version: 3
     implementation: crates/strategy-api/src/output.rs
     documentation: docs/architecture/execution-model.md
+  strategy_api:
+    version: 4
+    implementation: crates/strategy-api/src/lib.rs
+    documentation: docs/architecture/execution-model.md
+
+capability_matrix:
+  status_legend:
+    supported: "production path 與 regression evidence 均存在。"
+    model_scope: "已正規化並接入明確 simulation/accounting model，但不宣稱 full exchange matching。"
+    out_of_scope: "產品明確不支援，不得由其他 policy 隱式提供。"
+  source_replay:
+    - id: SRC-VERIFIED
+      claim: provider-neutral verified source
+      status: supported
+      production_owner: [crates/data-sync, crates/market-types]
+      evidence: [crates/data-sync/src/verify.rs, crates/data-sync/src/partition.rs]
+    - id: SRC-CACHE-LIFECYCLE
+      claim: cache prepare, reuse, rebuild
+      status: supported
+      production_owner: [crates/data-sync, crates/run-planner]
+      evidence:
+        - crates/data-sync/src/cache.rs
+        - crates/run-planner/tests/partition_plan.rs#source_and_cache_states_classify_into_explicit_actions
+    - id: REPLAY-MULTI-STREAM
+      claim: deterministic multi-stream replay
+      status: supported
+      production_owner: [crates/replay-engine]
+      evidence:
+        - crates/replay-engine/tests/replay.rs#multi_stream_replay_merges_bounded_heads_and_ignores_sentinel
+        - crates/replay-engine/tests/replay.rs#multi_stream_binding_order_does_not_change_checksum
+    - id: REPLAY-MULTI-INSTRUMENT
+      claim: multi-instrument universe
+      status: supported
+      production_owner: [crates/replay-engine, crates/osmium-runner]
+      evidence: [crates/osmium-runner/src/lib.rs#multi_market_backtest_reconciles_equity_and_option_economics]
+    - id: REPLAY-MULTI-DATE
+      claim: multi-day and trading-date boundaries
+      status: supported
+      production_owner: [crates/run-planner, crates/replay-engine]
+      evidence:
+        - crates/run-planner/tests/partition_plan.rs#execution_plan_requires_every_universe_date_partition
+        - crates/replay-engine/tests/replay.rs#context_schedule_resets_state_across_trading_dates
+      limitation: repository-owned fixtures are complete_day=false
+    - id: REPLAY-FIRM-INDICATIVE
+      claim: firm and indicative isolation
+      status: supported
+      production_owner: [crates/market-state]
+      evidence:
+        - crates/market-state/tests/neutral_signal.rs
+        - crates/market-state/tests/reducer.rs#taifex_opening_indicative_is_timeline_without_trade_or_volume_state
+    - id: REPLAY-NO-LOOKAHEAD
+      claim: no-look-ahead and visibility boundary
+      status: supported
+      production_owner: [crates/strategy-api, crates/osmium-runner]
+      evidence:
+        - crates/strategy-api/tests/strategy.rs#callback_observes_committed_post_event_state_and_context
+        - crates/osmium-runner/src/visibility.rs
+  markets_instruments:
+    - id: MARKET-TWSE-EQUITY
+      claim: TWSE equity
+      status: model_scope
+      production_owner: [crates/providers/teralion, crates/market-state, crates/osmium-cli, crates/execution-sim]
+      evidence:
+        - crates/providers/teralion/tests/twse_full_fixture.rs
+        - crates/osmium-runner/src/lib.rs#multi_market_backtest_reconciles_equity_and_option_economics
+      limitation: EquityV1 and generic fill model; no exchange-level matching or queue position
+    - id: MARKET-TWSE-WARRANT
+      claim: TWSE warrant
+      status: model_scope
+      production_owner: [crates/providers/teralion, crates/market-state, crates/osmium-cli, crates/execution-sim]
+      evidence:
+        - crates/providers/teralion/tests/twse_m5_fixture.rs
+        - crates/providers/teralion/tests/twse_normalizer.rs
+      limitation: uses EquityV1; warrant-specific exchange matching is out of scope
+    - id: MARKET-TPEX-EQUITY
+      claim: TPEx equity
+      status: model_scope
+      production_owner: [crates/providers/teralion, crates/market-state, crates/osmium-cli, crates/execution-sim]
+      evidence:
+        - crates/providers/teralion/tests/tpex_full_fixture.rs
+        - crates/providers/teralion/tests/tpex_normalizer.rs
+      limitation: EquityV1 and generic fill model; no exchange-level matching or queue position
+    - id: MARKET-TPEX-WARRANT
+      claim: TPEx warrant
+      status: model_scope
+      production_owner: [crates/providers/teralion, crates/market-state, crates/osmium-cli, crates/execution-sim]
+      evidence:
+        - crates/providers/teralion/tests/tpex_m5_warrant_fixture.rs
+        - crates/providers/teralion/tests/tpex_normalizer.rs
+      limitation: uses EquityV1; warrant-specific exchange matching is out of scope
+    - id: MARKET-TAIFEX-FUTURE
+      claim: TAIFEX future
+      status: model_scope
+      production_owner: [crates/providers/teralion, crates/market-state, crates/osmium-cli, crates/execution-sim]
+      evidence:
+        - crates/providers/teralion/tests/taifex_fixtures.rs
+        - crates/osmium-runner/src/lib.rs#multi_backtest_isolates_instruments_and_respects_latency
+      limitation: FuturesV1 requires explicit multiplier, contract shape and session profile
+    - id: MARKET-TAIFEX-OPTION
+      claim: TAIFEX option
+      status: model_scope
+      production_owner: [crates/providers/teralion, crates/market-state, crates/osmium-cli, crates/execution-sim]
+      evidence:
+        - crates/providers/teralion/tests/taifex_m5_option_fixture.rs
+        - crates/execution-sim/src/accounting.rs#options_v1_moves_premium_cash_with_contract_multiplier
+        - crates/osmium-runner/src/lib.rs#multi_market_backtest_reconciles_equity_and_option_economics
+      limitation: OptionsV1 premium cash model; no exchange-level matching or exercise/assignment model
+  market_states:
+    - id: STATE-CONTINUOUS
+      claim: continuous
+      status: supported
+      production_owner: [crates/market-types, crates/market-state, crates/strategy-api]
+      evidence: [crates/providers/teralion/tests/production_market_path.rs]
+    - id: STATE-OPEN-CLOSE
+      claim: opening and closing
+      status: supported
+      production_owner: [crates/market-state]
+      evidence: [crates/market-state/tests/neutral_signal.rs#opening_and_delayed_opening_uncross_end_in_continuous_phase, crates/market-state/tests/neutral_signal.rs#closing_uncross_closes_without_erasing_the_last_firm_book]
+    - id: STATE-DELAYED
+      claim: delayed open and close
+      status: supported
+      production_owner: [crates/market-types, crates/market-state]
+      evidence: [crates/strategy-api/tests/strategy.rs#strategy_callback_can_observe_explicit_delayed_open_signal]
+    - id: STATE-PERIODIC-DISPOSAL
+      claim: periodic auction and disposal observation
+      status: supported
+      production_owner: [crates/market-types, crates/market-state, crates/providers/teralion]
+      evidence: [crates/market-state/tests/neutral_signal.rs#periodic_uncross_resets_delay_for_next_round_and_reasserts_after_explicit_trigger, crates/providers/teralion/tests/production_market_path.rs]
+      limitation: disposal is only source-supported event evidence; no instrument-day background lookup
+    - id: STATE-VI
+      claim: volatility interruption
+      status: supported
+      production_owner: [crates/market-state, crates/execution-sim, crates/osmium-runner]
+      evidence: [crates/market-state/tests/neutral_signal.rs#volatility_interruption_result_returns_to_continuous_without_using_a_trial_book, crates/execution-sim/src/lib.rs#volatility_interruption_restricts_new_orders_and_cancels_pending_market_orders]
+    - id: STATE-UNKNOWN-DEGRADED
+      claim: Unknown and degraded state
+      status: supported
+      production_owner: [crates/market-state, crates/run-planner, crates/replay-engine]
+      evidence: [crates/market-state/tests/neutral_signal.rs#no_observation_keeps_phase_but_unknown_signal_is_not_continuous, crates/providers/teralion/tests/production_market_path.rs#missing_market_signal_replays_unrelated_event_as_unknown, crates/run-planner/tests/partition_plan.rs#strict_plan_rejects_degraded_scope]
+  strategy:
+    - id: STRATEGY-LIFECYCLE
+      claim: initialize, event, feedback and finalize
+      status: supported
+      production_owner: [crates/strategy-api, crates/osmium-runner]
+      evidence: [crates/strategy-api/tests/strategy.rs#boxed_strategy_runs_through_the_generic_lifecycle, crates/osmium-runner/src/lib.rs#empty_stream_still_finalizes_and_reconciles]
+    - id: STRATEGY-DECLARATION
+      claim: explicit universe and sessions
+      status: supported
+      production_owner: [crates/strategy-api, crates/run-planner]
+      evidence: [crates/strategy-api/tests/strategy.rs#session_phase_and_twse_indicative_rules_are_explicit, crates/run-planner/tests/config.rs#strategy_declaration_must_match_effective_universe]
+    - id: STRATEGY-TIMER
+      claim: timer
+      status: supported
+      production_owner: [crates/strategy-api, crates/osmium-runner]
+      evidence: [crates/osmium-runner/src/scheduled.rs]
+    - id: STRATEGY-SCHEDULED-REQUEST
+      claim: scheduled request
+      status: supported
+      production_owner: [crates/strategy-api, crates/osmium-runner, crates/execution-sim]
+      evidence: [crates/osmium-runner/src/scheduled.rs#delayed_observation_can_fill_at_control_time_without_market_event, crates/execution-sim/src/scheduled.rs]
+    - id: STRATEGY-DETERMINISM
+      claim: deterministic outputs
+      status: supported
+      production_owner: [crates/strategy-api, crates/replay-engine]
+      evidence: [crates/strategy-api/tests/strategy.rs#deterministic_output_is_independent_of_input_order, crates/strategy-api/tests/registry.rs#defaults_and_key_order_have_one_canonical_identity]
+    - id: STRATEGY-TRANSACTION
+      claim: callback transaction and failure categories
+      status: supported
+      production_owner: [crates/strategy-api, crates/osmium-runner]
+      evidence: [crates/strategy-api/tests/strategy.rs#failed_callback_discards_current_batch_after_core_commit, crates/strategy-api/tests/strategy.rs#panic_and_unavailable_capability_have_stable_categories]
+    - id: STRATEGY-NO-FUTURE
+      claim: no network, wall clock or future data
+      status: supported
+      production_owner: [crates/strategy-api, crates/replay-engine]
+      evidence: [crates/strategy-api/tests/strategy.rs#callback_observes_committed_post_event_state_and_context, crates/replay-engine/src/engine.rs]
+  execution:
+    - id: EXEC-MARKET-LIMIT-ROD
+      claim: market ROD and limit ROD
+      status: supported
+      production_owner: [crates/execution-sim]
+      evidence: [crates/execution-sim/src/lib.rs#fill_trigger_distinguishes_market_and_control_origins, crates/execution-sim/src/depth.rs#limit_order_stops_before_non_marketable_level]
+    - id: EXEC-PARTIAL-EVIDENCE
+      claim: partial fill and quantity evidence
+      status: supported
+      production_owner: [crates/execution-sim]
+      evidence: [crates/execution-sim/src/depth.rs#sell_sweeps_bids_and_reports_partial_depth, crates/execution-sim/src/depth.rs#market_order_quantity_is_not_used_as_price_or_fill_depth]
+    - id: EXEC-DISPLAYED-CAUSALITY
+      claim: displayed depth and subsequent-event causality
+      status: supported
+      production_owner: [crates/execution-sim, crates/osmium-runner]
+      evidence: [crates/execution-sim/src/depth.rs#buy_sweeps_asks_from_best_price, crates/execution-sim/src/lib.rs#latency_is_added_in_milliseconds_and_requires_a_later_match_time]
+    - id: EXEC-SLIPPAGE
+      claim: adverse slippage
+      status: supported
+      production_owner: [crates/execution-sim]
+      evidence: [crates/execution-sim/src/lib.rs#adverse_slippage_never_clamps_to_limit, crates/execution-sim/src/depth.rs#slippage_is_applied_before_limit_check]
+    - id: EXEC-LATENCY
+      claim: market-data latency and order latency
+      status: supported
+      production_owner: [crates/execution-sim, crates/osmium-runner]
+      evidence: [crates/execution-sim/src/lib.rs#latency_is_added_in_milliseconds_and_requires_a_later_match_time, crates/osmium-runner/src/lib.rs#multi_backtest_isolates_instruments_and_respects_latency]
+    - id: EXEC-SCHEDULED
+      claim: scheduled activation and expiry
+      status: supported
+      production_owner: [crates/osmium-runner, crates/execution-sim]
+      evidence: [crates/osmium-runner/src/scheduled.rs#passive_limit_fills_only_after_a_matching_book_becomes_visible, crates/osmium-runner/src/scheduled.rs#auction_fill_at_match_time_wins_over_expiry_before_feedback_visibility]
+    - id: EXEC-VISIBLE-AUCTION
+      claim: visible depth and auction cross
+      status: supported
+      production_owner: [crates/execution-sim]
+      evidence: [crates/execution-sim/src/scheduled.rs#activation_sweeps_visible_levels_and_traces_control_fills, crates/execution-sim/src/scheduled.rs#auction_strict_cross_fills_the_entire_order_at_the_clearing_price]
+    - id: EXEC-CANCEL-END
+      claim: cancel, session end and run end
+      status: supported
+      production_owner: [crates/execution-sim, crates/osmium-runner]
+      evidence: [crates/execution-sim/src/scheduled.rs#status_only_stability_pause_cancels_active_market_rods_and_blocks_activation, crates/osmium-runner/src/lib.rs#empty_stream_still_finalizes_and_reconciles]
+    - id: EXEC-STABILITY
+      claim: stability restrictions
+      status: supported
+      production_owner: [crates/market-state, crates/execution-sim, crates/osmium-runner]
+      evidence: [crates/market-state/tests/reducer.rs#intraday_stability_updates_only_indicative_state, crates/execution-sim/src/lib.rs#volatility_interruption_restricts_new_orders_and_cancels_pending_market_orders]
+    - id: EXEC-IOC-FOK
+      claim: IOC and FOK
+      status: out_of_scope
+      production_owner: []
+      evidence: []
+      limitation: do not emulate through ROD or scheduled policy
+  accounting:
+    - id: ACCOUNTING-LEDGER
+      claim: cash, position, realized and unrealized P&L, marking
+      status: supported
+      production_owner: [crates/execution-sim]
+      evidence: [crates/execution-sim/src/accounting.rs#average_cost_realized_pnl_and_reconciliation_are_deterministic, crates/execution-sim/src/accounting.rs#mark_to_market_adjustments_reconcile_shared_cash_to_current_equity]
+    - id: ACCOUNTING-CHARGES
+      claim: fee, tax and day-trade adjustment
+      status: supported
+      production_owner: [crates/execution-sim]
+      evidence: [crates/execution-sim/src/accounting.rs#buy_then_sell_same_day_uses_reduced_tax_for_matched_quantity, crates/execution-sim/src/accounting.rs#cash_charge_batch_is_atomic_reconciled_and_generic]
+    - id: ACCOUNTING-ECONOMICS
+      claim: quantity unit, multiplier and currency
+      status: supported
+      production_owner: [crates/osmium-config, crates/run-planner, crates/execution-sim]
+      evidence: [crates/run-planner/tests/config.rs#option_reference_is_required_consistent_and_bound_into_effective_identity, crates/run-planner/tests/config.rs#every_universe_instrument_requires_valid_economics]
+    - id: ACCOUNTING-MODELS
+      claim: equity, futures and options accounting models
+      status: supported
+      production_owner: [crates/osmium-cli, crates/execution-sim]
+      evidence: [crates/osmium-cli/src/command.rs, crates/execution-sim/src/accounting.rs#futures_cash_moves_only_on_realized_pnl_and_costs, crates/execution-sim/src/accounting.rs#options_v1_moves_premium_cash_with_contract_multiplier]
+    - id: ACCOUNTING-RECONCILIATION
+      claim: multi-ledger reconciliation
+      status: supported
+      production_owner: [crates/execution-sim, crates/osmium-runner]
+      evidence: [crates/execution-sim/src/accounting.rs#multi_ledger_reconciles_equity_and_futures_cash_separately, crates/osmium-runner/src/lib.rs#multi_market_backtest_reconciles_equity_and_option_economics]
+    - id: ACCOUNTING-PER-FILL-COST
+      claim: per-fill costs
+      status: supported
+      production_owner: [crates/execution-sim, crates/osmium-runner]
+      evidence: [crates/execution-sim/src/accounting.rs#fixed_per_unit_fee_is_charged_for_each_filled_contract, crates/osmium-runner/src/artifacts.rs]
+  artifacts:
+    - id: ARTIFACT-IMMUTABLE
+      claim: immutable publish
+      status: supported
+      production_owner: [crates/osmium-runner]
+      evidence: [crates/osmium-runner/src/artifacts.rs, crates/osmium-runner/src/lib.rs#empty_stream_still_finalizes_and_reconciles]
+    - id: ARTIFACT-IDENTITY
+      claim: effective config checksum and plan identity
+      status: supported
+      production_owner: [crates/osmium-config, crates/run-planner, crates/osmium-runner]
+      evidence: [crates/run-planner/tests/config.rs#semantic_checksum_excludes_data_root, crates/osmium-runner/src/artifacts.rs]
+    - id: ARTIFACT-LINEAGE
+      claim: source and cache lineage
+      status: supported
+      production_owner: [crates/data-sync, crates/osmium-cli, crates/osmium-runner]
+      evidence: [crates/data-sync/src/cache.rs, crates/osmium-cli/src/command.rs, crates/osmium-runner/src/artifacts.rs]
+    - id: ARTIFACT-RESULTS
+      claim: orders, fills, cash, positions and performance
+      status: supported
+      production_owner: [crates/execution-sim, crates/osmium-runner]
+      evidence: [crates/execution-sim/src/accounting.rs, crates/osmium-runner/src/artifacts.rs]
+    - id: ARTIFACT-CHECKSUMS
+      claim: event and final-state checksums
+      status: supported
+      production_owner: [crates/replay-engine, crates/market-state, crates/osmium-runner]
+      evidence: [crates/replay-engine/tests/replay.rs#shuffled_inputs_produce_identical_checksums_and_final_state, crates/osmium-runner/src/artifacts.rs]
+    - id: ARTIFACT-INSPECT
+      claim: inspect
+      status: supported
+      production_owner: [crates/osmium-runner]
+      evidence: [crates/osmium-runner/src/lib.rs#empty_stream_still_finalizes_and_reconciles, crates/osmium-runner/src/artifacts.rs]
+  representative_e2e:
+    - id: E2E-EQUITY-CONTINUOUS
+      claim: equity continuous market and limit orders with accounting
+      status: supported
+      evidence: [crates/execution-sim/src/lib.rs, crates/execution-sim/src/depth.rs, crates/osmium-runner/src/lib.rs#multi_market_backtest_reconciles_equity_and_option_economics]
+    - id: E2E-AUCTION-CAUSALITY
+      claim: auction, delayed and periodic state with subsequent-event causality
+      status: supported
+      evidence: [crates/providers/teralion/tests/production_market_path.rs, crates/osmium-runner/src/scheduled.rs#auction_price_requires_an_explicit_trade_in_the_released_event, crates/osmium-runner/src/scheduled.rs#auction_fill_at_match_time_wins_over_expiry_before_feedback_visibility]
+    - id: E2E-SCHEDULED-LATENCY
+      claim: scheduled visible depth and latency
+      status: supported
+      evidence: [crates/execution-sim/src/scheduled.rs#activation_sweeps_visible_levels_and_traces_control_fills, crates/osmium-runner/src/scheduled.rs#delayed_observation_can_fill_at_control_time_without_market_event, crates/osmium-runner/src/lib.rs#multi_backtest_isolates_instruments_and_respects_latency]
+    - id: E2E-FUTURES
+      claim: futures economics
+      status: supported
+      evidence: [crates/osmium-runner/src/lib.rs#multi_backtest_isolates_instruments_and_respects_latency, crates/execution-sim/src/accounting.rs#futures_cash_moves_only_on_realized_pnl_and_costs]
+    - id: E2E-OPTIONS
+      claim: options economics through production runner
+      status: supported
+      evidence: [crates/providers/teralion/tests/taifex_m5_option_fixture.rs, crates/osmium-runner/src/lib.rs#multi_market_backtest_reconciles_equity_and_option_economics]
+    - id: E2E-MULTI-MARKET
+      claim: multi-instrument and multi-market isolation
+      status: supported
+      evidence: [crates/osmium-runner/src/lib.rs#multi_market_backtest_reconciles_equity_and_option_economics]
+    - id: E2E-FAILURE-RECONCILIATION
+      claim: failure does not publish success and successful runs reconcile
+      status: supported
+      evidence: [crates/strategy-api/tests/strategy.rs#failed_callback_discards_current_batch_after_core_commit, crates/osmium-runner/src/lib.rs#empty_stream_still_finalizes_and_reconciles, crates/osmium-runner/src/artifacts.rs]
 
 requirements:
   DATA-01:
     implementation:
-      - crates/data-sync/src/query.rs
-      - crates/data-sync/src/cursor.rs
-      - crates/data-sync/src/sync.rs
-      - crates/data-sync/src/transport.rs
+      - crates/providers/teralion/src/query.rs
+      - crates/providers/teralion/src/cursor.rs
+      - crates/providers/teralion/src/sync.rs
+      - crates/providers/teralion/src/transport.rs
     verification:
-      - crates/data-sync/src/cursor.rs
-      - crates/data-sync/src/sync.rs
+      - crates/providers/teralion/src/cursor.rs
+      - crates/providers/teralion/src/sync.rs
   DATA-02:
     implementation:
       - crates/data-sync/src/storage.rs
@@ -64,14 +394,15 @@ requirements:
   REPLAY-01:
     implementation:
       - crates/market-types/src/event.rs
-      - crates/normalizer/twse
-      - crates/normalizer/tpex
-      - crates/normalizer/taifex
+      - crates/providers/teralion/src/equity_quote.rs
+      - crates/providers/teralion/src/twse.rs
+      - crates/providers/teralion/src/tpex.rs
+      - crates/providers/teralion/src/taifex.rs
     verification:
-      - crates/market-types/tests/domain_events.rs
-      - crates/normalizer/twse/tests
-      - crates/normalizer/tpex/tests
-      - crates/normalizer/taifex/tests
+      - crates/market-types/tests/event_codec.rs
+      - crates/providers/teralion/tests/twse_normalizer.rs
+      - crates/providers/teralion/tests/tpex_normalizer.rs
+      - crates/providers/teralion/tests/taifex_fixtures.rs
   REPLAY-02:
     implementation:
       - crates/replay-engine/src/ordering.rs
@@ -127,9 +458,7 @@ requirements:
 
   OPS-01:
     implementation: [crates/osmium-cli]
-    verification:
-      - crates/osmium-cli/src/lib.rs
-      - crates/osmium-cli/src/market_replay.rs
+    verification: [crates/osmium-cli/src/lib.rs]
   OPS-02:
     implementation: [crates/osmium-runner/src/artifacts.rs]
     verification: [crates/osmium-runner/src/artifacts.rs]
@@ -148,11 +477,11 @@ requirements:
     verification: [crates/replay-engine/tests/replay.rs]
   NFR-03:
     implementation:
-      - crates/data-sync/src/query.rs
+      - crates/providers/teralion/src/query.rs
       - crates/osmium-config/src/lib.rs
       - crates/osmium-runner/src/artifacts.rs
     verification:
-      - crates/data-sync/src/query.rs
+      - crates/providers/teralion/src/query.rs
       - crates/osmium-config/src/lib.rs
       - crates/osmium-runner/src/artifacts.rs
 

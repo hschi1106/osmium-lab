@@ -75,7 +75,7 @@ pub fn economics(instrument: InstrumentId) -> InstrumentEconomicsConfig {
         1_000,
         Currency::Twd,
         Decimal::parse("1").unwrap(),
-        "teralion-daily-instrument",
+        "synthetic-daily-instrument",
     )
 }
 
@@ -102,7 +102,7 @@ pub fn run_config(
         .collect();
     RunConfig {
         config_version: 2,
-        source: run_planner::SourceId::TeralionFeedArchive,
+        source: run_planner::SourceId::new("synthetic-source").unwrap(),
         trading_dates: dates,
         universe: universe.clone(),
         instrument_contracts,

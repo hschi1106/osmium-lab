@@ -2,11 +2,19 @@
 
 適用 normalizer：
 
-- outright futures：`TeralionTaifexFutures`，mapping version `3`，wire market `taifex_fut`。
-- calendar spreads：`TeralionTaifexCalendarSpreads`，mapping version `1`，wire market `taifex_fut`。
-- index options：`TeralionTaifexOptions`，mapping version `2`，wire market `taifex_opt`。
+- outright futures：`TeralionTaifexFutures`，mapping version `5`，wire market `taifex_fut`。
+- calendar spreads：`TeralionTaifexCalendarSpreads`，mapping version `2`，wire market `taifex_fut`。
+- index options：`TeralionTaifexOptions`，mapping version `4`，wire market `taifex_opt`。
 
-上述 profiles 在 domain 中都使用 `MarketId::Taifex`；archive market、mapping identity 與 economics 依明確 instrument contract 選擇，不由 symbol 推定。
+上述 profiles 在 domain 中都使用 `MarketId::Taifex`；archive market 與 mapping identity依明確
+instrument contract選擇，不由 symbol推定。共通 observation/state semantics 見
+[回播模型](../architecture/replay-model.md)。
+
+I020 trade 與 I080／I082 完整五檔是已驗證的 firm observation，normalizer 明確輸出
+`MarketSignal::Continuous`；I022 opening calculated observation 輸出
+`AuctionCollecting(AuctionPurpose::Opening)`。generic event constructor 不會用
+`Continuous` 補缺少的 provider evidence，也沒有 instrument-day market background lookup；若
+來源未提供 signal，core 保留 `NoObservation`／`Unknown`。
 
 ## 1. Session 與時間
 
@@ -66,14 +74,15 @@ I070／I072 的 settlement、open interest、close price 與 statistics 不進 r
 - null、zero 與 unknown 保持不同語意。
 - identity、trading-date/session ownership、book ordering、packet shape 或 numeric validation 失敗時 strict reject。
 
-## 7. Options 與 accounting
+## 7. Instrument reference 與 observed limits
 
 option profile 使用獨立 `taifex_opt` query identity。underlying、expiry、strike、option side、currency、multiplier 與 quantity unit 由 reference／economics 明確提供。
 
-options 使用 options accounting model處理 premium cash 與 average-cost P&L；futures 使用 futures model。兩者共用 event mapping 原則，但 positions、multiplier 與 reconciliation 不混用。
+Calendar spread 設定必須明確指定 `contract_shape: calendar_spread` 與適用 session profile。含 `/` 的
+symbol 保持 byte-exact identity；storage path另做 reversible encoding。Source mapping只保留可觀察的
+signed/zero spread price與 contract quantity，不定義 accounting formula；futures/options economics、
+fees與 P&L 見[執行與帳務模型](../architecture/execution-model.md)。
 
-Calendar spread 設定必須明確指定 `contract_shape: calendar_spread` 與適用 session profile。含 `/` 的 symbol 保持 byte-exact identity；storage path 另做 reversible encoding。其限價比較與 slippage 保留 signed price，notional-rate fee basis 使用絕對名目金額，fixed-per-unit fee 依 contract quantity 計算。
-
-repository fixture 位於 [`fixtures/teralion/taifex`](../../fixtures/teralion/taifex)，只固定合成 futures/options contract，不代表完整交易日。
+repository fixture 位於 [`fixtures/providers/teralion/taifex`](../../fixtures/providers/teralion/taifex)，只固定合成 futures/options contract，不代表完整交易日。
 
 官方參考：[TAIFEX 逐筆行情資訊傳輸作業手冊](https://www.taifex.com.tw/cht/8/techDocsDetails?idx=67)。共通 event、session 與 ordering 規則見 [回播模型](../architecture/replay-model.md)。

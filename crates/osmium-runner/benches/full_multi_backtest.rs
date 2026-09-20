@@ -10,8 +10,8 @@ use market_state::{
 };
 use market_types::{
     BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, Decimal, DomainEvent, EventPayload,
-    InstrumentId, MarketAnnotations, MarketId, MatchTime, Observation, ObservedTrade, Price,
-    PricePolicy, Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol,
+    InstrumentId, MarketAnnotations, MarketId, MarketSignal, MatchTime, Observation, ObservedTrade,
+    Price, PricePolicy, Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol,
     TradeObservationKind, TradingDate, TwseQuoteAnnotations, Volume,
 };
 use osmium_runner::{MultiSessionSchedule, run_multi_backtest};
@@ -111,7 +111,8 @@ impl Case {
                         )),
                         MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0x10, 0)),
                     )
-                    .unwrap();
+                    .unwrap()
+                    .with_market_signal(Observation::Set(MarketSignal::Continuous));
                     DomainEvent::new(
                         instrument.clone(),
                         date,

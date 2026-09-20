@@ -22,13 +22,13 @@ fn m1_t010_match_time_is_exact_utc_microseconds() {
     assert_eq!(before_epoch.as_unix_microseconds(), -1);
     assert!(before_epoch < unix_epoch);
 
-    let teralion_observation = MatchTime::parse("2026-07-27T09:00:07.360140+08:00").unwrap();
+    let offset_observation = MatchTime::parse("2026-07-27T09:00:07.360140+08:00").unwrap();
     let normalized_observation = MatchTime::parse("2026-07-27T01:00:07.360140Z").unwrap();
     assert_eq!(
-        teralion_observation.as_unix_microseconds(),
+        offset_observation.as_unix_microseconds(),
         1_785_114_007_360_140
     );
-    assert_eq!(teralion_observation, normalized_observation);
+    assert_eq!(offset_observation, normalized_observation);
 }
 
 #[test]

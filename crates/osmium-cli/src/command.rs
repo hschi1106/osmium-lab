@@ -5,9 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use data_sync::{
-    CacheBuilder, PartitionedSourceRepository, SourceAdapterRuntime, normalizer_config_for,
-};
+use data_sync::PartitionedSourceRepository;
 use execution_sim::{
     AccountingModel, ChargeBasis, ChargeModel, ChargeSides, DayTradeTaxModel, EvidenceMode,
     FillModel, InstrumentEconomics, InstrumentLedgerConfig, MultiLedger, MultiSimulator,
@@ -18,14 +16,19 @@ use market_state::{
     MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
 };
 use market_types::{InstrumentClass, MarketId};
-use osmium_config::{RUN_CONFIG_VERSION, RunConfig, plan};
+use osmium_config::{PlanBundle, RUN_CONFIG_VERSION, RunConfig, plan};
 use replay_engine::{ReplayContextWindow, ReplayCore};
 use run_planner::{
     CacheAction, ChargeBasis as PlanChargeBasis, ChargeSides as PlanChargeSides,
-    ExecutionPolicyConfig, FillEvidence, NetworkRequirement, QuantityEvidence,
-    RoundingPolicy as PlanRounding, SlippageModelConfig, SourceAction, SourceState,
+    EffectiveRunConfig, ExecutionPlan, ExecutionPolicyConfig, FillEvidence, NetworkRequirement,
+    PlannedPartition, QuantityEvidence, RoundingPolicy as PlanRounding, SlippageModelConfig,
+    SourceAction, SourceState,
 };
 use strategy_api::{AcceptanceStrategyFactory, SessionKind, SessionSegment, StrategyRegistry};
+use teralion_provider::{
+    PartitionNormalizerConfig, ProviderError, TeralionProvider, normalizer_config_for,
+    prepare_cache as prepare_teralion_cache,
+};
 
 use crate::ExitCategory;
 
@@ -158,12 +161,27 @@ pub fn execute_inspect(path: &Path) -> Result<String, CommandError> {
     ))
 }
 
+fn plan_config(config: &RunConfig) -> Result<osmium_config::PlanBundle, CommandError> {
+    Ok(plan(config, |source, market, class, shape| {
+        teralion_provider::normalizer_mapping_for(source, market, class, shape)
+            .map_err(|error| error.to_string())
+    })?)
+}
+
+fn load_planned_run(
+    path: &Path,
+    provider: &dyn StrategyRegistryProvider,
+) -> Result<(RunConfig, PlanBundle), CommandError> {
+    let config = load_config_with_registry_provider(path, provider)?;
+    let bundle = plan_config(&config)?;
+    Ok((config, bundle))
+}
+
 fn execute_plan(
     path: &Path,
     provider: &dyn StrategyRegistryProvider,
 ) -> Result<String, CommandError> {
-    let config = load_config_with_registry_provider(path, provider)?;
-    let bundle = plan(&config)?;
+    let (_config, bundle) = load_planned_run(path, provider)?;
     let mut output = format!(
         "plan_identity={}\nnetwork_requirement={:?}\npartitions={}",
         hex(bundle.execution.identity().as_bytes()),
@@ -209,24 +227,22 @@ pub fn load_config_with_registry_provider(
 }
 
 fn normalizer_config(
-    config: &RunConfig,
-    key: &run_planner::SourcePartitionKey,
-) -> Result<data_sync::PartitionNormalizerConfig, CommandError> {
-    let session_plan = config.session_plan_for(key)?;
-    let kind = config
-        .instrument_class_for(key.instrument())
+    execution: &ExecutionPlan,
+    partition: &PlannedPartition,
+) -> Result<PartitionNormalizerConfig, CommandError> {
+    let key = partition.key();
+    let contract = execution
+        .config()
+        .contract_for(key.instrument())
         .ok_or_else(|| CommandError::Other("partition instrument is not selected".to_owned()))?;
-    let contract_shape = config
-        .selection_for(key.instrument())
-        .and_then(|selection| selection.contract_shape());
     Ok(normalizer_config_for(
-        config.effective().source(),
+        execution.config().source(),
         key,
-        kind,
-        contract_shape,
-        &session_plan,
+        contract.class(),
+        contract.shape(),
+        partition.session_plan(),
     )
-    .map_err(data_sync::SourceAdapterError::from)?)
+    .map_err(ProviderError::from)?)
 }
 
 fn load_dotenv() {
@@ -240,14 +256,19 @@ fn execute_sync(
     provider: &dyn StrategyRegistryProvider,
 ) -> Result<String, CommandError> {
     let config = load_config_with_registry_provider(path, provider)?;
-    let bundle = plan(&config)?;
+    let bundle = plan_config(&config)?;
+    execute_sync_plan(config.effective(), &bundle)
+}
+
+fn execute_sync_plan(
+    config: &EffectiveRunConfig,
+    bundle: &PlanBundle,
+) -> Result<String, CommandError> {
     for partition in bundle.execution.partitions() {
         match partition.source_action() {
             SourceAction::RejectIncomplete { .. } | SourceAction::RejectCorrupt { .. } => {
-                let repository = PartitionedSourceRepository::new(
-                    config.effective().data_root(),
-                    partition.key().clone(),
-                )?;
+                let repository =
+                    PartitionedSourceRepository::new(config.data_root(), partition.key().clone())?;
                 let inspection = repository.inspect();
                 return Err(source_not_complete_error(
                     partition.key(),
@@ -276,7 +297,7 @@ fn execute_sync(
         return Ok("source=reused\nhttp_requests=0".to_owned());
     }
     load_dotenv();
-    let mut source_runtime = SourceAdapterRuntime::new(config.effective().source())?;
+    let mut source_runtime = TeralionProvider::new(config.source())?;
     let mut output = String::from("source=partitions\n");
     let mut total_pages = 0_u64;
     let mut published = 0_u32;
@@ -294,16 +315,19 @@ fn execute_sync(
             continue;
         }
         let key = partition.key();
-        let selection = config.selection_for(key.instrument()).ok_or_else(|| {
-            CommandError::Other("partition instrument is not selected".to_owned())
-        })?;
-        let session_plan = config.session_plan_for(key)?;
+        let contract = bundle
+            .execution
+            .config()
+            .contract_for(key.instrument())
+            .ok_or_else(|| {
+                CommandError::Other("partition instrument is not selected".to_owned())
+            })?;
         let report = source_runtime.sync_partition(
-            config.effective().data_root(),
+            config.data_root(),
             key,
-            selection.class(),
-            selection.contract_shape(),
-            &session_plan,
+            contract.class(),
+            contract.shape(),
+            partition.session_plan(),
         )?;
         total_pages += u64::from(report.page_count());
         published += 1;
@@ -356,9 +380,14 @@ fn prepare_cache(
     path: &Path,
     provider: &dyn StrategyRegistryProvider,
 ) -> Result<String, CommandError> {
-    let config = load_config_with_registry_provider(path, provider)?;
-    let bundle = plan(&config)?;
-    let builder = CacheBuilder::new(config.effective().data_root());
+    let (config, bundle) = load_planned_run(path, provider)?;
+    prepare_cache_plan(config.effective(), &bundle)
+}
+
+fn prepare_cache_plan(
+    config: &EffectiveRunConfig,
+    bundle: &PlanBundle,
+) -> Result<String, CommandError> {
     let mut output = String::from("cache=partitions\n");
     for partition in bundle.execution.partitions() {
         match partition.cache_action() {
@@ -374,7 +403,7 @@ fn prepare_cache(
             CacheAction::RebuildCacheFromCompleteSource => {
                 if !matches!(partition.source_state(), SourceState::Complete { .. }) {
                     let repository = PartitionedSourceRepository::new(
-                        config.effective().data_root(),
+                        config.data_root(),
                         partition.key().clone(),
                     )?;
                     let inspection = repository.inspect();
@@ -384,8 +413,9 @@ fn prepare_cache(
                         inspection.diagnostic(),
                     ));
                 }
-                let normalizer = normalizer_config(&config, partition.key())?;
-                let built = builder.build_partition(partition.key(), normalizer)?;
+                let normalizer = normalizer_config(&bundle.execution, partition)?;
+                let built =
+                    prepare_teralion_cache(config.data_root(), partition.key(), normalizer)?;
                 output.push_str(&format!(
                     "partition={:?}/{:?}@{} status=built cache_identity={}\n",
                     partition.key().instrument().market(),
@@ -395,10 +425,8 @@ fn prepare_cache(
                 ));
             }
             CacheAction::AwaitCompleteSource => {
-                let repository = PartitionedSourceRepository::new(
-                    config.effective().data_root(),
-                    partition.key().clone(),
-                )?;
+                let repository =
+                    PartitionedSourceRepository::new(config.data_root(), partition.key().clone())?;
                 let inspection = repository.inspect();
                 return Err(source_not_complete_error(
                     partition.key(),
@@ -445,29 +473,29 @@ fn replay(
     path: &Path,
     provider: &dyn StrategyRegistryProvider,
 ) -> Result<replay_engine::CompletedReplay, CommandError> {
-    let config = load_config_with_registry_provider(path, provider)?;
-    let bundle = plan(&config)?;
+    let (_config, bundle) = load_planned_run(path, provider)?;
+    replay_plan(&bundle)
+}
+
+fn replay_plan(bundle: &PlanBundle) -> Result<replay_engine::CompletedReplay, CommandError> {
     let replay = bundle.replay.as_ref().ok_or(CommandError::CacheMissing)?;
-    let mut core = replay_core(&config, &bundle)?;
+    let mut core = replay_core(bundle)?;
     let mut factory = data_sync::LocalCacheFactory::new_partitioned(
-        config.effective().data_root(),
-        config.effective().source(),
+        bundle.execution.config().data_root(),
+        bundle.execution.config().source(),
     );
     core.replay_frozen_multi(replay, &mut factory)?;
     Ok(core.complete()?)
 }
 
-pub(crate) fn replay_core(
-    config: &RunConfig,
-    bundle: &osmium_config::PlanBundle,
-) -> Result<ReplayCore, CommandError> {
+pub(crate) fn replay_core(bundle: &PlanBundle) -> Result<ReplayCore, CommandError> {
     let mut states = BTreeMap::new();
     let mut reducers = BTreeMap::new();
     let mut contexts = BTreeMap::new();
     let mut schedules: BTreeMap<_, Vec<_>> = BTreeMap::new();
     for partition in bundle.execution.partitions() {
         let key = partition.key();
-        let session_plan = config.session_plan_for(key)?;
+        let session_plan = partition.session_plan();
         let mut windows = Vec::new();
         let mut default_context = None;
         for window in session_plan.windows() {
@@ -490,8 +518,11 @@ pub(crate) fn replay_core(
         }
         let context = default_context
             .ok_or_else(|| CommandError::Other("session plan has no windows".to_owned()))?;
-        let kind = config
-            .instrument_class_for(key.instrument())
+        let kind = bundle
+            .execution
+            .config()
+            .contract_for(key.instrument())
+            .map(run_planner::InstrumentContractConfig::class)
             .ok_or_else(|| {
                 CommandError::Other("partition instrument is not selected".to_owned())
             })?;
@@ -521,10 +552,13 @@ pub(crate) fn replay_core(
     )?)
 }
 
-fn schedule(config: &RunConfig) -> Result<osmium_runner::MultiSessionSchedule, CommandError> {
+fn schedule(
+    execution: &ExecutionPlan,
+) -> Result<osmium_runner::MultiSessionSchedule, CommandError> {
     let mut entries: BTreeMap<_, Vec<_>> = BTreeMap::new();
-    for key in config.partition_keys()? {
-        let session_plan = config.session_plan_for(&key)?;
+    for partition in execution.partitions() {
+        let key = partition.key();
+        let session_plan = partition.session_plan();
         let mut segments = Vec::new();
         for window in session_plan.windows() {
             let id = match window.kind() {
@@ -552,12 +586,19 @@ fn execute_backtest(
     output: &Path,
     provider: &dyn StrategyRegistryProvider,
 ) -> Result<String, CommandError> {
-    let mut config = load_config_with_registry_provider(path, provider)?;
+    let (mut config, bundle) = load_planned_run(path, provider)?;
+    execute_backtest_plan(&mut config, output, &bundle)
+}
+
+fn execute_backtest_plan(
+    config: &mut RunConfig,
+    output: &Path,
+    bundle: &PlanBundle,
+) -> Result<String, CommandError> {
     let strategy_metadata = config.strategy_metadata().clone();
-    let bundle = plan(&config)?;
     let replay = bundle.replay.as_ref().ok_or(CommandError::CacheMissing)?;
-    let core = replay_core(&config, &bundle)?;
-    let schedule = schedule(&config)?;
+    let core = replay_core(bundle)?;
+    let schedule = schedule(&bundle.execution)?;
     let strategy = config.take_strategy()?;
     let simulation = bundle.execution.config().simulation();
     let fill = simulation.fill_model();
@@ -567,8 +608,11 @@ fn execute_backtest(
     };
     let mut ledger_configs = Vec::new();
     for economics in bundle.execution.config().instrument_economics() {
-        let kind = config
-            .instrument_class_for(economics.instrument())
+        let kind = bundle
+            .execution
+            .config()
+            .contract_for(economics.instrument())
+            .map(|contract| contract.class())
             .ok_or_else(|| {
                 CommandError::Other("economics instrument is not selected".to_owned())
             })?;
@@ -595,9 +639,7 @@ fn execute_backtest(
         let price_policy = bundle
             .execution
             .config()
-            .instrument_contracts()
-            .iter()
-            .find(|contract| contract.instrument() == economics.instrument())
+            .contract_for(economics.instrument())
             .map(|contract| contract.price_policy())
             .ok_or_else(|| {
                 CommandError::Other("instrument contract profile is missing".to_owned())
@@ -644,8 +686,8 @@ fn execute_backtest(
     let source_revision = source_lineage.join(",");
     let cache_identity = cache_lineage.join(",");
     let mut factory = data_sync::LocalCacheFactory::new_partitioned(
-        config.effective().data_root(),
-        config.effective().source(),
+        bundle.execution.config().data_root(),
+        bundle.execution.config().source(),
     );
     match simulation.execution_policy() {
         ExecutionPolicyConfig::SubsequentEventV1 => {
@@ -658,9 +700,7 @@ fn execute_backtest(
                     let price_policy = bundle
                         .execution
                         .config()
-                        .instrument_contracts()
-                        .iter()
-                        .find(|contract| contract.instrument() == economics.instrument())
+                        .contract_for(economics.instrument())
                         .map(|contract| contract.price_policy())
                         .ok_or_else(|| {
                             CommandError::Other("instrument contract profile is missing".to_owned())
@@ -726,9 +766,7 @@ fn execute_backtest(
                         let price_policy = bundle
                             .execution
                             .config()
-                            .instrument_contracts()
-                            .iter()
-                            .find(|contract| contract.instrument() == economics.instrument())
+                            .contract_for(economics.instrument())
                             .map(|contract| contract.price_policy())
                             .ok_or_else(|| {
                                 CommandError::Other(
@@ -799,15 +837,23 @@ fn execute_run(
     output: Option<&Path>,
     provider: &dyn StrategyRegistryProvider,
 ) -> Result<String, CommandError> {
-    let config = load_config_with_registry_provider(path, provider)?;
-    let bundle = plan(&config)?;
+    let (mut config, mut bundle) = load_planned_run(path, provider)?;
     if bundle.execution.network_requirement() == NetworkRequirement::Required {
-        execute_sync(path, provider)?;
+        execute_sync_plan(config.effective(), &bundle)?;
     }
-    prepare_cache(path, provider)?;
+    bundle = plan_config(&config)?;
+    prepare_cache_plan(config.effective(), &bundle)?;
+    bundle = plan_config(&config)?;
     match output {
-        Some(output) => execute_backtest(path, output, provider),
-        None => execute_replay(path, provider),
+        Some(output) => execute_backtest_plan(&mut config, output, &bundle),
+        None => replay_plan(&bundle).map(|completed| {
+            format!(
+                "replay=complete\nevents={}\nevent_checksum={}\nfinal_state_checksum={}",
+                completed.summary().event_count(),
+                hex(completed.summary().event_checksum().as_bytes()),
+                hex(completed.summary().final_state_checksum().as_bytes())
+            )
+        }),
     }
 }
 
@@ -843,7 +889,7 @@ pub enum CommandError {
     Verify(data_sync::VerificationError),
     CacheBuild(data_sync::CacheBuildError),
     CacheRead(data_sync::CacheReadError),
-    SourceAdapter(data_sync::SourceAdapterError),
+    Provider(teralion_provider::ProviderError),
     Replay(replay_engine::ReplayError),
     State(market_state::SessionSegmentIdError),
     Context(strategy_api::ContextError),
@@ -851,7 +897,6 @@ pub enum CommandError {
     Simulation(execution_sim::SimulationError),
     ScheduledSimulation(execution_sim::ScheduledSimulationError),
     Accounting(execution_sim::AccountingError),
-    Backtest(osmium_runner::BacktestError),
     MultiBacktest(osmium_runner::MultiBacktestError),
     Artifact(osmium_runner::ArtifactError),
     Io(std::io::Error),
@@ -876,15 +921,16 @@ impl CommandError {
             | Self::Context(_)
             | Self::Strategy(_)
             | Self::ReplayContextWindow(_)
-            | Self::SourceAdapter(data_sync::SourceAdapterError::Configuration(_)) => {
-                ExitCategory::Config
-            }
+            | Self::Provider(
+                teralion_provider::ProviderError::Configuration(_)
+                | teralion_provider::ProviderError::Normalization(_)
+                | teralion_provider::ProviderError::UnsupportedSource(_),
+            ) => ExitCategory::Config,
             Self::OutputRequired => ExitCategory::Usage,
-            Self::SourceAdapter(_) | Self::Partition(_) => ExitCategory::Source,
+            Self::Provider(_) | Self::Partition(_) => ExitCategory::Source,
             Self::CacheBuild(_) | Self::CacheRead(_) | Self::CacheMissing => ExitCategory::Cache,
             Self::Replay(_) => ExitCategory::Replay,
-            Self::Backtest(_)
-            | Self::MultiBacktest(_)
+            Self::MultiBacktest(_)
             | Self::Simulation(_)
             | Self::ScheduledSimulation(_)
             | Self::Accounting(_) => ExitCategory::Simulation,
@@ -914,7 +960,7 @@ convert!(Config, osmium_config::ConfigError);
 convert!(Verify, data_sync::VerificationError);
 convert!(CacheBuild, data_sync::CacheBuildError);
 convert!(CacheRead, data_sync::CacheReadError);
-convert!(SourceAdapter, data_sync::SourceAdapterError);
+convert!(Provider, teralion_provider::ProviderError);
 convert!(Replay, replay_engine::ReplayError);
 convert!(State, market_state::SessionSegmentIdError);
 convert!(Context, strategy_api::ContextError);
@@ -922,7 +968,6 @@ convert!(Strategy, strategy_api::DeclarationError);
 convert!(Simulation, execution_sim::SimulationError);
 convert!(ScheduledSimulation, execution_sim::ScheduledSimulationError);
 convert!(Accounting, execution_sim::AccountingError);
-convert!(Backtest, osmium_runner::BacktestError);
 convert!(MultiBacktest, osmium_runner::MultiBacktestError);
 convert!(Artifact, osmium_runner::ArtifactError);
 convert!(Partition, data_sync::PartitionRepositoryError);
@@ -961,12 +1006,11 @@ mod tests {
         sync::atomic::{AtomicBool, Ordering},
     };
 
-    use data_sync::{
-        ArchiveKind, ArchiveTimestamp, CursorStateMachine, StagingRevision, TeralionQuery,
-    };
+    use data_sync::StagingRevision;
     use market_types::{InstrumentId, Symbol, TradingDate};
     use run_planner::{CorruptReason, SessionPlan, SourceId, SourcePartitionKey};
     use strategy_api::SessionKind;
+    use teralion_provider::{ArchiveKind, ArchiveTimestamp, CursorStateMachine, TeralionQuery};
 
     #[test]
     fn command_exit_codes_preserve_stable_failure_categories() {
@@ -977,8 +1021,7 @@ mod tests {
         );
         assert_eq!(CommandError::CacheMissing.exit_code(), 21);
         assert_eq!(
-            CommandError::SourceAdapter(data_sync::SourceAdapterError::MissingCredential)
-                .exit_code(),
+            CommandError::Provider(teralion_provider::ProviderError::MissingCredential).exit_code(),
             20
         );
         assert_eq!(
@@ -1000,7 +1043,7 @@ mod tests {
         )
         .unwrap();
         let key = SourcePartitionKey::new(
-            SourceId::TeralionFeedArchive,
+            SourceId::new("teralion").unwrap(),
             instrument,
             trading_date,
             [SessionKind::Regular],
@@ -1060,7 +1103,8 @@ mod tests {
         let mut cursor = CursorStateMachine::new(ticks.clone()).unwrap();
         let request = cursor.request_next().unwrap();
         let pending = cursor.accept_response(&request, body).unwrap();
-        let staged = staging.stage_page(pending).unwrap();
+        let source_page = pending.source_page();
+        let staged = staging.stage_page(&source_page).unwrap();
         cursor.commit_page(staged.commit_receipt()).unwrap();
         staging
             .stage_daily_instrument(

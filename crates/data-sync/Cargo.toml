@@ -8,24 +8,16 @@ license.workspace = true
 blake3 = "1.8"
 market-types = { path = "../market-types" }
 replay-engine = { path = "../replay-engine" }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 run-planner = { path = "../run-planner" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 sha2 = "0.10"
 zstd = "0.13"
-twse-normalizer = { path = "../normalizer/twse" }
-tpex-normalizer = { path = "../normalizer/tpex" }
-taifex-normalizer = { path = "../normalizer/taifex" }
 
 [dev-dependencies]
 market-state = { path = "../market-state" }
 strategy-api = { path = "../strategy-api" }
 tempfile = "3"
-
-[[bench]]
-name = "verified_cache_pipeline"
-harness = false
 
 [lints]
 workspace = true

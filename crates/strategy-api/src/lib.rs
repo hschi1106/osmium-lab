@@ -14,10 +14,9 @@ pub use acceptance::{
     AcceptanceStrategyFactory,
 };
 pub use context::{
-    ContextError, EquityIndicativeObservation, IndicativeReason, MarketTradingContextEvaluator,
-    MatchingState, NewOrderEntry, OrderBlockReason, OrderRestrictionReason, SessionCallbackContext,
-    SessionKind, SessionPhase, SessionSegment, TpexTradingContextEvaluator, TradingContext,
-    TwseTradingContextEvaluator,
+    ContextError, EquityIndicativeObservation, MarketTradingContextEvaluator, MatchingState,
+    NewOrderEntry, OrderBlockReason, OrderRestrictionReason, SessionCallbackContext, SessionKind,
+    SessionPhase, SessionSegment, TradingContext,
 };
 pub use example::{EXAMPLE_STRATEGY_ID, EXAMPLE_STRATEGY_VERSION, ExampleStrategy};
 pub use identity::{
@@ -34,9 +33,8 @@ pub use orders::{
     StrategyFeedbackContext, TimeInForce,
 };
 pub use output::{
-    CANONICAL_STRATEGY_OUTPUT_VERSION, CashChargeRequest, IndicatorValue,
-    LEGACY_CANONICAL_STRATEGY_OUTPUT_VERSION, StrategyOutput, StrategyOutputChecksum,
-    StrategyOutputEncodingError, StrategyOutputRecord, StrategyOutputSink,
+    CANONICAL_STRATEGY_OUTPUT_VERSION, CashChargeRequest, IndicatorValue, StrategyOutput,
+    StrategyOutputChecksum, StrategyOutputEncodingError, StrategyOutputRecord, StrategyOutputSink,
 };
 pub use registry::{
     FactoryContractField, ParameterRange, RangeBound, RawStrategyParameter, RawStrategyParameters,

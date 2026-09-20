@@ -58,7 +58,7 @@ impl CanonicalValue for CompleteBookSnapshot {
 
 impl CanonicalValue for IndicativeAuction {
     fn append_canonical(&self, bytes: &mut Vec<u8>) -> Result<(), CanonicalEncodingError> {
-        bytes.push(self.kind().discriminant());
+        self.observation().append_canonical(bytes)?;
         self.price().append_canonical(bytes)?;
         self.quantity().append_canonical(bytes)?;
         self.book().append_canonical(bytes)?;

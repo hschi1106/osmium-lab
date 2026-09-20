@@ -1,109 +1,148 @@
-# 資料流程與儲存
+# 資料流程、identity 與 artifacts
 
-## 1. Artifact 類型
+本頁是 acquisition、source/cache lifecycle、lineage/checksum 與 run publication 的 canonical
+文件。Provider boundary 與各市場 wire mapping 入口見[Teralion 介面](../interfaces/teralion.md)。
 
-| Artifact | 權威來源 | 可否重建 | 執行中可否修改 |
+## Artifact lifecycle
+
+| Artifact | Owner / authority | Rebuildable | Publication rule |
 | --- | --- | --- | --- |
-| RunConfig | 使用者 | 是 | plan 建立後固定 |
-| ExecutionPlan | effective config + 本地狀態 | 是 | 否 |
-| Source staging | provider adapter pages | 可重新下載或 resume | 只由 sync owner 修改 |
-| Verified source revision | 已驗證 staging | 只能重新取得 | 否 |
-| Replay cache | verified source + versions | 是 | 只在 prepare 階段建立 |
-| MarketState | ordered events | 是 | 只由 reducer 更新 |
-| Run artifacts | plan + execution | 可重跑但不覆寫 | 發布後否 |
+| RunConfig | 使用者 | 是 | plan 後視為固定 input |
+| ExecutionPlan | validated config + local catalog | 是 | deterministic identity，不寫 source |
+| Source staging | provider sync attempt | 可 resume/re-download | 只有 sync owner 可修改 |
+| Verified source revision | provider evidence + verification | 只能重新取得 | immutable + atomic publish |
+| Replay cache | source + mapping/schema/ordering versions | 是，離線 | derived + atomic publish |
+| MarketState | ordered DomainEvents | 是 | memory state，只由 reducer 更新 |
+| Run artifacts | plan + replay + strategy/execution/accounting | 可用新 output 重跑 | create-new，發布後 immutable |
 
-## 2. 規劃
+最重要的區分：**verified source 是可重用的事實來源；replay cache 是可刪除、可重建的衍生物。**
+Cache stale 不代表 source 要重新下載。
 
-`RunConfig` 先經 schema、strategy registry、universe、session 與 economics 驗證，再 materialize 為 effective config。planner 為每個 instrument/date 建立 `SourcePartitionKey` 與 `SessionPlan`，檢查 source/cache catalog 後產生 action：
+## Planning
 
-- reuse complete source/cache。
-- download missing source。
-- resume compatible staging。
-- rebuild missing、stale 或 incompatible cache。
-- reject incomplete／corrupt artifact。
+RunConfig 經 schema、strategy registry、universe、session、contract 與 economics validation 後物化為
+effective config。Planner 為每個 instrument/date 建立 `SessionPlan` 與 `SourcePartitionKey`，檢查
+source/cache catalog，再建立 frozen `ExecutionPlan`：
 
-plan 不寫入 source、cache 或 output，也不開啟 replay streams。
+- complete/compatible artifact → reuse；
+- missing source → download；
+- compatible staging → resume；
+- missing/stale cache → rebuild；
+- incomplete/corrupt artifact → reject。
 
-## 3. Source sync
+CLI 只在 composition root 注入 provider mapping resolver。Runner 消費 `PlannedPartition` 已物化的
+session、contract、economics 與 identity，不再從 YAML 重推。
+
+## Online acquisition 與 credential boundary
 
 ```text
 frozen query
-  -> request page
-  -> validate envelope and identity
-  -> persist compressed page and checksums
-  -> checkpoint opaque cursor
-  -> repeat until terminal cursor
-  -> verify manifest and payload
-  -> atomic publish revision
+  → request page
+  → validate envelope / partition identity
+  → persist compressed page + checksums
+  → checkpoint opaque cursor
+  → repeat to terminal cursor
+  → verify manifest / payload / completeness
+  → atomic publish source revision
 ```
 
-CLI 先依 planner action 拒絕不完整／損壞來源，再以 `SourceId` 建立 `SourceAdapterRuntime`。Runtime 接收 partition key、instrument contract 與 session plan；query、credential、transport 與 staging orchestration 由 adapter 擁有，CLI 只接收同步結果。
+目前 Teralion adapter 依 planner download window 以 `received_at` 查 archive；它只是 source selection
+欄位，不是 replay time。API key、authorization header 與 signed URL 不得進入 query identity、disk
+artifact 或 log。Cursor 只作 pagination，不參與 event ordering。
 
-source adapter 使用 planner 產生的 download window 查詢供應商 archive。每頁保留 wire payload；provider cursor 只作 pagination，不參與 replay ordering。API key、authorization header 與 signed URL 不得進入 query identity 或持久化資料。目前 Teralion adapter 使用 `received_at` 作 archive selection；此欄位不是通用 replay contract。
+中斷時，只有 frozen query/partition identity 相容的 staging 可 resume。HTTP、JSON、cursor loop、
+record count 或 checksum failure 都不會發布 `Complete` revision。
 
-中斷時只有 frozen query identity 相容的 staging 可以 resume。HTTP error、parse error、重複 cursor、checksum mismatch 或未完成 cursor chain 都保持 `Building`／`Incomplete`，不會發布為 `Complete`。
+## Source verification
 
-## 4. Source verify
+`data verify` 是離線且只讀，至少檢查：
 
-本地驗證至少包含：
+- partition、query 與 session-plan identity；
+- `current.yaml` 指向存在的 immutable revision；
+- manifest/page/record counts 與 compressed/raw checksums；
+- terminal cursor evidence、必要 metadata 與 wire JSON 可解析性。
 
-- partition key、frozen query 與 session plan identity。
-- `current.yaml` 指向已存在且 immutable 的 revision。
-- manifest、page count、record count、compressed/raw checksums。
-- terminal cursor evidence 與必要 instrument metadata。
-- tick page envelope、JSON 可解析性與 record count 一致性。
+Coverage/range discovery 不能單獨證明 partition 完整。Market-specific item semantics 在 normalization
+階段驗證；repository integrity 不列舉 provider wire formats。
 
-coverage 或 range 只能作 discovery，不能單獨證明 partition 完整。`data verify` 確認 source artifact 的結構與內容完整性；market-specific item 語意由 cache prepare 階段的 normalizer 驗證。verify 是只讀操作，不自動修補 source。
+## Normalization 與 cache publication
 
-## 5. Normalization 與 cache
-
-cache builder 只接受 verified source。每筆 wire record 由所選 source adapter 的 market mapping 分類：
+Cache builder 只接受 verified source。Selected normalizer 對每筆 wire record產生：
 
 ```text
-supported timeline format -> validated DomainEvent
-known non-timeline format  -> KnownSkipped + reason
-outside replay window      -> preserved source diagnostic
-unknown / invalid shape    -> strict error or explicit degraded warning
+supported timeline format → validated DomainEvent
+known non-timeline format → KnownSkipped + reason
+outside replay window     → source diagnostic
+unknown / invalid shape   → strict error or explicit degraded warning
 ```
 
-normalizer 不使用 page order、line number、`received_at` 或 worker completion 補造市場順序。產生的 events 依 canonical ordering 排序並寫入 cache；descriptor 保存：
+Normalizer 不使用 page order、line number、`received_at` 或 worker completion 補造市場順序。Events 依
+canonical ordering 排序後寫入 cache；unknown format 沒有 generic fallback。
 
-- cache format 與 event schema。
-- source revision checksum。
-- normalizer mapping name 與 version；兩者都參與 cache identity。
-- ordering、session 與 canonical encoding identity。
-- event count、warning／skip summary 與 payload checksum。
+### Cache identity
 
-cache 完成後以 atomic publish 加入 catalog。descriptor 不相容或 payload 損壞時拒絕讀取；由 verified source 重建即可。
+`CacheDescriptor` 保存 cache identity、source revision、instrument/date、partition identity、event count/
+time range、payload SHA-256，以及 mapping/schema/ordering versions。Identity 明確包含：
 
-## 6. Replay 與 backtest
+- cache format version；
+- verified source revision、instrument、trading date 與 partition identity；
+- normalizer mapping **name + version**；
+- `MARKET_TYPES_VERSION`；
+- `EVENT_SCHEMA_VERSION`；
+- `CANONICAL_EVENT_VERSION`；
+- `ORDERING_RULE_VERSION`；
+- event count 與 canonical payload checksum。
 
-replayer 根據 plan 只開啟 explicit universe 的 cache streams：
+因此 provider mapping、合法 domain value set、canonical encoding 或 ordering semantics 只要改變，舊
+cache 就不會被 current descriptor 認為 current。Current code truth：
 
 ```text
-validate bindings
-  -> bounded k-way merge
-  -> replay clock / MarketState
-  -> optional Strategy
-  -> optional Simulation / Accounting
-  -> checksums and artifacts
+cache_format=3
+market_types=11
+event_schema=9
+canonical_event=9
+TWSE quote/warrant mapping=11/7
+TPEx quote/warrant mapping=9/8
+TAIFEX future/spread/option mapping=5/2/4
 ```
 
-`replay` 執行 event/state 路徑並輸出 deterministic summary。`backtest` 在相同 replay 路徑上加入 strategy、simulation、accounting 與 run publication。執行中不會下載 source、重建 cache 或擴張 universe。
+Compatibility failure 或 payload corruption 會拒絕讀取；由 verified source 重建，不提供舊 cache
+migration reader。
 
-## 7. Run publication
+## Selective replay 與 lineage
 
-output 必須是尚不存在的目錄。writer 先建立 staging，依執行狀態寫入：
+```text
+ExecutionPlan
+  → validate cache bindings
+  → open explicit-universe streams only
+  → bounded deterministic merge
+  → ReplayClock / MarketState
+  → optional Strategy / Execution / Accounting
+  → checksums / artifacts
+```
 
-- run manifest 與 status。
-- effective config checksum、execution plan identity 與 strategy metadata。
-- source/cache provenance 與版本集合。
-- warnings、strategy outputs、orders、fills、positions 與 performance。
-- event stream、final state、ledger 等 canonical checksums。
+Replay 不下載 source、不 normalize、不 rebuild cache、不擴張 universe。Binding 將 plan、partition、
+source revision 與 cache identity連起來；event stream/final state checksum 證明實際 replay 結果。
 
-成功結果完成所有 validation 與 reconciliation 後才 publish。失敗結果可保留診斷與 partial evidence，但必須明確標示 failed，不得偽裝成 successful run。`inspect` 驗證 artifacts 間的 identity 與 checksum，不重新執行回測。
+## Run publication
 
-## 8. 本地目錄
+Output 必須不存在。Writer 在 sibling staging directory 建立完整檔案，為 artifacts 計算 BLAKE3，將
+checksum index 寫入 `run-manifest.yaml`，sync 後 rename publish。只有完成 validation、finalization 與
+accounting reconciliation 的 successful run 走此 publication path；錯誤不會偽裝為成功 run。
+
+Artifact 分成：
+
+- **Identity**：run manifest、effective-config checksum、plan identity、strategy metadata、version set；
+- **Lineage**：source revision、cache identity；
+- **Replay evidence**：event-stream 與 final-state checksum、replay summary；
+- **Execution evidence**：strategy output、orders、fills；scheduled mode 另有 execution trace；
+- **Accounting result**：ledger、positions、performance；scheduled mode另有 fill costs/cash charges；
+- **Diagnostics**：warnings 與 run summary。
+
+完整檔名與 inspect 行為見[使用指南](../user-guide.md#backtest-artifacts)。`inspect` 驗證 manifest version
+與列出的 artifact checksum，只讀既有 run，不重跑 strategy。
+
+## Local layout 與 recovery
 
 ```text
 <data_root>/
@@ -115,21 +154,6 @@ output 必須是尚不存在的目錄。writer 先建立 staging，依執行狀�
   cache/replay/<source>/<market>/<date>/<symbol>/<cache-identity>/
 ```
 
-`<source>` 是 stable source storage namespace；目前內建 adapter 使用 `teralion`。通用 layout、
-partition integrity 與 cache codec 不解讀該 provider 的 wire fields。
-
-run output 由 `--output` 或設定指定，可放在 `data_root` 外。實際檔案與復原方式見 [本地資料](../operations/local-data.md)。
-
-## 9. 失敗處理
-
-| 問題 | 行為 |
-| --- | --- |
-| 缺少 source | plan 要求 sync；離線執行拒絕 |
-| staging 中斷 | 相容時 resume，否則建立新 attempt |
-| published source checksum 錯誤 | 標記 corrupt 並拒絕使用 |
-| cache 缺少或不相容 | 由 verified source rebuild |
-| cache checksum 錯誤 | 拒絕讀取並 rebuild |
-| event／state／accounting error | run failed，保留可追溯診斷 |
-| output 已存在 | 拒絕，不覆寫 |
-
-移除 cache 不影響 source。published source 或 run artifacts 不應手動就地修改。
+Source namespace 目前通常是 `teralion`，但 layout/cache codec 不解讀 Teralion fields。不要手改
+`current.yaml`、revision、descriptor 或 manifest；精確狀態與安全 recovery 見
+[本地資料](../operations/local-data.md)。

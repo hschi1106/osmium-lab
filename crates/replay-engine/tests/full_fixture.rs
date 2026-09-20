@@ -1,53 +1,86 @@
-use std::{
-    fs::{self, File},
-    io::{BufRead, BufReader},
-    path::PathBuf,
-};
-
 use market_state::{
-    MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
+    LastTrade, MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy,
+    SessionSegmentId,
 };
-use market_types::{InstrumentId, MarketId, MatchTime, Symbol, TradingDate};
+use market_types::{
+    BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventPayload,
+    InstrumentId, MarketAnnotations, MarketId, MatchTime, Observation, ObservedTrade, Price,
+    Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol, TradeObservationKind,
+    TradingDate, TwseQuoteAnnotations, Volume,
+};
 use replay_engine::{ReplayCore, order_events};
-use twse_normalizer::{NormalizerConfig, TwseNormalizer};
 
 fn instrument() -> InstrumentId {
-    InstrumentId::new(MarketId::Twse, Symbol::new("SYNTH-TWSE-EQ").unwrap())
+    InstrumentId::new(MarketId::Twse, Symbol::new("SYNTH-CORE").unwrap())
 }
 
 fn date() -> TradingDate {
     TradingDate::parse("2026-07-20").unwrap()
 }
 
-fn normalize_fixture() -> Vec<market_types::DomainEvent> {
-    let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/teralion/twse/SYNTH-TWSE-EQ/2026-07-20/regular-quotes");
-    let mut shards = fs::read_dir(&fixture_dir)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "jsonl")
-        })
-        .collect::<Vec<_>>();
-    shards.sort();
-    let lines = shards.into_iter().flat_map(|path| {
-        BufReader::new(File::open(path).unwrap())
-            .lines()
-            .map(Result::unwrap)
-    });
-    TwseNormalizer::new(
-        NormalizerConfig::new(
-            instrument(),
-            date(),
-            MatchTime::parse("2026-07-20T08:55:00+08:00").unwrap(),
-            MatchTime::parse("2026-07-20T13:35:00+08:00").unwrap(),
+fn book(bid: &str, ask: &str) -> CompleteBookSnapshot {
+    let level = |price: &str| {
+        BookLevel::new(
+            Price::parse(price).unwrap(),
+            Quantity::new(1, QuantityUnit::TradingUnit).unwrap(),
         )
-        .unwrap(),
+    };
+    CompleteBookSnapshot::new(
+        BookSide::new(BookSideKind::Bid, vec![level(bid)]).unwrap(),
+        BookSide::new(BookSideKind::Ask, vec![level(ask)]).unwrap(),
     )
-    .normalize_json_lines(lines)
     .unwrap()
-    .into_events()
+}
+
+fn quote(
+    micros: i64,
+    source_format: &str,
+    snapshot: CompleteBookSnapshot,
+    trade: Observation<ObservedTrade>,
+    volume: u64,
+    sequence: u64,
+) -> DomainEvent {
+    DomainEvent::new(
+        instrument(),
+        date(),
+        SourceFormatId::new(source_format).unwrap(),
+        MatchTime::from_unix_microseconds(micros),
+        Some(sequence),
+        EventPayload::QuoteSnapshot(
+            QuoteSnapshot::new(
+                snapshot,
+                trade,
+                Observation::Set(Volume::new(volume, QuantityUnit::TradingUnit)),
+                MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(16, 0)),
+            )
+            .unwrap(),
+        ),
+    )
+}
+
+fn neutral_events() -> Vec<DomainEvent> {
+    vec![
+        quote(
+            1,
+            "STOCK_SNAPSHOT",
+            book("100", "101"),
+            Observation::Set(ObservedTrade::new(
+                Price::parse("101").unwrap(),
+                Quantity::new(1, QuantityUnit::TradingUnit).unwrap(),
+                TradeObservationKind::Regular,
+            )),
+            1,
+            1,
+        ),
+        quote(
+            2,
+            "STOCK_REALTIME",
+            book("101", "102"),
+            Observation::NoObservation,
+            2,
+            2,
+        ),
+    ]
 }
 
 fn core() -> ReplayCore {
@@ -65,10 +98,8 @@ fn core() -> ReplayCore {
 }
 
 #[test]
-fn synthetic_fixture_replay_is_deterministic_and_preserves_event_order() {
-    let events = normalize_fixture();
-    assert!(!events.is_empty());
-
+fn neutral_domain_events_replay_is_deterministic_and_preserves_event_order() {
+    let events = neutral_events();
     let ordered = order_events(events.clone()).unwrap();
     assert_eq!(ordered.len(), events.len());
 
@@ -93,6 +124,10 @@ fn synthetic_fixture_replay_is_deterministic_and_preserves_event_order() {
     );
     let state = first.state(&instrument()).unwrap();
     assert_eq!(state.state_version(), ordered.len() as u64);
-    assert!(state.cumulative_volume().known().is_some());
+    assert_eq!(state.cumulative_volume().known().unwrap().value(), 2);
+    let LastTrade::Known(last_trade) = state.view().last_trade() else {
+        panic!("neutral quote event should expose its observed trade")
+    };
+    assert_eq!(last_trade.price(), Price::parse("101").unwrap());
     assert!(first.summary().last_match_time().is_some());
 }

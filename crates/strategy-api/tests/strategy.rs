@@ -2,10 +2,11 @@ use market_state::{
     MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
 };
 use market_types::{
-    BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventPayload,
-    IndicativeAuction, IndicativeAuctionKind, InstrumentId, MarketAnnotations, MarketId, MatchTime,
-    Observation, Price, Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol, TradingDate,
-    TwseQuoteAnnotations, Volume,
+    AuctionEvidence, AuctionObservation, AuctionPurpose, BookLevel, BookSide, BookSideKind,
+    CompleteBookSnapshot, DomainEvent, EventPayload, IndicativeAuction, InstrumentId,
+    MarketAnnotations, MarketId, MarketSignal, MatchTime, Observation, Price, Quantity,
+    QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol, TradingDate, TwseQuoteAnnotations,
+    VolatilityDirection, Volume,
 };
 use replay_engine::ReplayCore;
 use strategy_api::{
@@ -15,7 +16,6 @@ use strategy_api::{
     StrategyExecutionError, StrategyIdentity, StrategyOutputRecord, StrategyOutputSink,
     StrategyRunErrorCategory, run_strategy,
 };
-use twse_normalizer::{NormalizerConfig, TwseNormalizer};
 
 fn instrument() -> InstrumentId {
     InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap())
@@ -70,16 +70,17 @@ fn quote(time: &str, cumulative: u64, status: u8, limits: u8) -> DomainEvent {
     let annotations = TwseQuoteAnnotations::new(status, limits);
     let match_time = MatchTime::parse(time).unwrap();
     let payload = if annotations.status().trial() {
-        let kind = if annotations.status().opening_marker() || match_time < segment().open() {
-            IndicativeAuctionKind::Opening
+        let observation = if annotations.status().opening_marker() || match_time < segment().open()
+        {
+            AuctionObservation::opening(annotations.status().delayed_open(), false)
         } else if annotations.status().closing_marker() {
-            IndicativeAuctionKind::Closing
+            AuctionObservation::closing(annotations.status().delayed_close(), false)
         } else {
-            IndicativeAuctionKind::IntradayUnclassified
+            AuctionObservation::periodic(false, false)
         };
         EventPayload::IndicativeAuction(
             IndicativeAuction::new(
-                kind,
+                observation,
                 Observation::NoObservation,
                 Observation::NoObservation,
                 Observation::Set(book()),
@@ -96,7 +97,30 @@ fn quote(time: &str, cumulative: u64, status: u8, limits: u8) -> DomainEvent {
                 Observation::Set(Volume::new(cumulative, QuantityUnit::TradingUnit)),
                 MarketAnnotations::TwseQuote(annotations),
             )
-            .unwrap(),
+            .unwrap()
+            .with_market_signal(Observation::Set(
+                if annotations.limits().instant_trend()
+                    == market_types::InstantTrend::VolatilityInterruptionDown
+                {
+                    MarketSignal::AuctionCollecting(AuctionObservation::volatility_interruption(
+                        VolatilityDirection::Down,
+                        false,
+                        false,
+                    ))
+                } else if annotations.limits().instant_trend()
+                    == market_types::InstantTrend::VolatilityInterruptionUp
+                {
+                    MarketSignal::AuctionCollecting(AuctionObservation::volatility_interruption(
+                        VolatilityDirection::Up,
+                        false,
+                        false,
+                    ))
+                } else if annotations.status().closing_marker() {
+                    MarketSignal::AuctionUncross(AuctionObservation::closing(false, false))
+                } else {
+                    MarketSignal::Continuous
+                },
+            )),
         )
     };
     DomainEvent::new(
@@ -110,16 +134,7 @@ fn quote(time: &str, cumulative: u64, status: u8, limits: u8) -> DomainEvent {
 }
 
 fn delayed_open_auction() -> DomainEvent {
-    let config = NormalizerConfig::new(
-        instrument(),
-        date(),
-        MatchTime::parse("2026-07-27T08:55:00+08:00").unwrap(),
-        MatchTime::parse("2026-07-27T13:35:00+08:00").unwrap(),
-    )
-    .unwrap();
-    let normalizer = TwseNormalizer::new(config);
-    let wire = r#"{"type":"quote","market":"twse","format":"STOCK_REALTIME","symbol":"2330","match_time":"2026-07-27T08:59:59+08:00","received_at":"2026-07-27T09:00:00+08:00","bids":[{"price":100,"quantity":2}],"asks":[{"price":101,"quantity":2}],"deal":{"price":100,"quantity":2},"cum_volume":0,"limit_flags":0,"status_flags":192,"intermediate_print":false}"#;
-    normalizer.normalize_json_lines([wire]).unwrap().events()[0].clone()
+    quote("2026-07-27T08:59:59+08:00", 0, 0xc0, 0)
 }
 
 fn binary_identity() -> BinaryIdentity {
@@ -190,9 +205,10 @@ impl Strategy for ContextObserver {
             "seen_version",
             IndicatorValue::Unsigned(context.market_state().state_version()),
         )?;
-        if context.trading().matching()
-            == MatchingState::Indicative(strategy_api::IndicativeReason::DelayedOpen)
-        {
+        if context.trading().auction().is_some_and(|auction| {
+            auction.purpose() == AuctionEvidence::Known(AuctionPurpose::Opening)
+                && auction.delayed() == AuctionEvidence::Known(true)
+        }) {
             output.emit_indicator("delayed_open_seen", IndicatorValue::Bool(true))?;
         }
         Ok(())
@@ -434,7 +450,7 @@ fn session_phase_and_twse_indicative_rules_are_explicit() {
         (
             quote("2026-07-27T08:59:59+08:00", 0, 0x80, 0),
             SessionPhase::WarmUp,
-            MatchingState::Indicative(strategy_api::IndicativeReason::PreOpenTrial),
+            MatchingState::Enabled(market_types::MatchingMethod::CallAuction),
             NewOrderEntry::Restricted(OrderRestrictionReason::PreOpenLimitOrdersOnly),
         ),
         (
@@ -446,8 +462,8 @@ fn session_phase_and_twse_indicative_rules_are_explicit() {
         (
             quote("2026-07-27T09:01:00+08:00", 2, 0x10, 1),
             SessionPhase::Active,
-            MatchingState::Indicative(strategy_api::IndicativeReason::VolatilityInterruptionDown),
-            NewOrderEntry::Restricted(OrderRestrictionReason::IndicativeMarket),
+            MatchingState::Enabled(market_types::MatchingMethod::CallAuction),
+            NewOrderEntry::Restricted(OrderRestrictionReason::AuctionCollecting),
         ),
         (
             quote("2026-07-27T13:30:00.000001+08:00", 2, 0x04, 0),
@@ -460,9 +476,13 @@ fn session_phase_and_twse_indicative_rules_are_explicit() {
     for (event, phase, matching, order_entry) in cases {
         let commit = replay.apply_ordered(&event).unwrap();
         let state = replay.state(&instrument()).unwrap().view();
-        let context = strategy_api::TwseTradingContextEvaluator
-            .evaluate(&event, commit.occurrence(), state, &segment())
-            .unwrap();
+        let context = strategy_api::MarketTradingContextEvaluator::evaluate(
+            &event,
+            commit.occurrence(),
+            state,
+            &segment(),
+        )
+        .unwrap();
         assert_eq!(context.session().phase(), phase);
         assert_eq!(context.matching(), matching);
         assert_eq!(context.new_order_entry(), order_entry);

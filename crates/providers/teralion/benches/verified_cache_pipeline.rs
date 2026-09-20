@@ -3,22 +3,22 @@ use std::{
     time::{Duration, Instant},
 };
 
-use data_sync::{
-    ArchiveKind, ArchiveTimestamp, CacheBuilder, CacheReader, LocalSourceRepository,
-    StagingRevision, TeralionCredential, TeralionQuery, TeralionRequest, TeralionSync,
-    TeralionTransport, TransportError,
-};
+use data_sync::{CacheBuilder, CacheReader, LocalSourceRepository, StagingRevision};
 use market_state::{
     MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
 };
 use market_types::{InstrumentId, MarketId, MatchTime, Symbol, TradingDate, UtcOffsetMinutes};
 use replay_engine::ReplayCore;
+use teralion_provider::{
+    ArchiveKind, ArchiveTimestamp, TeralionCredential, TeralionQuery, TeralionRequest,
+    TeralionSync, TeralionTransport, TransportError,
+};
 
 const EVENTS: usize = 50_000;
 const PAGE_SIZE: usize = 5_000;
 const ROUNDS: usize = 5;
 const SOURCE_FIXTURE: &str = include_str!(
-    "../../../fixtures/teralion/twse/SYNTH-TWSE-EQ/2026-07-20/regular-quotes/0001.jsonl"
+    "../../../../fixtures/providers/teralion/twse/SYNTH-TWSE-EQ/2026-07-20/regular-quotes/0001.jsonl"
 );
 
 struct FixtureTransport {
@@ -149,7 +149,7 @@ fn main() {
         .publish(query.identity(), source_report.terminal)
         .unwrap();
 
-    let normalizer = twse_normalizer::NormalizerConfig::new(
+    let normalizer = teralion_provider::twse::NormalizerConfig::twse(
         instrument.clone(),
         date,
         MatchTime::parse("2026-07-20T08:55:00+08:00").unwrap(),
@@ -162,8 +162,17 @@ fn main() {
     assert_eq!(source.manifest().tick_record_count, EVENTS as u64);
 
     let prepare_started = Instant::now();
+    let lines = source.read_tick_records().unwrap();
+    let events = teralion_provider::twse::TwseNormalizer::new(normalizer)
+        .normalize_json_lines(lines)
+        .unwrap()
+        .into_events();
+    let mapping = data_sync::NormalizerMappingIdentity::from_static(
+        teralion_provider::twse::MAPPING_NAME,
+        teralion_provider::twse::MAPPING_VERSION,
+    );
     let published = CacheBuilder::new(root.path())
-        .build_current(normalizer)
+        .build_external_current(&instrument, date, &mapping, events)
         .unwrap();
     let prepare_elapsed = prepare_started.elapsed();
     assert_eq!(published.descriptor().event_count, EVENTS as u64);

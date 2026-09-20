@@ -1,17 +1,13 @@
 use std::{collections::BTreeMap, error::Error, fmt};
 
-use execution_sim::{
-    Ledger, MultiLedger, MultiPerformanceSummary, MultiSimulator, PerformanceSummary, Simulator,
-};
+use execution_sim::{MultiLedger, MultiPerformanceSummary, MultiSimulator};
 use market_state::LastTrade;
 use market_types::{Decimal, DomainEvent, InstrumentId};
-use replay_engine::{
-    CompletedReplay, CoreCommit, EventStream, ReplayCore, ReplayPlan, ReplayStreamFactory,
-};
+use replay_engine::{CompletedReplay, CoreCommit, ReplayCore, ReplayPlan, ReplayStreamFactory};
 use strategy_api::{
     MarketTradingContextEvaluator, OrderFeedback, SessionSegment, SessionSegmentId, Strategy,
     StrategyEventContext, StrategyFeedbackContext, StrategyFinalizeContext,
-    StrategyInitializationContext, StrategyOutput, StrategyOutputSink, TwseTradingContextEvaluator,
+    StrategyInitializationContext, StrategyOutput, StrategyOutputSink,
 };
 
 mod artifacts;
@@ -19,8 +15,8 @@ mod control;
 mod scheduled;
 mod visibility;
 pub use artifacts::{
-    ArtifactError, InspectSummary, RUN_MANIFEST_VERSION, inspect_run, publish_backtest,
-    publish_multi_backtest, publish_scheduled_multi_backtest,
+    ArtifactError, InspectSummary, RUN_MANIFEST_VERSION, inspect_run, publish_multi_backtest,
+    publish_scheduled_multi_backtest,
 };
 pub use control::{
     CONTROL_ORDERING_VERSION, ControlPhase, ControlTimeQueue, ControlTimeQueueError,
@@ -32,15 +28,6 @@ pub use visibility::{
 };
 
 pub const BACKTEST_COORDINATOR_VERSION: u16 = 1;
-
-#[derive(Debug)]
-pub struct CompletedBacktest {
-    pub replay: CompletedReplay,
-    pub strategy_output: StrategyOutput,
-    pub simulator: Simulator,
-    pub ledger: Ledger,
-    pub performance: PerformanceSummary,
-}
 
 #[derive(Debug, Clone)]
 pub struct MultiSessionSchedule {
@@ -282,9 +269,9 @@ fn process_multi_event<S: Strategy>(
     let state = views.get(event.instrument()).ok_or_else(|| {
         MultiBacktestError::Schedule("event state is absent from replay core".to_owned())
     })?;
-    let trading = MarketTradingContextEvaluator
-        .evaluate(event, commit.occurrence(), state, segment)
-        .map_err(|error| MultiBacktestError::Context(error.to_string()))?;
+    let trading =
+        MarketTradingContextEvaluator::evaluate(event, commit.occurrence(), state, segment)
+            .map_err(|error| MultiBacktestError::Context(error.to_string()))?;
     if let Some(previous) =
         current_segments.insert(event.instrument().clone(), segment.id().clone())
         && previous != *segment.id()
@@ -424,229 +411,6 @@ fn process_multi_feedback<S: Strategy>(
     Ok(())
 }
 
-pub fn run_backtest<S: Strategy>(
-    core: ReplayCore,
-    strategy: S,
-    segment: &SessionSegment,
-    events: impl IntoIterator<Item = DomainEvent>,
-    simulator: Simulator,
-    ledger: Ledger,
-    final_mark: Option<Decimal>,
-) -> Result<CompletedBacktest, BacktestError> {
-    let mut events = events.into_iter();
-    run_backtest_with_next(
-        core,
-        strategy,
-        segment,
-        || Ok(events.next()),
-        simulator,
-        ledger,
-        final_mark,
-    )
-}
-
-pub fn run_backtest_stream<S: Strategy, E: EventStream>(
-    core: ReplayCore,
-    strategy: S,
-    segment: &SessionSegment,
-    stream: &mut E,
-    simulator: Simulator,
-    ledger: Ledger,
-    final_mark: Option<Decimal>,
-) -> Result<CompletedBacktest, BacktestError> {
-    run_backtest_with_next(
-        core,
-        strategy,
-        segment,
-        || {
-            stream
-                .next_event()
-                .map_err(|error| BacktestError::InputStream(error.to_string()))
-        },
-        simulator,
-        ledger,
-        final_mark,
-    )
-}
-
-fn run_backtest_with_next<S: Strategy>(
-    mut core: ReplayCore,
-    mut strategy: S,
-    segment: &SessionSegment,
-    mut next_event: impl FnMut() -> Result<Option<DomainEvent>, BacktestError>,
-    mut simulator: Simulator,
-    mut ledger: Ledger,
-    final_mark: Option<Decimal>,
-) -> Result<CompletedBacktest, BacktestError> {
-    let declaration = strategy.declaration();
-    if declaration.universe()
-        != core
-            .states()
-            .map(|state| state.instrument().clone())
-            .collect::<Vec<_>>()
-    {
-        return Err(BacktestError::Declaration);
-    }
-    strategy
-        .initialize(&StrategyInitializationContext::new(&declaration))
-        .map_err(|error| BacktestError::Strategy(error.to_string()))?;
-    let mut output = StrategyOutput::new(
-        strategy.identity().clone(),
-        strategy.canonical_params_checksum(),
-    );
-
-    while let Some(event) = next_event()? {
-        let commit = core
-            .apply_ordered(&event)
-            .map_err(|error| BacktestError::Replay(error.to_string()))?;
-        let state = core
-            .state(event.instrument())
-            .ok_or(BacktestError::Declaration)?
-            .view();
-        let trading = TwseTradingContextEvaluator
-            .evaluate(&event, commit.occurrence(), state, segment)
-            .map_err(|error| BacktestError::Context(error.to_string()))?;
-        let mut sink = StrategyOutputSink::with_order_intents();
-        strategy
-            .on_event(
-                StrategyEventContext::new_with_states(
-                    commit.occurrence(),
-                    &event,
-                    state,
-                    core.state_views(),
-                    &trading,
-                ),
-                &mut sink,
-            )
-            .map_err(|error| BacktestError::Strategy(error.to_string()))?;
-        let intents = sink.take_intents();
-        output.extend(
-            sink.into_event_records(commit.occurrence())
-                .map_err(|error| BacktestError::Strategy(error.to_string()))?,
-        );
-
-        let mut feedback = Vec::new();
-        for (index, intent) in intents.into_iter().enumerate() {
-            feedback.push(
-                simulator
-                    .submit(
-                        strategy.identity().strategy_id(),
-                        commit.occurrence(),
-                        &trading,
-                        u32::try_from(index + 1).map_err(|_| BacktestError::Sequence)?,
-                        intent,
-                    )
-                    .map_err(|error| BacktestError::Simulation(error.to_string()))?,
-            );
-        }
-        let previous_fill_count = simulator.fills().len();
-        feedback.extend(
-            simulator
-                .evaluate(&event, commit.occurrence(), &trading)
-                .map_err(|error| BacktestError::Simulation(error.to_string()))?,
-        );
-        for fill in simulator.fills()[previous_fill_count..].iter().cloned() {
-            ledger
-                .apply_fill(fill)
-                .map_err(|error| BacktestError::Accounting(error.to_string()))?;
-        }
-        process_feedback(
-            &mut strategy,
-            commit.occurrence(),
-            &trading,
-            &mut simulator,
-            &mut output,
-            feedback,
-        )?;
-    }
-
-    let cancellations = simulator.cancel_end_of_run();
-    if !cancellations.is_empty() {
-        let mut sink = StrategyOutputSink::with_order_intents();
-        strategy
-            .on_feedback(StrategyFeedbackContext::new(&cancellations), &mut sink)
-            .map_err(|error| BacktestError::Strategy(error.to_string()))?;
-        if !sink.intents().is_empty() {
-            return Err(BacktestError::IntentAfterEnd);
-        }
-    }
-    let states = core.states().map(|state| state.view()).collect::<Vec<_>>();
-    let mut sink = StrategyOutputSink::new();
-    strategy
-        .finalize(
-            &StrategyFinalizeContext::new(core.clock(), states),
-            &mut sink,
-        )
-        .map_err(|error| BacktestError::Strategy(error.to_string()))?;
-    output.extend(
-        sink.into_finalize_records()
-            .map_err(|error| BacktestError::Strategy(error.to_string()))?,
-    );
-    ledger
-        .reconcile()
-        .map_err(|error| BacktestError::Accounting(error.to_string()))?;
-    let performance = ledger
-        .performance(final_mark)
-        .map_err(|error| BacktestError::Accounting(error.to_string()))?;
-    let replay = core
-        .complete()
-        .map_err(|error| BacktestError::Replay(error.to_string()))?;
-    Ok(CompletedBacktest {
-        replay,
-        strategy_output: output,
-        simulator,
-        ledger,
-        performance,
-    })
-}
-
-fn process_feedback<S: Strategy>(
-    strategy: &mut S,
-    occurrence: &replay_engine::EventOccurrence,
-    trading: &strategy_api::TradingContext,
-    simulator: &mut Simulator,
-    output: &mut StrategyOutput,
-    feedback: Vec<OrderFeedback>,
-) -> Result<(), BacktestError> {
-    if feedback.is_empty() {
-        return Ok(());
-    }
-    let mut sink = StrategyOutputSink::with_order_intents();
-    strategy
-        .on_feedback(StrategyFeedbackContext::new(&feedback), &mut sink)
-        .map_err(|error| BacktestError::Strategy(error.to_string()))?;
-    let intents = sink.take_intents();
-    output.extend(
-        sink.into_event_records(occurrence)
-            .map_err(|error| BacktestError::Strategy(error.to_string()))?,
-    );
-    for (index, intent) in intents.into_iter().enumerate() {
-        simulator
-            .submit(
-                strategy.identity().strategy_id(),
-                occurrence,
-                trading,
-                u32::try_from(index + 1).map_err(|_| BacktestError::Sequence)?,
-                intent,
-            )
-            .map_err(|error| BacktestError::Simulation(error.to_string()))?;
-    }
-    Ok(())
-}
-
-#[derive(Debug)]
-pub enum BacktestError {
-    Declaration,
-    InputStream(String),
-    Replay(String),
-    Context(String),
-    Strategy(String),
-    Simulation(String),
-    Accounting(String),
-    Sequence,
-    IntentAfterEnd,
-}
-
 #[derive(Debug)]
 pub enum MultiBacktestError {
     Declaration,
@@ -668,16 +432,10 @@ impl fmt::Display for MultiBacktestError {
 
 impl Error for MultiBacktestError {}
 
-impl fmt::Display for BacktestError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{self:?}")
-    }
-}
-
-impl Error for BacktestError {}
-
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use execution_sim::{
         AccountingModel, ChargeBasis, ChargeModel, ChargeSides, EvidenceMode, FillModel,
         InstrumentEconomics, InstrumentLedgerConfig, MultiLedger, QuantityPolicy, RoundingPolicy,
@@ -733,12 +491,27 @@ mod tests {
             MatchTime::parse("2026-07-27T13:30:00+08:00").unwrap(),
         )
         .unwrap();
-        let core = ReplayCore::new(
+        let core = ReplayCore::new_multi(
             vec![MarketState::new(instrument.clone(), date)],
-            MarketStateReducer::twse_regular(),
-            ReducerContext::new(date, segment_id, SegmentBoundaryPolicy::Carry, 1),
+            vec![(instrument.clone(), MarketStateReducer::twse_regular())],
+            vec![(
+                instrument.clone(),
+                ReducerContext::new(date, segment_id, SegmentBoundaryPolicy::Carry, 1),
+            )],
         )
         .unwrap();
+        let plan = ReplayPlan::new_multi(
+            [4; 32],
+            vec![ReplayStreamBinding::new(
+                StableStreamDescriptorId::from_bytes([8; 32]),
+                instrument.clone(),
+                date,
+                [2; 32],
+                [3; 32],
+            )],
+        )
+        .unwrap();
+        let schedule = MultiSessionSchedule::new([(instrument.clone(), vec![segment])]).unwrap();
         let strategy = AcceptanceStrategy::new(
             AcceptanceStrategy::source_binary_identity().unwrap(),
             [instrument.clone()],
@@ -753,18 +526,24 @@ mod tests {
             precision: 0,
             rounding: RoundingPolicy::Down,
         };
-        let ledger = Ledger::new(
+        let ledger = MultiLedger::new(
             Decimal::parse("1000000").unwrap(),
-            InstrumentEconomics {
-                units_per_trading_unit: 1000,
-                multiplier: Decimal::parse("1").unwrap(),
-                provenance: "test".into(),
-            },
-            zero_charge,
-            zero_charge,
-        );
-        let simulator = Simulator::new(
-            [instrument.clone()],
+            [InstrumentLedgerConfig::new(
+                instrument.clone(),
+                QuantityUnit::TradingUnit,
+                AccountingModel::EquityV1,
+                InstrumentEconomics {
+                    units_per_trading_unit: 1000,
+                    multiplier: Decimal::parse("1").unwrap(),
+                    provenance: "test".into(),
+                },
+                zero_charge,
+                zero_charge,
+            )],
+        )
+        .unwrap();
+        let simulator = MultiSimulator::new([(
+            instrument.clone(),
             QuantityUnit::TradingUnit,
             FillModel {
                 evidence: EvidenceMode::TopOfBook,
@@ -773,16 +552,29 @@ mod tests {
                 market_data_latency_ms: 0,
                 order_latency_ms: 0,
             },
-        );
-        let completed =
-            run_backtest(core, strategy, &segment, [], simulator, ledger, None).unwrap();
-        assert_eq!(completed.performance.fill_count, 0);
+            market_types::PricePolicy::PositiveOnly,
+        )])
+        .unwrap();
+        let completed = run_multi_backtest(
+            core,
+            strategy,
+            &plan,
+            &mut MultiFactory {
+                events: BTreeMap::new(),
+            },
+            &schedule,
+            simulator,
+            ledger,
+            false,
+        )
+        .unwrap();
+        assert_eq!(completed.performance.fill_count(), 0);
         assert_eq!(completed.replay.summary().event_count(), 0);
 
         let root = tempfile::tempdir().unwrap();
         let output = root.path().join("run");
         let metadata = artifact_strategy_metadata(instrument, &[SessionKind::Regular]);
-        publish_backtest(
+        publish_multi_backtest(
             &output, &completed, &[7; 32], "source-1", "cache-1", &metadata,
         )
         .unwrap();
@@ -838,16 +630,21 @@ mod tests {
     }
 
     struct MultiFactory {
-        events: Vec<DomainEvent>,
+        events: BTreeMap<InstrumentId, Vec<DomainEvent>>,
     }
 
     impl ReplayStreamFactory for MultiFactory {
         type Stream = MultiVecStream;
         type Error = std::io::Error;
 
-        fn open(&mut self, _binding: &ReplayStreamBinding) -> Result<Self::Stream, Self::Error> {
+        fn open(&mut self, binding: &ReplayStreamBinding) -> Result<Self::Stream, Self::Error> {
             Ok(MultiVecStream {
-                events: self.events.clone().into_iter(),
+                events: self
+                    .events
+                    .get(binding.instrument())
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter(),
             })
         }
     }
@@ -873,7 +670,11 @@ mod tests {
             SourceFormatId::new("I080").unwrap(),
             match_time,
             None,
-            EventPayload::BookSnapshot(BookSnapshot::new(book, MarketAnnotations::None)),
+            EventPayload::BookSnapshot(
+                BookSnapshot::new(book, MarketAnnotations::None).with_market_signal(
+                    market_types::Observation::Set(market_types::MarketSignal::Continuous),
+                ),
+            ),
         )
     }
 
@@ -980,7 +781,9 @@ mod tests {
             core,
             strategy,
             &plan,
-            &mut MultiFactory { events },
+            &mut MultiFactory {
+                events: BTreeMap::from([(instrument.clone(), events)]),
+            },
             &schedule,
             simulator,
             ledger,
@@ -1042,5 +845,227 @@ mod tests {
             manifest["versions"]["fill_model"],
             execution_sim::FILL_MODEL_VERSION
         );
+    }
+
+    #[test]
+    fn multi_market_backtest_reconciles_equity_and_option_economics() {
+        let equity = InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap());
+        let option = InstrumentId::new(MarketId::Taifex, Symbol::new("TXO202612").unwrap());
+        let date = TradingDate::parse("2026-07-27").unwrap();
+        let equity_events = (0..3)
+            .map(|second| {
+                twse_event(
+                    &equity,
+                    MatchTime::parse(&format!("2026-07-27T09:00:0{second}+08:00")).unwrap(),
+                    second + 1,
+                )
+            })
+            .collect::<Vec<_>>();
+        let option_events = (0..3)
+            .map(|second| {
+                taifex_event(
+                    &option,
+                    MatchTime::parse(&format!("2026-07-27T09:00:0{second}+08:00")).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let session_id = SessionSegmentId::new("regular").unwrap();
+        let segment = || {
+            SessionSegment::new(
+                SessionSegmentId::new("regular").unwrap(),
+                SessionKind::Regular,
+                date,
+                MatchTime::parse("2026-07-27T09:00:00+08:00").unwrap(),
+                MatchTime::parse("2026-07-27T13:30:00+08:00").unwrap(),
+            )
+            .unwrap()
+        };
+        let core = ReplayCore::new_multi(
+            vec![
+                MarketState::new(equity.clone(), date),
+                MarketState::new(option.clone(), date),
+            ],
+            vec![
+                (equity.clone(), MarketStateReducer::twse_regular()),
+                (option.clone(), MarketStateReducer::taifex_options()),
+            ],
+            vec![
+                (
+                    equity.clone(),
+                    ReducerContext::new(date, session_id.clone(), SegmentBoundaryPolicy::Carry, 1),
+                ),
+                (
+                    option.clone(),
+                    ReducerContext::new(date, session_id, SegmentBoundaryPolicy::Carry, 1),
+                ),
+            ],
+        )
+        .unwrap();
+        let bindings = vec![
+            ReplayStreamBinding::new(
+                StableStreamDescriptorId::from_bytes([8; 32]),
+                equity.clone(),
+                date,
+                [2; 32],
+                [3; 32],
+            ),
+            ReplayStreamBinding::new(
+                StableStreamDescriptorId::from_bytes([9; 32]),
+                option.clone(),
+                date,
+                [4; 32],
+                [5; 32],
+            ),
+        ];
+        let plan = ReplayPlan::new_multi([6; 32], bindings).unwrap();
+        let schedule = MultiSessionSchedule::new(vec![
+            (equity.clone(), vec![segment()]),
+            (option.clone(), vec![segment()]),
+        ])
+        .unwrap();
+        let strategy = AcceptanceStrategy::new(
+            AcceptanceStrategy::source_binary_identity().unwrap(),
+            [equity.clone(), option.clone()],
+            [SessionKind::Regular],
+        )
+        .unwrap();
+        let fill_model = || execution_sim::FillModel {
+            evidence: execution_sim::EvidenceMode::TopOfBook,
+            quantity: execution_sim::QuantityPolicy::Displayed,
+            adverse_price_delta: Decimal::ZERO,
+            market_data_latency_ms: 0,
+            order_latency_ms: 0,
+        };
+        let simulator = MultiSimulator::new([
+            (
+                equity.clone(),
+                QuantityUnit::TradingUnit,
+                fill_model(),
+                market_types::PricePolicy::PositiveOnly,
+            ),
+            (
+                option.clone(),
+                QuantityUnit::Contract,
+                fill_model(),
+                market_types::PricePolicy::PositiveOnly,
+            ),
+        ])
+        .unwrap();
+        let zero_charge = || ChargeModel {
+            basis: ChargeBasis::NotionalRate,
+            rate: Decimal::ZERO,
+            sides: ChargeSides::Both,
+            minimum: Decimal::ZERO,
+            precision: 0,
+            rounding: RoundingPolicy::Down,
+        };
+        let ledger = MultiLedger::new(
+            Decimal::parse("1000000").unwrap(),
+            [
+                InstrumentLedgerConfig::new(
+                    equity.clone(),
+                    QuantityUnit::TradingUnit,
+                    AccountingModel::EquityV1,
+                    InstrumentEconomics {
+                        units_per_trading_unit: 1,
+                        multiplier: Decimal::parse("1").unwrap(),
+                        provenance: "test TWSE equity economics".into(),
+                    },
+                    zero_charge(),
+                    zero_charge(),
+                ),
+                InstrumentLedgerConfig::new(
+                    option.clone(),
+                    QuantityUnit::Contract,
+                    AccountingModel::OptionsV1,
+                    InstrumentEconomics {
+                        units_per_trading_unit: 1,
+                        multiplier: Decimal::parse("50").unwrap(),
+                        provenance: "test TAIFEX option economics".into(),
+                    },
+                    zero_charge(),
+                    zero_charge(),
+                ),
+            ],
+        )
+        .unwrap();
+        let completed = run_multi_backtest(
+            core,
+            strategy,
+            &plan,
+            &mut MultiFactory {
+                events: BTreeMap::from([
+                    (equity.clone(), equity_events),
+                    (option.clone(), option_events),
+                ]),
+            },
+            &schedule,
+            simulator,
+            ledger,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(completed.replay.summary().event_count(), 6);
+        assert_eq!(completed.simulator.order_count(), 4);
+        assert_eq!(completed.simulator.fill_count(), 4);
+        assert_eq!(completed.performance.fill_count(), 4);
+        assert_eq!(
+            completed.performance.realized_pnl(),
+            Decimal::parse("-102").unwrap()
+        );
+        assert_eq!(completed.ledger.cash(), Decimal::parse("999898").unwrap());
+        assert_eq!(
+            completed.ledger.ledger(&equity).unwrap().accounting_model(),
+            AccountingModel::EquityV1
+        );
+        assert_eq!(
+            completed.ledger.ledger(&option).unwrap().accounting_model(),
+            AccountingModel::OptionsV1
+        );
+        assert_eq!(completed.performance.instruments().len(), 2);
+    }
+
+    fn twse_event(
+        instrument: &InstrumentId,
+        match_time: MatchTime,
+        cumulative: u64,
+    ) -> DomainEvent {
+        let quantity = Quantity::new(1, QuantityUnit::TradingUnit).unwrap();
+        let book = CompleteBookSnapshot::new(
+            BookSide::new(
+                BookSideKind::Bid,
+                vec![BookLevel::new(Price::parse("99").unwrap(), quantity)],
+            )
+            .unwrap(),
+            BookSide::new(
+                BookSideKind::Ask,
+                vec![BookLevel::new(Price::parse("101").unwrap(), quantity)],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        DomainEvent::new(
+            instrument.clone(),
+            TradingDate::parse("2026-07-27").unwrap(),
+            SourceFormatId::new("STOCK_REALTIME").unwrap(),
+            match_time,
+            None,
+            EventPayload::QuoteSnapshot(
+                market_types::QuoteSnapshot::new(
+                    book,
+                    market_types::Observation::NoObservation,
+                    market_types::Observation::Set(market_types::Volume::new(
+                        cumulative,
+                        QuantityUnit::TradingUnit,
+                    )),
+                    MarketAnnotations::TwseQuote(market_types::TwseQuoteAnnotations::new(0, 0)),
+                )
+                .unwrap()
+                .with_market_signal(market_types::Observation::Set(
+                    market_types::MarketSignal::Continuous,
+                )),
+            ),
+        )
     }
 }

@@ -1,10 +1,10 @@
 use std::{error::Error, fmt};
 
-use market_state::{MarketStateView, SessionSegmentId, StateField};
+use market_state::{MarketPhase, MarketStateView, SessionSegmentId, StateField};
 use market_types::{
-    CompleteBookSnapshot, DomainEvent, EventPayload, IndicativeAuction, IndicativeAuctionKind,
-    InstantTrend, LimitPosition, MarketAnnotations, MarketId, MatchTime, MatchingMethod, Price,
-    Quantity, StabilityDirection, TpexQuoteAnnotations, TradingDate,
+    AuctionEvidence, AuctionObservation, AuctionPurpose, CompleteBookSnapshot, DomainEvent,
+    EventPayload, MarketId, MarketSignal, MatchTime, MatchingMethod, Observation, Price, Quantity,
+    TradingDate,
 };
 use replay_engine::EventOccurrence;
 
@@ -137,7 +137,7 @@ impl SessionCallbackContext {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderRestrictionReason {
     PreOpenLimitOrdersOnly,
-    IndicativeMarket,
+    AuctionCollecting,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,26 +155,15 @@ pub enum NewOrderEntry {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IndicativeReason {
-    PreOpenTrial,
-    PreCloseTrial,
-    DelayedOpen,
-    DelayedClose,
-    VolatilityInterruptionDown,
-    VolatilityInterruptionUp,
-    UnclassifiedTrial,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatchingState {
     Enabled(MatchingMethod),
-    Indicative(IndicativeReason),
+    Closed,
     Unknown,
 }
 
-/// A normalized borrowed view over an equity indicative-auction observation.
+/// A normalized borrowed view over an indicative call-auction observation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EquityIndicativeObservation<'a>(&'a IndicativeAuction);
+pub struct EquityIndicativeObservation<'a>(&'a market_types::IndicativeAuction);
 
 impl<'a> EquityIndicativeObservation<'a> {
     #[must_use]
@@ -189,8 +178,8 @@ impl<'a> EquityIndicativeObservation<'a> {
     }
 
     #[must_use]
-    pub const fn kind(self) -> IndicativeAuctionKind {
-        self.0.kind()
+    pub const fn observation(self) -> AuctionObservation {
+        self.0.observation()
     }
 
     #[must_use]
@@ -207,11 +196,6 @@ impl<'a> EquityIndicativeObservation<'a> {
     pub fn book(self) -> Option<&'a CompleteBookSnapshot> {
         self.0.book().as_set()
     }
-
-    #[must_use]
-    pub const fn annotations(self) -> &'a MarketAnnotations {
-        self.0.annotations()
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -221,6 +205,8 @@ pub struct TradingContext {
     session: SessionCallbackContext,
     new_order_entry: NewOrderEntry,
     matching: MatchingState,
+    auction: Option<AuctionObservation>,
+    market_signal: Option<MarketSignal>,
     market_rule_name: &'static str,
     market_rule_version: u16,
 }
@@ -252,6 +238,16 @@ impl TradingContext {
     }
 
     #[must_use]
+    pub const fn auction(&self) -> Option<AuctionObservation> {
+        self.auction
+    }
+
+    #[must_use]
+    pub const fn market_signal(&self) -> Option<MarketSignal> {
+        self.market_signal
+    }
+
+    #[must_use]
     pub const fn market_rule_name(&self) -> &'static str {
         self.market_rule_name
     }
@@ -263,101 +259,25 @@ impl TradingContext {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
-pub struct TwseTradingContextEvaluator;
+pub struct MarketTradingContextEvaluator;
 
-impl TwseTradingContextEvaluator {
+impl MarketTradingContextEvaluator {
     pub fn evaluate(
-        self,
         event: &DomainEvent,
         occurrence: &EventOccurrence,
         state: MarketStateView<'_>,
         segment: &SessionSegment,
     ) -> Result<TradingContext, ContextError> {
-        if event.trading_date() != segment.trading_date()
-            || state.trading_date() != segment.trading_date()
-        {
-            return Err(ContextError::TradingDateMismatch);
-        }
-        if event.instrument() != state.instrument() {
-            return Err(ContextError::InstrumentMismatch);
-        }
-        if state.current_segment_id() != Some(segment.id()) {
-            return Err(ContextError::SegmentMismatch);
-        }
-        if occurrence.instrument_state_version() != state.state_version() {
-            return Err(ContextError::StateVersionMismatch);
-        }
-        let last_event = state
-            .last_event()
-            .ok_or(ContextError::MissingAppliedEvent)?;
-        if last_event.event_fingerprint() != occurrence.event_fingerprint()
-            || last_event.match_time() != event.match_time()
-        {
-            return Err(ContextError::EventIdentityMismatch);
-        }
-
+        validate_event_state(event, occurrence, state, segment)?;
         let phase = segment.phase(event.match_time())?;
         let session = SessionCallbackContext {
             segment_id: segment.id().clone(),
             session_kind: segment.kind(),
             phase,
         };
-        let annotations = match state.last_annotations() {
-            StateField::Known {
-                value: MarketAnnotations::TwseQuote(value),
-                ..
-            } => *value,
-            StateField::Known {
-                value: MarketAnnotations::None,
-                ..
-            }
-            | StateField::Known {
-                value: MarketAnnotations::TpexQuote(_),
-                ..
-            }
-            | StateField::Unavailable(_)
-            | StateField::Unknown { .. } => return Err(ContextError::MissingTwseAnnotations),
-        };
-        let status = annotations.status();
-        let limits = annotations.limits();
-        let reserved = status.reserved_bits() != 0
-            || [limits.trade(), limits.best_bid(), limits.best_ask()]
-                .contains(&LimitPosition::Reserved)
-            || limits.instant_trend() == InstantTrend::Reserved;
-
-        let matching = if reserved {
-            MatchingState::Unknown
-        } else if let Some(kind) = indicative_kind(event) {
-            indicative_matching(kind, status.delayed_open(), status.delayed_close())
-        } else {
-            match limits.instant_trend() {
-                InstantTrend::VolatilityInterruptionDown => {
-                    MatchingState::Indicative(IndicativeReason::VolatilityInterruptionDown)
-                }
-                InstantTrend::VolatilityInterruptionUp => {
-                    MatchingState::Indicative(IndicativeReason::VolatilityInterruptionUp)
-                }
-                InstantTrend::Normal if status.trial() => MatchingState::Unknown,
-                InstantTrend::Normal => MatchingState::Enabled(status.matching_method()),
-                InstantTrend::Reserved => unreachable!("reserved trend handled above"),
-            }
-        };
-
-        let new_order_entry = if phase == SessionPhase::CoolDown {
-            NewOrderEntry::Blocked(OrderBlockReason::CoolDown)
-        } else if status.closing_marker() {
-            NewOrderEntry::Blocked(OrderBlockReason::ClosingResult)
-        } else if reserved {
-            NewOrderEntry::Unknown
-        } else if matching == MatchingState::Indicative(IndicativeReason::PreOpenTrial) {
-            NewOrderEntry::Restricted(OrderRestrictionReason::PreOpenLimitOrdersOnly)
-        } else if matches!(matching, MatchingState::Indicative(_)) {
-            NewOrderEntry::Restricted(OrderRestrictionReason::IndicativeMarket)
-        } else if matching == MatchingState::Unknown {
-            NewOrderEntry::Unknown
-        } else {
-            NewOrderEntry::Allowed
-        };
+        let signal = event.payload().market_signal();
+        let (matching, auction) = matching_for_signal(&signal, state.phase());
+        let new_order_entry = order_entry_for_signal(&signal, matching, auction, phase);
 
         Ok(TradingContext {
             event_fingerprint: *occurrence.event_fingerprint().as_bytes(),
@@ -365,216 +285,93 @@ impl TwseTradingContextEvaluator {
             session,
             new_order_entry,
             matching,
-            market_rule_name: "twse.quote-annotations",
+            auction,
+            market_signal: signal.as_set().copied(),
+            market_rule_name: "market.signal",
             market_rule_version: 3,
         })
     }
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-pub struct TpexTradingContextEvaluator;
+fn matching_for_signal(
+    signal: &Observation<MarketSignal>,
+    state_phase: &StateField<MarketPhase>,
+) -> (MatchingState, Option<AuctionObservation>) {
+    match signal {
+        Observation::Set(MarketSignal::Continuous) => {
+            (MatchingState::Enabled(MatchingMethod::Continuous), None)
+        }
+        Observation::Set(MarketSignal::AuctionCollecting(observation))
+        | Observation::Set(MarketSignal::AuctionUncross(observation)) => (
+            MatchingState::Enabled(MatchingMethod::CallAuction),
+            Some(*observation),
+        ),
+        Observation::Set(MarketSignal::Closed) => (MatchingState::Closed, None),
+        Observation::NoObservation => match state_phase.known() {
+            Some(MarketPhase::Continuous) => {
+                (MatchingState::Enabled(MatchingMethod::Continuous), None)
+            }
+            Some(MarketPhase::Auction(auction)) => (
+                MatchingState::Enabled(MatchingMethod::CallAuction),
+                Some(auction.observation()),
+            ),
+            Some(MarketPhase::Closed) => (MatchingState::Closed, None),
+            None => (MatchingState::Unknown, None),
+        },
+        Observation::Clear | Observation::Unknown(_) => (MatchingState::Unknown, None),
+    }
+}
 
-impl TpexTradingContextEvaluator {
-    pub fn evaluate(
-        self,
-        event: &DomainEvent,
-        occurrence: &EventOccurrence,
-        state: MarketStateView<'_>,
-        segment: &SessionSegment,
-    ) -> Result<TradingContext, ContextError> {
-        validate_event_state(event, occurrence, state, segment)?;
-        let phase = segment.phase(event.match_time())?;
-        let session = SessionCallbackContext {
-            segment_id: segment.id().clone(),
-            session_kind: segment.kind(),
-            phase,
-        };
-        let annotations = match state.last_annotations() {
-            StateField::Known {
-                value: MarketAnnotations::TpexQuote(value),
-                ..
-            } => *value,
-            StateField::Known {
-                value: MarketAnnotations::None,
-                ..
+fn order_entry_for_signal(
+    signal: &Observation<MarketSignal>,
+    matching: MatchingState,
+    auction: Option<AuctionObservation>,
+    session_phase: SessionPhase,
+) -> NewOrderEntry {
+    if session_phase == SessionPhase::CoolDown {
+        return NewOrderEntry::Blocked(OrderBlockReason::CoolDown);
+    }
+    match signal {
+        Observation::Set(MarketSignal::AuctionCollecting(observation)) => {
+            if observation.purpose() == AuctionEvidence::Known(AuctionPurpose::Opening) {
+                NewOrderEntry::Restricted(OrderRestrictionReason::PreOpenLimitOrdersOnly)
+            } else {
+                NewOrderEntry::Restricted(OrderRestrictionReason::AuctionCollecting)
             }
-            | StateField::Known {
-                value: MarketAnnotations::TwseQuote(_),
-                ..
+        }
+        Observation::Set(MarketSignal::AuctionUncross(observation)) => {
+            match observation.purpose() {
+                AuctionEvidence::Known(AuctionPurpose::Closing) => {
+                    NewOrderEntry::Blocked(OrderBlockReason::ClosingResult)
+                }
+                AuctionEvidence::Known(AuctionPurpose::Periodic) => {
+                    NewOrderEntry::Restricted(OrderRestrictionReason::AuctionCollecting)
+                }
+                AuctionEvidence::Known(AuctionPurpose::Opening)
+                | AuctionEvidence::Known(AuctionPurpose::VolatilityInterruption) => {
+                    NewOrderEntry::Allowed
+                }
+                AuctionEvidence::NoObservation | AuctionEvidence::Unknown => NewOrderEntry::Unknown,
             }
-            | StateField::Unavailable(_)
-            | StateField::Unknown { .. } => return Err(ContextError::MissingTpexAnnotations),
-        };
-        let matching = evaluate_annotated_matching(event, annotations);
-        let new_order_entry = if phase == SessionPhase::CoolDown {
-            NewOrderEntry::Blocked(OrderBlockReason::CoolDown)
-        } else if annotations.status().closing_marker() {
+        }
+        Observation::Set(MarketSignal::Closed) => {
             NewOrderEntry::Blocked(OrderBlockReason::ClosingResult)
-        } else if matching == MatchingState::Indicative(IndicativeReason::PreOpenTrial) {
-            NewOrderEntry::Restricted(OrderRestrictionReason::PreOpenLimitOrdersOnly)
-        } else if matches!(matching, MatchingState::Indicative(_)) {
-            NewOrderEntry::Restricted(OrderRestrictionReason::IndicativeMarket)
-        } else if matching == MatchingState::Unknown {
-            NewOrderEntry::Unknown
-        } else {
-            NewOrderEntry::Allowed
-        };
-        Ok(TradingContext {
-            event_fingerprint: *occurrence.event_fingerprint().as_bytes(),
-            instrument_state_version: occurrence.instrument_state_version(),
-            session,
-            new_order_entry,
-            matching,
-            market_rule_name: "tpex.quote-annotations",
-            market_rule_version: 4,
-        })
-    }
-}
-
-fn evaluate_annotated_matching(
-    event: &DomainEvent,
-    annotations: TpexQuoteAnnotations,
-) -> MatchingState {
-    let status = annotations.status();
-    let limits = annotations.limits();
-    let reserved = status.reserved_bits() != 0
-        || [limits.trade(), limits.best_bid(), limits.best_ask()]
-            .contains(&LimitPosition::Reserved)
-        || limits.instant_trend() == InstantTrend::Reserved;
-    if reserved {
-        return MatchingState::Unknown;
-    }
-    if let Some(kind) = indicative_kind(event) {
-        return indicative_matching(kind, status.delayed_open(), status.delayed_close());
-    }
-    match limits.instant_trend() {
-        InstantTrend::VolatilityInterruptionDown => {
-            MatchingState::Indicative(IndicativeReason::VolatilityInterruptionDown)
         }
-        InstantTrend::VolatilityInterruptionUp => {
-            MatchingState::Indicative(IndicativeReason::VolatilityInterruptionUp)
-        }
-        InstantTrend::Normal if status.trial() => MatchingState::Unknown,
-        InstantTrend::Normal => MatchingState::Enabled(status.matching_method()),
-        InstantTrend::Reserved => unreachable!("reserved trend handled above"),
-    }
-}
-
-fn indicative_kind(event: &DomainEvent) -> Option<IndicativeAuctionKind> {
-    match event.payload() {
-        EventPayload::IndicativeAuction(auction) => Some(auction.kind()),
-        EventPayload::QuoteSnapshot(_)
-        | EventPayload::BookSnapshot(_)
-        | EventPayload::TradeBatch(_)
-        | EventPayload::MarketStatus(_) => None,
-    }
-}
-
-const fn indicative_matching(
-    kind: IndicativeAuctionKind,
-    delayed_open: bool,
-    delayed_close: bool,
-) -> MatchingState {
-    match kind {
-        _ if delayed_open && delayed_close => MatchingState::Unknown,
-        IndicativeAuctionKind::Opening if delayed_close => MatchingState::Unknown,
-        IndicativeAuctionKind::Opening if delayed_open => {
-            MatchingState::Indicative(IndicativeReason::DelayedOpen)
-        }
-        IndicativeAuctionKind::Opening => MatchingState::Indicative(IndicativeReason::PreOpenTrial),
-        IndicativeAuctionKind::Closing if delayed_open => MatchingState::Unknown,
-        IndicativeAuctionKind::Closing if delayed_close => {
-            MatchingState::Indicative(IndicativeReason::DelayedClose)
-        }
-        IndicativeAuctionKind::Closing => {
-            MatchingState::Indicative(IndicativeReason::PreCloseTrial)
-        }
-        IndicativeAuctionKind::IntradayStability {
-            direction: StabilityDirection::Down,
-        } if !delayed_open && !delayed_close => {
-            MatchingState::Indicative(IndicativeReason::VolatilityInterruptionDown)
-        }
-        IndicativeAuctionKind::IntradayStability {
-            direction: StabilityDirection::Up,
-        } if !delayed_open && !delayed_close => {
-            MatchingState::Indicative(IndicativeReason::VolatilityInterruptionUp)
-        }
-        IndicativeAuctionKind::IntradayUnclassified if !delayed_open && !delayed_close => {
-            MatchingState::Indicative(IndicativeReason::UnclassifiedTrial)
-        }
-        IndicativeAuctionKind::IntradayStability { .. }
-        | IndicativeAuctionKind::IntradayUnclassified => MatchingState::Unknown,
-    }
-}
-
-/// Evaluates the market-specific trading rules used by a multi-market run.
-///
-/// TWSE keeps its annotation-driven evaluator. TAIFEX events currently carry no
-/// market annotation flags, so its context is derived only from the session
-/// phase and explicit indicative-auction domain events.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct MarketTradingContextEvaluator;
-
-impl MarketTradingContextEvaluator {
-    pub fn evaluate(
-        self,
-        event: &DomainEvent,
-        occurrence: &EventOccurrence,
-        state: MarketStateView<'_>,
-        segment: &SessionSegment,
-    ) -> Result<TradingContext, ContextError> {
-        match event.instrument().market() {
-            MarketId::Twse => {
-                TwseTradingContextEvaluator.evaluate(event, occurrence, state, segment)
+        Observation::Set(MarketSignal::Continuous) => NewOrderEntry::Allowed,
+        Observation::NoObservation => match auction {
+            Some(observation)
+                if observation.purpose() == AuctionEvidence::Known(AuctionPurpose::Opening) =>
+            {
+                NewOrderEntry::Restricted(OrderRestrictionReason::PreOpenLimitOrdersOnly)
             }
-            MarketId::Tpex => {
-                TpexTradingContextEvaluator.evaluate(event, occurrence, state, segment)
+            Some(_) => NewOrderEntry::Restricted(OrderRestrictionReason::AuctionCollecting),
+            None if matching == MatchingState::Closed => {
+                NewOrderEntry::Blocked(OrderBlockReason::ClosingResult)
             }
-            MarketId::Taifex => self.evaluate_taifex(event, occurrence, state, segment),
-        }
-    }
-
-    fn evaluate_taifex(
-        self,
-        event: &DomainEvent,
-        occurrence: &EventOccurrence,
-        state: MarketStateView<'_>,
-        segment: &SessionSegment,
-    ) -> Result<TradingContext, ContextError> {
-        validate_event_state(event, occurrence, state, segment)?;
-        let phase = segment.phase(event.match_time())?;
-        let session = SessionCallbackContext {
-            segment_id: segment.id().clone(),
-            session_kind: segment.kind(),
-            phase,
-        };
-        let indicative_kind = indicative_kind(event);
-        let matching = if let Some(kind) = indicative_kind {
-            indicative_matching(kind, false, false)
-        } else if phase == SessionPhase::WarmUp {
-            MatchingState::Indicative(IndicativeReason::PreOpenTrial)
-        } else {
-            MatchingState::Enabled(MatchingMethod::Continuous)
-        };
-        let new_order_entry = if phase == SessionPhase::CoolDown {
-            NewOrderEntry::Blocked(OrderBlockReason::CoolDown)
-        } else if indicative_kind.is_some() {
-            NewOrderEntry::Restricted(OrderRestrictionReason::IndicativeMarket)
-        } else if phase == SessionPhase::WarmUp {
-            NewOrderEntry::Restricted(OrderRestrictionReason::PreOpenLimitOrdersOnly)
-        } else {
-            NewOrderEntry::Allowed
-        };
-
-        Ok(TradingContext {
-            event_fingerprint: *occurrence.event_fingerprint().as_bytes(),
-            instrument_state_version: occurrence.instrument_state_version(),
-            session,
-            new_order_entry,
-            matching,
-            market_rule_name: "taifex.futures-session",
-            market_rule_version: 2,
-        })
+            None if matches!(matching, MatchingState::Enabled(_)) => NewOrderEntry::Allowed,
+            None => NewOrderEntry::Unknown,
+        },
+        Observation::Clear | Observation::Unknown(_) => NewOrderEntry::Unknown,
     }
 }
 
@@ -620,9 +417,6 @@ pub enum ContextError {
     StateVersionMismatch,
     MissingAppliedEvent,
     EventIdentityMismatch,
-    MissingTwseAnnotations,
-    MissingTpexAnnotations,
-    UnsupportedMarket(MarketId),
 }
 
 impl fmt::Display for ContextError {
@@ -637,295 +431,9 @@ impl fmt::Display for ContextError {
             Self::StateVersionMismatch => "occurrence and post-event state versions differ",
             Self::MissingAppliedEvent => "post-event state has no applied event identity",
             Self::EventIdentityMismatch => "event, occurrence, and state identities differ",
-            Self::MissingTwseAnnotations => "TWSE trading context requires known TWSE annotations",
-            Self::MissingTpexAnnotations => "TPEx trading context requires known TPEx annotations",
-            Self::UnsupportedMarket(market) => {
-                return write!(formatter, "unsupported trading-context market: {market:?}");
-            }
         };
         formatter.write_str(message)
     }
 }
 
 impl Error for ContextError {}
-
-#[cfg(test)]
-mod tests {
-    use market_state::{
-        MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
-    };
-    use market_types::{
-        BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, InstrumentId, MarketAnnotations,
-        Observation, ObservedTrade, Price, Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId,
-        Symbol, TpexQuoteAnnotations, TradeObservationKind, TwseQuoteAnnotations,
-    };
-    use replay_engine::ReplayCore;
-
-    use super::*;
-
-    fn tpex_event(time: &str, status: u8) -> (DomainEvent, TpexQuoteAnnotations) {
-        tpex_event_with_limits(time, status, 0)
-    }
-
-    fn twse_event_with_limits(
-        time: &str,
-        status: u8,
-        limit_flags: u8,
-    ) -> (DomainEvent, TwseQuoteAnnotations) {
-        let quantity = Quantity::new(1, QuantityUnit::TradingUnit).unwrap();
-        let book = CompleteBookSnapshot::new(
-            BookSide::new(
-                BookSideKind::Bid,
-                vec![BookLevel::new(Price::parse("99").unwrap(), quantity)],
-            )
-            .unwrap(),
-            BookSide::new(
-                BookSideKind::Ask,
-                vec![BookLevel::new(Price::parse("101").unwrap(), quantity)],
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        let annotations = TwseQuoteAnnotations::new(status, limit_flags);
-        let event = DomainEvent::new(
-            InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap()),
-            TradingDate::parse("2026-06-23").unwrap(),
-            SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
-            MatchTime::parse(time).unwrap(),
-            None,
-            EventPayload::QuoteSnapshot(
-                QuoteSnapshot::new(
-                    book,
-                    Observation::NoObservation,
-                    Observation::NoObservation,
-                    MarketAnnotations::TwseQuote(annotations),
-                )
-                .unwrap(),
-            ),
-        );
-        (event, annotations)
-    }
-
-    fn tpex_event_with_limits(
-        time: &str,
-        status: u8,
-        limit_flags: u8,
-    ) -> (DomainEvent, TpexQuoteAnnotations) {
-        let quantity = Quantity::new(1, QuantityUnit::TradingUnit).unwrap();
-        let book = CompleteBookSnapshot::new(
-            BookSide::new(
-                BookSideKind::Bid,
-                vec![BookLevel::new(Price::parse("99").unwrap(), quantity)],
-            )
-            .unwrap(),
-            BookSide::new(
-                BookSideKind::Ask,
-                vec![BookLevel::new(Price::parse("101").unwrap(), quantity)],
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        let annotations = TpexQuoteAnnotations::new(status, limit_flags);
-        let payload = if annotations.status().trial() {
-            let kind = if annotations.status().opening_marker() {
-                IndicativeAuctionKind::Opening
-            } else if annotations.status().closing_marker() {
-                IndicativeAuctionKind::Closing
-            } else {
-                IndicativeAuctionKind::IntradayUnclassified
-            };
-            EventPayload::IndicativeAuction(
-                IndicativeAuction::new(
-                    kind,
-                    Observation::Set(Price::parse("100").unwrap()),
-                    Observation::Set(quantity),
-                    Observation::Set(book),
-                    Observation::NoObservation,
-                    MarketAnnotations::TpexQuote(annotations),
-                )
-                .unwrap(),
-            )
-        } else {
-            EventPayload::QuoteSnapshot(
-                QuoteSnapshot::new(
-                    book,
-                    Observation::Set(ObservedTrade::new(
-                        Price::parse("100").unwrap(),
-                        quantity,
-                        TradeObservationKind::Regular,
-                    )),
-                    Observation::NoObservation,
-                    MarketAnnotations::TpexQuote(annotations),
-                )
-                .unwrap(),
-            )
-        };
-        let event = DomainEvent::new(
-            InstrumentId::new(MarketId::Tpex, Symbol::new("3374").unwrap()),
-            TradingDate::parse("2026-06-23").unwrap(),
-            SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
-            MatchTime::parse(time).unwrap(),
-            None,
-            payload,
-        );
-        (event, annotations)
-    }
-
-    fn segment() -> SessionSegment {
-        SessionSegment::new(
-            SessionSegmentId::new("regular").unwrap(),
-            SessionKind::Regular,
-            TradingDate::parse("2026-06-23").unwrap(),
-            MatchTime::parse("2026-06-23T09:00:00+08:00").unwrap(),
-            MatchTime::parse("2026-06-23T13:30:00+08:00").unwrap(),
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn tpex_formal_auction_markers_are_enabled_but_trial_markers_are_indicative() {
-        let cases = [
-            (
-                "2026-06-23T08:59:59+08:00",
-                0x88,
-                MatchingState::Indicative(IndicativeReason::PreOpenTrial),
-            ),
-            (
-                "2026-06-23T08:59:59+08:00",
-                0xc8,
-                MatchingState::Indicative(IndicativeReason::DelayedOpen),
-            ),
-            (
-                "2026-06-23T09:00:00.145482+08:00",
-                0x08,
-                MatchingState::Enabled(MatchingMethod::CallAuction),
-            ),
-            (
-                "2026-06-23T13:29:59+08:00",
-                0x84,
-                MatchingState::Indicative(IndicativeReason::PreCloseTrial),
-            ),
-            (
-                "2026-06-23T13:29:59+08:00",
-                0xa4,
-                MatchingState::Indicative(IndicativeReason::DelayedClose),
-            ),
-            (
-                "2026-06-23T13:30:00+08:00",
-                0x04,
-                MatchingState::Enabled(MatchingMethod::CallAuction),
-            ),
-        ];
-
-        for (time, status, expected) in cases {
-            let (event, annotations) = tpex_event(time, status);
-            assert_eq!(evaluate_annotated_matching(&event, annotations), expected);
-        }
-    }
-
-    #[test]
-    fn tpex_stability_pause_restricts_new_orders_to_limit_rod() {
-        let (event, _) = tpex_event_with_limits("2026-06-23T09:01:00+08:00", 0x10, 0x01);
-        let instrument = event.instrument().clone();
-        let date = event.trading_date();
-        let segment_id = SessionSegmentId::new("regular").unwrap();
-        let mut core = ReplayCore::new(
-            vec![MarketState::new(instrument, date)],
-            MarketStateReducer::tpex_regular(),
-            ReducerContext::new(date, segment_id, SegmentBoundaryPolicy::Carry, 1),
-        )
-        .unwrap();
-        let commit = core.apply_ordered(&event).unwrap();
-        let state = core.state(event.instrument()).unwrap().view();
-        let context = TpexTradingContextEvaluator
-            .evaluate(&event, commit.occurrence(), state, &segment())
-            .unwrap();
-
-        assert_eq!(
-            context.matching(),
-            MatchingState::Indicative(IndicativeReason::VolatilityInterruptionDown)
-        );
-        assert_eq!(
-            context.new_order_entry(),
-            NewOrderEntry::Restricted(OrderRestrictionReason::IndicativeMarket)
-        );
-    }
-
-    #[test]
-    fn twse_stability_pause_restricts_new_orders_to_limit_rod() {
-        let (event, _) = twse_event_with_limits("2026-06-23T09:01:00+08:00", 0x10, 0x02);
-        let instrument = event.instrument().clone();
-        let date = event.trading_date();
-        let segment_id = SessionSegmentId::new("regular").unwrap();
-        let mut core = ReplayCore::new(
-            vec![MarketState::new(instrument, date)],
-            MarketStateReducer::twse_regular(),
-            ReducerContext::new(date, segment_id, SegmentBoundaryPolicy::Carry, 1),
-        )
-        .unwrap();
-        let commit = core.apply_ordered(&event).unwrap();
-        let state = core.state(event.instrument()).unwrap().view();
-        let context = TwseTradingContextEvaluator
-            .evaluate(&event, commit.occurrence(), state, &segment())
-            .unwrap();
-
-        assert_eq!(
-            context.matching(),
-            MatchingState::Indicative(IndicativeReason::VolatilityInterruptionUp)
-        );
-        assert_eq!(
-            context.new_order_entry(),
-            NewOrderEntry::Restricted(OrderRestrictionReason::IndicativeMarket)
-        );
-    }
-
-    #[test]
-    fn intraday_trial_is_unclassified_and_exposed_as_an_indicative_observation() {
-        let (event, annotations) = tpex_event_with_limits("2026-06-23T09:04:43+08:00", 0x80, 0x02);
-        assert_eq!(
-            evaluate_annotated_matching(&event, annotations),
-            MatchingState::Indicative(IndicativeReason::UnclassifiedTrial)
-        );
-        assert_eq!(
-            annotations.limits().instant_trend(),
-            InstantTrend::VolatilityInterruptionUp
-        );
-        let observation = EquityIndicativeObservation::from_event(&event).unwrap();
-        assert_eq!(
-            observation.kind(),
-            IndicativeAuctionKind::IntradayUnclassified
-        );
-        assert_eq!(
-            observation.price().unwrap().atoms(),
-            100_000_000_000_000_000_000
-        );
-        assert_eq!(observation.quantity().unwrap().value(), 1);
-        assert!(observation.book().is_some());
-    }
-
-    #[test]
-    fn typed_indicative_kind_controls_reason_before_annotation_markers() {
-        assert_eq!(
-            indicative_matching(IndicativeAuctionKind::Opening, true, false),
-            MatchingState::Indicative(IndicativeReason::DelayedOpen)
-        );
-        assert_eq!(
-            indicative_matching(IndicativeAuctionKind::Closing, true, false),
-            MatchingState::Unknown
-        );
-        assert_eq!(
-            indicative_matching(
-                IndicativeAuctionKind::IntradayStability {
-                    direction: StabilityDirection::Down,
-                },
-                false,
-                false,
-            ),
-            MatchingState::Indicative(IndicativeReason::VolatilityInterruptionDown)
-        );
-        assert_eq!(
-            indicative_matching(IndicativeAuctionKind::IntradayUnclassified, true, true),
-            MatchingState::Unknown
-        );
-    }
-}

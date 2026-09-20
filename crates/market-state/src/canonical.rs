@@ -6,12 +6,12 @@ use market_types::{
 };
 
 use crate::{
-    AppliedEventRef, MARKET_STATE_VERSION, MarketState, StateField, TradeObservation,
-    UnavailableReason,
+    AppliedEventRef, AuctionState, MARKET_STATE_VERSION, MarketPhase, MarketState, StateField,
+    TradeObservation, UnavailableReason,
 };
 
-pub const CANONICAL_MARKET_STATE_VERSION: u16 = 5;
-pub const CANONICAL_FINAL_STATE_SET_VERSION: u16 = 5;
+pub const CANONICAL_MARKET_STATE_VERSION: u16 = 7;
+pub const CANONICAL_FINAL_STATE_SET_VERSION: u16 = 7;
 
 impl MarketState {
     pub fn to_canonical_bytes(&self) -> Result<Vec<u8>, CanonicalEncodingError> {
@@ -33,7 +33,8 @@ impl MarketState {
         append_state_field(self.recent_trade(), &mut bytes)?;
         append_state_field(self.cumulative_volume(), &mut bytes)?;
         append_state_field(self.indicative_auction(), &mut bytes)?;
-        append_state_field(self.last_annotations(), &mut bytes)?;
+        append_state_field(self.market_signal(), &mut bytes)?;
+        append_state_field(self.phase(), &mut bytes)?;
         match self.last_event() {
             None => bytes.push(0),
             Some(event) => {
@@ -48,6 +49,26 @@ impl MarketState {
         Ok(StateFingerprint(
             *blake3::hash(&self.to_canonical_bytes()?).as_bytes(),
         ))
+    }
+}
+
+impl CanonicalValue for AuctionState {
+    fn append_canonical(&self, bytes: &mut Vec<u8>) -> Result<(), CanonicalEncodingError> {
+        self.observation().append_canonical(bytes)
+    }
+}
+
+impl CanonicalValue for MarketPhase {
+    fn append_canonical(&self, bytes: &mut Vec<u8>) -> Result<(), CanonicalEncodingError> {
+        match self {
+            Self::Continuous => bytes.push(1),
+            Self::Auction(auction) => {
+                bytes.push(2);
+                auction.append_canonical(bytes)?;
+            }
+            Self::Closed => bytes.push(3),
+        }
+        Ok(())
     }
 }
 

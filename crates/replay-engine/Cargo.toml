@@ -9,9 +9,6 @@ blake3 = "1.8"
 market-state = { path = "../market-state" }
 market-types = { path = "../market-types" }
 
-[dev-dependencies]
-twse-normalizer = { path = "../normalizer/twse" }
-
 [[bench]]
 name = "canonical_hot_path"
 harness = false

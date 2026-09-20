@@ -5,23 +5,76 @@ use strategy_api::SessionKind;
 
 use crate::canonical::{append_instrument, append_len, append_session};
 
-pub const SOURCE_PARTITION_KEY_VERSION: u16 = 1;
+pub const SOURCE_PARTITION_KEY_VERSION: u16 = 2;
+pub const SOURCE_ID_MAX_BYTES: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[repr(u8)]
-pub enum SourceId {
-    TeralionFeedArchive = 1,
+pub struct SourceId {
+    bytes: [u8; SOURCE_ID_MAX_BYTES],
+    len: u8,
 }
 
 impl SourceId {
+    pub fn new(value: impl AsRef<str>) -> Result<Self, SourceIdError> {
+        let value = value.as_ref();
+        if value.is_empty() {
+            return Err(SourceIdError::Empty);
+        }
+        if value.len() > SOURCE_ID_MAX_BYTES {
+            return Err(SourceIdError::TooLong);
+        }
+        if !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(SourceIdError::UnsafeCharacter);
+        }
+        let mut bytes = [0_u8; SOURCE_ID_MAX_BYTES];
+        bytes[..value.len()].copy_from_slice(value.as_bytes());
+        Ok(Self {
+            bytes,
+            len: value.len() as u8,
+        })
+    }
+
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.len as usize]
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        std::str::from_utf8(self.as_bytes()).expect("source id bytes are validated UTF-8")
+    }
+
     /// Stable storage namespace for artifacts produced by this source adapter.
     #[must_use]
-    pub const fn storage_namespace(self) -> &'static str {
-        match self {
-            Self::TeralionFeedArchive => "teralion",
-        }
+    pub fn storage_namespace(&self) -> &str {
+        self.as_str()
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceIdError {
+    Empty,
+    TooLong,
+    UnsafeCharacter,
+}
+
+impl fmt::Display for SourceIdError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let message = match self {
+            Self::Empty => "source id must not be empty",
+            Self::TooLong => "source id exceeds the storage-safe length limit",
+            Self::UnsafeCharacter => {
+                "source id may contain only ASCII letters, digits, '-' and '_'"
+            }
+        };
+        formatter.write_str(message)
+    }
+}
+
+impl Error for SourceIdError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SessionPlanIdentity([u8; 32]);
@@ -111,7 +164,9 @@ impl SourcePartitionKey {
         let mut canonical = Vec::new();
         canonical.extend_from_slice(b"OSPK");
         canonical.extend_from_slice(&SOURCE_PARTITION_KEY_VERSION.to_be_bytes());
-        canonical.push(source as u8);
+        append_len(source.as_bytes().len(), &mut canonical)
+            .map_err(|_| SourcePartitionKeyError::CanonicalLengthOverflow)?;
+        canonical.extend_from_slice(source.as_bytes());
         append_instrument(&instrument, &mut canonical)
             .map_err(|_| SourcePartitionKeyError::CanonicalLengthOverflow)?;
         canonical.extend_from_slice(&trading_date.to_canonical_bytes());

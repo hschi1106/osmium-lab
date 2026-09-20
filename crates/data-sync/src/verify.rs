@@ -9,12 +9,13 @@ use std::{
 use run_planner::{CorruptReason, IncompleteReason, SourceRevisionIdentity, SourceState};
 use sha2::{Digest, Sha256};
 
-use crate::{ObjectKind, PageMetadata, SourceManifest};
+use crate::{ObjectKind, PageMetadata, SourceManifest, decode_hex_32, hex};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerificationReport {
     revision: SourceRevisionIdentity,
     manifest: SourceManifest,
+    revision_root: PathBuf,
 }
 
 impl VerificationReport {
@@ -26,6 +27,31 @@ impl VerificationReport {
     #[must_use]
     pub const fn manifest(&self) -> &SourceManifest {
         &self.manifest
+    }
+
+    /// Reads the verified tick records as provider-neutral JSON values.
+    pub fn read_tick_records(&self) -> Result<Vec<String>, VerificationError> {
+        let mut records = Vec::new();
+        for page in &self.manifest.pages {
+            let file = File::open(self.revision_root.join(&page.relative_path))?;
+            let mut decoder = zstd::stream::read::Decoder::new(BufReader::new(file))?;
+            let value: serde_json::Value = serde_json::from_reader(&mut decoder)
+                .map_err(|error| VerificationError::PayloadJson(error.to_string()))?;
+            let items = value
+                .get("items")
+                .and_then(serde_json::Value::as_array)
+                .ok_or(VerificationError::PayloadEnvelope)?;
+            records.extend(
+                items
+                    .iter()
+                    .map(|item| {
+                        serde_json::to_string(item)
+                            .map_err(|error| VerificationError::PayloadJson(error.to_string()))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
+        }
+        Ok(records)
     }
 }
 
@@ -210,6 +236,7 @@ impl LocalSourceRepository {
         Ok(VerificationReport {
             revision: SourceRevisionIdentity::from_bytes(revision_bytes),
             manifest,
+            revision_root: revision_path,
         })
     }
 }
@@ -256,9 +283,9 @@ fn verify_object(root: &Path, metadata: &PageMetadata) -> Result<(), Verificatio
     Ok(())
 }
 
-fn parse_query_identity(value: &str) -> Result<crate::SanitizedQueryIdentity, VerificationError> {
+fn parse_query_identity(value: &str) -> Result<crate::SourceRequestIdentity, VerificationError> {
     let bytes = decode_hex_32(value).ok_or(VerificationError::ManifestInvariant)?;
-    Ok(crate::SanitizedQueryIdentity::from_bytes(bytes))
+    Ok(crate::SourceRequestIdentity::from_bytes(bytes))
 }
 
 fn hash_file(path: &Path) -> Result<[u8; 32], io::Error> {
@@ -273,35 +300,6 @@ fn hash_file(path: &Path) -> Result<[u8; 32], io::Error> {
         hasher.update(&buffer[..count]);
     }
     Ok(hasher.finalize().into())
-}
-
-fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(DIGITS[(byte >> 4) as usize] as char);
-        output.push(DIGITS[(byte & 0x0f) as usize] as char);
-    }
-    output
-}
-
-fn decode_hex_32(value: &str) -> Option<[u8; 32]> {
-    if value.len() != 64 {
-        return None;
-    }
-    let mut output = [0_u8; 32];
-    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
-        output[index] = decode_nibble(pair[0])? << 4 | decode_nibble(pair[1])?;
-    }
-    Some(output)
-}
-
-fn decode_nibble(value: u8) -> Option<u8> {
-    match value {
-        b'0'..=b'9' => Some(value - b'0'),
-        b'a'..=b'f' => Some(value - b'a' + 10),
-        _ => None,
-    }
 }
 
 #[derive(Debug)]
@@ -384,41 +382,22 @@ impl From<io::Error> for VerificationError {
 mod tests {
     use std::io::{Seek, SeekFrom, Write};
 
-    use market_types::{InstrumentId, MarketId, Symbol};
-
     use super::*;
-    use crate::{
-        ArchiveKind, ArchiveTimestamp, CursorStateMachine, StagingRevision, TeralionQuery,
-    };
+    use crate::{SourcePage, SourceRequestIdentity, StagingRevision};
 
     fn publish(root: &Path) -> crate::PublishedRevision {
-        let ticks = TeralionQuery::ticks(
-            InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap()),
-            ArchiveTimestamp::parse("2026-07-27T08:55:00+08:00").unwrap(),
-            ArchiveTimestamp::parse("2026-07-27T13:35:00+08:00").unwrap(),
-            [ArchiveKind::Quote],
-            5_000,
-        )
-        .unwrap();
         let mut staging = StagingRevision::create(root, "verify-fixture").unwrap();
-        let mut machine = CursorStateMachine::new(ticks.clone()).unwrap();
-        let request = machine.request_next().unwrap();
-        let pending = machine
-            .accept_response(&request, br#"{"items":[],"next_cursor":null}"#.to_vec())
-            .unwrap();
-        let staged = staging.stage_page(pending).unwrap();
-        machine.commit_page(staged.commit_receipt()).unwrap();
+        let query_identity = SourceRequestIdentity::from_bytes([1; 32]);
+        let body = br#"{"items":[{"synthetic":true}],"next_cursor":null}"#.to_vec();
+        let page = SourcePage::new(0, query_identity, body, 1);
+        staging.stage_page(&page).unwrap();
         staging
             .stage_daily_instrument(
-                TeralionQuery::daily_instrument(
-                    ticks.instrument().unwrap().clone(),
-                    "2026-07-27".parse().unwrap(),
-                )
-                .identity(),
-                br#"{"symbol":"2330"}"#,
+                SourceRequestIdentity::from_bytes([2; 32]),
+                br#"{"synthetic":true}"#,
             )
             .unwrap();
-        staging.publish(ticks.identity(), true).unwrap()
+        staging.publish(query_identity, true).unwrap()
     }
 
     #[test]

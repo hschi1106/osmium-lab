@@ -1,20 +1,16 @@
 use std::{collections::BTreeMap, error::Error, fmt};
 
 use market_types::{
-    BookError, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventError,
-    EventPayload, IndicativeAuction, IndicativeAuctionKind, InstantTrend, InstrumentId,
-    LimitPosition, MarketAnnotations, MarketId, MarketStatusObservation, MatchTime, MatchTimeError,
-    Observation, ObservedTrade, Price, PriceError, Quantity, QuantityError, QuantityUnit,
-    QuoteSnapshot, SourceFormatId, TradeBatch, TradeBatchOrdering, TradeObservationKind,
-    TradingDate, TwseQuoteAnnotations, Volume,
+    AuctionEvidence, AuctionObservation, BookError, BookLevel, BookSide, BookSideKind,
+    CompleteBookSnapshot, DomainEvent, EventError, EventPayload, IndicativeAuction, InstantTrend,
+    InstrumentId, LimitPosition, MarketAnnotations, MarketId, MarketSignal,
+    MarketStatusObservation, MatchTime, MatchTimeError, Observation, ObservedTrade, Price,
+    PriceError, Quantity, QuantityError, QuantityUnit, QuoteSnapshot, SourceFormatId,
+    TpexQuoteAnnotations, TradeBatch, TradeBatchOrdering, TradeObservationKind, TradingDate,
+    TwseQuoteAnnotations, UnknownValue, VolatilityDirection, Volume,
 };
 use serde::Deserialize;
 use serde_json::value::RawValue;
-
-pub const MAPPING_NAME: &str = "TeralionTwseQuote";
-pub const MAPPING_VERSION: u16 = 9;
-pub const WARRANT_MAPPING_NAME: &str = "TeralionTwseWarrant";
-pub const WARRANT_MAPPING_VERSION: u16 = 6;
 
 const STOCK_SNAPSHOT: &str = "STOCK_SNAPSHOT";
 const STOCK_REALTIME: &str = "STOCK_REALTIME";
@@ -28,9 +24,145 @@ pub enum InstrumentProfile {
     Warrant,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QuoteMarket {
+    Twse,
+    Tpex,
+}
+
+impl QuoteMarket {
+    const fn market_id(self) -> MarketId {
+        match self {
+            Self::Twse => MarketId::Twse,
+            Self::Tpex => MarketId::Tpex,
+        }
+    }
+
+    const fn wire_name(self) -> &'static str {
+        match self {
+            Self::Twse => "twse",
+            Self::Tpex => "tpex",
+        }
+    }
+
+    const fn display_name(self) -> &'static str {
+        match self {
+            Self::Twse => "TWSE",
+            Self::Tpex => "TPEx",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuoteAnnotations {
+    Twse(TwseQuoteAnnotations),
+    Tpex(TpexQuoteAnnotations),
+}
+
+impl QuoteAnnotations {
+    const fn new(market: QuoteMarket, status: u8, limits: u8) -> Self {
+        match market {
+            QuoteMarket::Twse => Self::Twse(TwseQuoteAnnotations::new(status, limits)),
+            QuoteMarket::Tpex => Self::Tpex(TpexQuoteAnnotations::new(status, limits)),
+        }
+    }
+
+    const fn trial(self) -> bool {
+        match self {
+            Self::Twse(value) => value.status().trial(),
+            Self::Tpex(value) => value.status().trial(),
+        }
+    }
+
+    const fn delayed_open(self) -> bool {
+        match self {
+            Self::Twse(value) => value.status().delayed_open(),
+            Self::Tpex(value) => value.status().delayed_open(),
+        }
+    }
+
+    const fn delayed_close(self) -> bool {
+        match self {
+            Self::Twse(value) => value.status().delayed_close(),
+            Self::Tpex(value) => value.status().delayed_close(),
+        }
+    }
+
+    const fn opening_marker(self) -> bool {
+        match self {
+            Self::Twse(value) => value.status().opening_marker(),
+            Self::Tpex(value) => value.status().opening_marker(),
+        }
+    }
+
+    const fn closing_marker(self) -> bool {
+        match self {
+            Self::Twse(value) => value.status().closing_marker(),
+            Self::Tpex(value) => value.status().closing_marker(),
+        }
+    }
+
+    const fn reserved_bits(self) -> u8 {
+        match self {
+            Self::Twse(value) => value.status().reserved_bits(),
+            Self::Tpex(value) => value.status().reserved_bits(),
+        }
+    }
+
+    const fn trade_limit(self) -> LimitPosition {
+        match self {
+            Self::Twse(value) => value.limits().trade(),
+            Self::Tpex(value) => value.limits().trade(),
+        }
+    }
+
+    const fn best_bid_limit(self) -> LimitPosition {
+        match self {
+            Self::Twse(value) => value.limits().best_bid(),
+            Self::Tpex(value) => value.limits().best_bid(),
+        }
+    }
+
+    const fn best_ask_limit(self) -> LimitPosition {
+        match self {
+            Self::Twse(value) => value.limits().best_ask(),
+            Self::Tpex(value) => value.limits().best_ask(),
+        }
+    }
+
+    const fn instant_trend(self) -> InstantTrend {
+        match self {
+            Self::Twse(value) => value.limits().instant_trend(),
+            Self::Tpex(value) => value.limits().instant_trend(),
+        }
+    }
+
+    const fn status_flags_raw(self) -> u8 {
+        match self {
+            Self::Twse(value) => value.status_flags_raw(),
+            Self::Tpex(value) => value.status_flags_raw(),
+        }
+    }
+
+    const fn limit_flags_raw(self) -> u8 {
+        match self {
+            Self::Twse(value) => value.limit_flags_raw(),
+            Self::Tpex(value) => value.limit_flags_raw(),
+        }
+    }
+
+    const fn into_market_annotations(self) -> MarketAnnotations {
+        match self {
+            Self::Twse(value) => MarketAnnotations::TwseQuote(value),
+            Self::Tpex(value) => MarketAnnotations::TpexQuote(value),
+        }
+    }
+}
+
 /// Validated source-partition identity and the half-open replay window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NormalizerConfig {
+    market: QuoteMarket,
     instrument: InstrumentId,
     trading_date: TradingDate,
     replay_start: MatchTime,
@@ -39,13 +171,14 @@ pub struct NormalizerConfig {
 }
 
 impl NormalizerConfig {
-    pub fn new(
+    pub fn twse(
         instrument: InstrumentId,
         trading_date: TradingDate,
         replay_start: MatchTime,
         replay_end_exclusive: MatchTime,
     ) -> Result<Self, ConfigError> {
-        Self::for_profile(
+        Self::new(
+            QuoteMarket::Twse,
             instrument,
             trading_date,
             replay_start,
@@ -54,13 +187,14 @@ impl NormalizerConfig {
         )
     }
 
-    pub fn new_warrant(
+    pub fn twse_warrant(
         instrument: InstrumentId,
         trading_date: TradingDate,
         replay_start: MatchTime,
         replay_end_exclusive: MatchTime,
     ) -> Result<Self, ConfigError> {
-        Self::for_profile(
+        Self::new(
+            QuoteMarket::Twse,
             instrument,
             trading_date,
             replay_start,
@@ -69,20 +203,57 @@ impl NormalizerConfig {
         )
     }
 
-    pub fn for_profile(
+    pub fn tpex(
+        instrument: InstrumentId,
+        trading_date: TradingDate,
+        replay_start: MatchTime,
+        replay_end_exclusive: MatchTime,
+    ) -> Result<Self, ConfigError> {
+        Self::new(
+            QuoteMarket::Tpex,
+            instrument,
+            trading_date,
+            replay_start,
+            replay_end_exclusive,
+            InstrumentProfile::Equity,
+        )
+    }
+
+    pub fn tpex_warrant(
+        instrument: InstrumentId,
+        trading_date: TradingDate,
+        replay_start: MatchTime,
+        replay_end_exclusive: MatchTime,
+    ) -> Result<Self, ConfigError> {
+        Self::new(
+            QuoteMarket::Tpex,
+            instrument,
+            trading_date,
+            replay_start,
+            replay_end_exclusive,
+            InstrumentProfile::Warrant,
+        )
+    }
+
+    fn new(
+        market: QuoteMarket,
         instrument: InstrumentId,
         trading_date: TradingDate,
         replay_start: MatchTime,
         replay_end_exclusive: MatchTime,
         profile: InstrumentProfile,
     ) -> Result<Self, ConfigError> {
-        if instrument.market() != MarketId::Twse {
-            return Err(ConfigError::WrongMarket(instrument.market()));
+        if instrument.market() != market.market_id() {
+            return Err(ConfigError::WrongMarket {
+                expected: market.market_id(),
+                actual: instrument.market(),
+            });
         }
         if replay_start >= replay_end_exclusive {
             return Err(ConfigError::InvalidReplayWindow);
         }
         Ok(Self {
+            market,
             instrument,
             trading_date,
             replay_start,
@@ -119,15 +290,21 @@ impl NormalizerConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigError {
-    WrongMarket(MarketId),
+    WrongMarket {
+        expected: MarketId,
+        actual: MarketId,
+    },
     InvalidReplayWindow,
 }
 
 impl fmt::Display for ConfigError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::WrongMarket(market) => {
-                write!(formatter, "TWSE normalizer cannot use market {market:?}")
+            Self::WrongMarket { expected, actual } => {
+                write!(
+                    formatter,
+                    "{expected:?} normalizer cannot use market {actual:?}"
+                )
             }
             Self::InvalidReplayWindow => {
                 formatter.write_str("replay window start must be before its exclusive end")
@@ -140,11 +317,11 @@ impl Error for ConfigError {}
 
 /// Batch normalizer that groups realtime intermediate/final records by source identity and time.
 #[derive(Debug, Clone)]
-pub struct TwseNormalizer {
+pub struct QuoteNormalizer {
     config: NormalizerConfig,
 }
 
-impl TwseNormalizer {
+impl QuoteNormalizer {
     #[must_use]
     pub const fn new(config: NormalizerConfig) -> Self {
         Self { config }
@@ -224,7 +401,13 @@ impl TwseNormalizer {
             "quote",
             envelope.record_type,
         )?;
-        validate_identity(record_number, &context, "market", "twse", envelope.market)?;
+        validate_identity(
+            record_number,
+            &context,
+            "market",
+            self.config.market.wire_name(),
+            envelope.market,
+        )?;
         validate_identity(
             record_number,
             &context,
@@ -299,13 +482,14 @@ impl TwseNormalizer {
             ));
         }
 
-        let annotations = TwseQuoteAnnotations::new(wire.status_flags, wire.limit_flags);
+        let annotations =
+            QuoteAnnotations::new(self.config.market, wire.status_flags, wire.limit_flags);
         let record_warnings = annotation_warnings(&context, annotations);
         let cumulative_volume = Volume::new(wire.cum_volume, QuantityUnit::TradingUnit);
         let (deal, deal_zero_quantity) = parse_deal(record_number, &context, wire.deal)?;
         if deal_zero_quantity {
             let is_pause = matches!(
-                annotations.limits().instant_trend(),
+                annotations.instant_trend(),
                 InstantTrend::VolatilityInterruptionDown | InstantTrend::VolatilityInterruptionUp
             );
             if !is_pause
@@ -511,8 +695,11 @@ impl TwseNormalizer {
         if is_status_only_pause(record) {
             let status = MarketStatusObservation::new(
                 Observation::Set(record.cumulative_volume),
-                MarketAnnotations::TwseQuote(record.annotations),
-            );
+                record.annotations.into_market_annotations(),
+            )
+            .with_market_signal(Observation::Set(MarketSignal::AuctionCollecting(
+                volatility_observation(record.annotations),
+            )));
             return Ok(self.domain_event(record, EventPayload::MarketStatus(status)));
         }
         let book = record.book.clone().ok_or_else(|| {
@@ -533,9 +720,10 @@ impl TwseNormalizer {
             book,
             trade,
             Observation::Set(record.cumulative_volume),
-            MarketAnnotations::TwseQuote(record.annotations),
+            record.annotations.into_market_annotations(),
         )
-        .map_err(|error| event_error(record, error))?;
+        .map_err(|error| event_error(record, error))?
+        .with_market_signal(self.firm_market_signal(record));
         Ok(self.domain_event(record, EventPayload::QuoteSnapshot(snapshot)))
     }
 
@@ -558,9 +746,10 @@ impl TwseNormalizer {
             vec![trade],
             TradeBatchOrdering::SourceSequencePreserved,
             Observation::Set(record.cumulative_volume),
-            MarketAnnotations::TwseQuote(record.annotations),
+            record.annotations.into_market_annotations(),
         )
-        .map_err(|error| event_error(record, error))?;
+        .map_err(|error| event_error(record, error))?
+        .with_market_signal(self.firm_market_signal(record));
         Ok(self.domain_event(record, EventPayload::TradeBatch(batch)))
     }
 
@@ -591,16 +780,17 @@ impl TwseNormalizer {
             trades,
             TradeBatchOrdering::SourceSequencePreserved,
             Observation::Set(last.cumulative_volume),
-            MarketAnnotations::TwseQuote(first.annotations),
+            first.annotations.into_market_annotations(),
         )
-        .map_err(|error| event_error(first, error))?;
+        .map_err(|error| event_error(first, error))?
+        .with_market_signal(self.firm_market_signal(first));
         Ok(self.domain_event(first, EventPayload::TradeBatch(batch)))
     }
 
     fn auction_event(
         &self,
         record: &ValidatedRecord,
-        kind: IndicativeAuctionKind,
+        observation: AuctionObservation,
         book: Observation<CompleteBookSnapshot>,
     ) -> Result<DomainEvent, NormalizationError> {
         let (price, quantity) = match record.deal {
@@ -611,12 +801,12 @@ impl TwseNormalizer {
             None => (Observation::NoObservation, Observation::NoObservation),
         };
         let auction = IndicativeAuction::new(
-            kind,
+            observation,
             price,
             quantity,
             book,
             Observation::Set(record.cumulative_volume),
-            MarketAnnotations::TwseQuote(record.annotations),
+            record.annotations.into_market_annotations(),
         )
         .map_err(|error| event_error(record, error))?;
         Ok(self.domain_event(record, EventPayload::IndicativeAuction(auction)))
@@ -625,13 +815,13 @@ impl TwseNormalizer {
     fn auction_phase(
         &self,
         record: &ValidatedRecord,
-    ) -> Result<Option<IndicativeAuctionKind>, NormalizationError> {
-        let status = record.annotations.status();
-        if !status.trial() {
+    ) -> Result<Option<AuctionObservation>, NormalizationError> {
+        let annotations = record.annotations;
+        if !annotations.trial() {
             return Ok(None);
         }
 
-        if status.delayed_open() && status.delayed_close() {
+        if annotations.delayed_open() && annotations.delayed_close() {
             return Err(NormalizationError::new(
                 record.record_number,
                 record.context.clone(),
@@ -640,11 +830,17 @@ impl TwseNormalizer {
                 ),
             ));
         }
-        if status.delayed_open() {
-            return Ok(Some(IndicativeAuctionKind::Opening));
+        if annotations.delayed_open() {
+            return Ok(Some(AuctionObservation::opening_with_evidence(
+                AuctionEvidence::Known(true),
+                AuctionEvidence::NoObservation,
+            )));
         }
-        if status.delayed_close() {
-            return Ok(Some(IndicativeAuctionKind::Closing));
+        if annotations.delayed_close() {
+            return Ok(Some(AuctionObservation::closing_with_evidence(
+                AuctionEvidence::Known(true),
+                AuctionEvidence::NoObservation,
+            )));
         }
 
         let opening_window_start = self.session_time("08:30:00");
@@ -655,16 +851,24 @@ impl TwseNormalizer {
             record.match_time >= opening_window_start && record.match_time < opening_window_end;
         let in_closing_window =
             record.match_time >= closing_window_start && record.match_time < closing_window_end;
-        let opening = status.delayed_open() || status.opening_marker() || in_opening_window;
-        let closing = status.delayed_close() || status.closing_marker() || in_closing_window;
+        let opening =
+            annotations.delayed_open() || annotations.opening_marker() || in_opening_window;
+        let closing =
+            annotations.delayed_close() || annotations.closing_marker() || in_closing_window;
         match (opening, closing) {
-            (true, false) => Ok(Some(IndicativeAuctionKind::Opening)),
-            (false, true) => Ok(Some(IndicativeAuctionKind::Closing)),
+            (true, false) => Ok(Some(AuctionObservation::opening_with_evidence(
+                AuctionEvidence::NoObservation,
+                AuctionEvidence::NoObservation,
+            ))),
+            (false, true) => Ok(Some(AuctionObservation::closing_with_evidence(
+                AuctionEvidence::NoObservation,
+                AuctionEvidence::NoObservation,
+            ))),
             // Instant-trend proves a pause direction, not that Teralion's
             // deal/book fields are simulated-auction values. Preserve the
             // annotation and keep the indicative observation unclassified
             // until a real source fixture verifies that mapping.
-            (false, false) => Ok(Some(IndicativeAuctionKind::IntradayUnclassified)),
+            (false, false) => Ok(Some(AuctionObservation::unclassified())),
             (true, true) => Err(NormalizationError::new(
                 record.record_number,
                 record.context.clone(),
@@ -675,9 +879,43 @@ impl TwseNormalizer {
         }
     }
 
+    fn firm_market_signal(&self, record: &ValidatedRecord) -> Observation<MarketSignal> {
+        let annotations = record.annotations;
+        if annotations.reserved_bits() != 0
+            || matches!(annotations.instant_trend(), InstantTrend::Reserved)
+            || matches!(annotations.trade_limit(), LimitPosition::Reserved)
+            || matches!(annotations.best_bid_limit(), LimitPosition::Reserved)
+            || matches!(annotations.best_ask_limit(), LimitPosition::Reserved)
+        {
+            return Observation::Unknown(UnknownValue::Unsigned(
+                u64::from(annotations.status_flags_raw()) << 8
+                    | u64::from(annotations.limit_flags_raw()),
+            ));
+        }
+        let signal = if annotations.opening_marker() {
+            MarketSignal::AuctionUncross(AuctionObservation::opening_with_evidence(
+                AuctionEvidence::NoObservation,
+                AuctionEvidence::NoObservation,
+            ))
+        } else if annotations.closing_marker() {
+            MarketSignal::AuctionUncross(AuctionObservation::closing_with_evidence(
+                AuctionEvidence::NoObservation,
+                AuctionEvidence::NoObservation,
+            ))
+        } else if matches!(
+            annotations.instant_trend(),
+            InstantTrend::VolatilityInterruptionDown | InstantTrend::VolatilityInterruptionUp
+        ) {
+            MarketSignal::AuctionCollecting(volatility_observation(record.annotations))
+        } else {
+            MarketSignal::Continuous
+        };
+        Observation::Set(signal)
+    }
+
     fn session_time(&self, time: &str) -> MatchTime {
         let value = format!("{}T{time}+08:00", self.config.trading_date());
-        MatchTime::parse(&value).expect("TWSE session constants are valid timestamps")
+        MatchTime::parse(&value).expect("equity session constants are valid timestamps")
     }
 
     fn domain_event(&self, record: &ValidatedRecord, payload: EventPayload) -> DomainEvent {
@@ -735,6 +973,7 @@ impl NormalizationReport {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordContext {
+    market: QuoteMarket,
     instrument: InstrumentId,
     trading_date: TradingDate,
     source_format: Option<Box<str>>,
@@ -745,6 +984,7 @@ pub struct RecordContext {
 impl RecordContext {
     fn partition(config: &NormalizerConfig) -> Self {
         Self {
+            market: config.market,
             instrument: config.instrument.clone(),
             trading_date: config.trading_date,
             source_format: None,
@@ -865,7 +1105,8 @@ impl fmt::Display for NormalizationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "TWSE normalization failed at input record {}",
+            "{} normalization failed at input record {}",
+            self.context.market.display_name(),
             self.record_number
         )?;
         if let Some(format) = self.context.source_format() {
@@ -1006,7 +1247,7 @@ struct ValidatedRecord {
     deal: Option<ObservedTrade>,
     deal_zero_quantity: bool,
     cumulative_volume: Volume,
-    annotations: TwseQuoteAnnotations,
+    annotations: QuoteAnnotations,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1163,9 +1404,9 @@ fn parse_book_price(
 }
 
 fn is_status_only_pause(record: &ValidatedRecord) -> bool {
-    !record.annotations.status().trial()
+    !record.annotations.trial()
         && matches!(
-            record.annotations.limits().instant_trend(),
+            record.annotations.instant_trend(),
             InstantTrend::VolatilityInterruptionDown | InstantTrend::VolatilityInterruptionUp
         )
         && record.deal.is_none()
@@ -1175,6 +1416,21 @@ fn is_status_only_pause(record: &ValidatedRecord) -> bool {
                 && book.bids().levels().next().is_none()
                 && book.asks().levels().next().is_none()
         })
+}
+
+fn volatility_observation(annotations: QuoteAnnotations) -> AuctionObservation {
+    let direction = match annotations.instant_trend() {
+        InstantTrend::VolatilityInterruptionDown => VolatilityDirection::Down,
+        InstantTrend::VolatilityInterruptionUp => VolatilityDirection::Up,
+        InstantTrend::Normal | InstantTrend::Reserved => {
+            unreachable!("status-only pause has a volatility-interruption trend")
+        }
+    };
+    AuctionObservation::volatility_interruption_with_evidence(
+        AuctionEvidence::Known(direction),
+        AuctionEvidence::NoObservation,
+        AuctionEvidence::NoObservation,
+    )
 }
 
 fn parse_deal(
@@ -1233,33 +1489,31 @@ fn parse_price(
 
 fn annotation_warnings(
     context: &RecordContext,
-    annotations: TwseQuoteAnnotations,
+    annotations: QuoteAnnotations,
 ) -> Vec<NormalizationWarning> {
     let mut warnings = Vec::new();
-    let status = annotations.status();
-    if status.reserved_bits() != 0 {
+    if annotations.reserved_bits() != 0 {
         warnings.push(NormalizationWarning {
             context: context.clone(),
-            kind: WarningKind::ReservedStatusBits(status.reserved_bits()),
+            kind: WarningKind::ReservedStatusBits(annotations.reserved_bits()),
         });
     }
 
-    let limits = annotations.limits();
     for (reserved, kind) in [
         (
-            limits.trade() == LimitPosition::Reserved,
+            annotations.trade_limit() == LimitPosition::Reserved,
             WarningKind::ReservedTradeLimit,
         ),
         (
-            limits.best_bid() == LimitPosition::Reserved,
+            annotations.best_bid_limit() == LimitPosition::Reserved,
             WarningKind::ReservedBestBidLimit,
         ),
         (
-            limits.best_ask() == LimitPosition::Reserved,
+            annotations.best_ask_limit() == LimitPosition::Reserved,
             WarningKind::ReservedBestAskLimit,
         ),
         (
-            limits.instant_trend() == InstantTrend::Reserved,
+            annotations.instant_trend() == InstantTrend::Reserved,
             WarningKind::ReservedInstantTrend,
         ),
     ] {

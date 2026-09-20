@@ -12,7 +12,6 @@ use strategy_api::{OrderId, OrderSide};
 use crate::FillRecord;
 
 pub const ACCOUNTING_VERSION: u16 = 8;
-pub const LEGACY_ACCOUNTING_VERSION: u16 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -399,15 +398,11 @@ impl Ledger {
             &self.economics,
         )?;
         let cash_delta = match self.accounting_model {
-            AccountingModel::EquityV1 => match fill.side() {
+            AccountingModel::EquityV1 | AccountingModel::OptionsV1 => match fill.side() {
                 OrderSide::Buy => checked_neg(checked_add(checked_add(notional, fee)?, tax)?)?,
                 OrderSide::Sell => checked_sub(checked_sub(notional, fee)?, tax)?,
             },
             AccountingModel::FuturesV1 => checked_sub(checked_sub(realized_delta, fee)?, tax)?,
-            AccountingModel::OptionsV1 => match fill.side() {
-                OrderSide::Buy => checked_neg(checked_add(checked_add(notional, fee)?, tax)?)?,
-                OrderSide::Sell => checked_sub(checked_sub(notional, fee)?, tax)?,
-            },
         };
         let next_cash = checked_add(self.cash, cash_delta)?;
         let next_fee = checked_add(self.total_fee, fee)?;

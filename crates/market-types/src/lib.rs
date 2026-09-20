@@ -10,6 +10,7 @@ mod match_time;
 mod observation;
 mod price;
 mod quantity;
+mod signal;
 mod source_format;
 mod symbol;
 mod trade;
@@ -28,8 +29,7 @@ pub use decimal::{Decimal, DecimalError};
 pub use event::{
     BookSnapshot, CANONICAL_EVENT_VERSION, CanonicalDecodingError, DomainEvent,
     EVENT_SCHEMA_VERSION, EventError, EventFingerprint, EventKind, EventPayload, IndicativeAuction,
-    IndicativeAuctionKind, MARKET_TYPES_VERSION, MarketStatusObservation, QuoteSnapshot,
-    StabilityDirection, TradeBatch,
+    MARKET_TYPES_VERSION, MarketStatusObservation, QuoteSnapshot, TradeBatch,
 };
 pub use instrument::InstrumentId;
 pub use instrument_class::{ContractShape, InstrumentClass, OptionSide, PricePolicy};
@@ -40,6 +40,9 @@ pub use match_time::{
 pub use observation::{Observation, UnknownValue};
 pub use price::{Price, PriceError};
 pub use quantity::{Quantity, QuantityError, QuantityUnit, QuantityUnitError};
+pub use signal::{
+    AuctionEvidence, AuctionObservation, AuctionPurpose, MarketSignal, VolatilityDirection,
+};
 pub use source_format::{SourceFormatId, SourceFormatIdError};
 pub use symbol::{Symbol, SymbolError};
 pub use trade::{ObservedTrade, TradeBatchOrdering, TradeError, TradeObservationKind};

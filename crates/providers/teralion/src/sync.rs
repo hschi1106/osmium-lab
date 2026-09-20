@@ -1,8 +1,10 @@
 use std::{error::Error, fmt, io};
 
+use data_sync::{StagingError, StagingRevision};
+
 use crate::{
-    CursorError, CursorState, CursorStateMachine, StagingError, StagingRevision,
-    TeralionCredential, TeralionQuery, TeralionRequest, TeralionTransport, TransportError,
+    CursorError, CursorState, CursorStateMachine, TeralionCredential, TeralionQuery,
+    TeralionRequest, TeralionTransport, TransportError,
 };
 
 #[derive(Debug)]
@@ -50,7 +52,9 @@ impl<T: TeralionTransport> TeralionSync<T> {
                     return Err(SyncError::Transport(error));
                 }
             };
-            let staged = staging.stage_page(machine.accept_response(&request, body)?)?;
+            let pending = machine.accept_response(&request, body)?;
+            let source_page = pending.source_page();
+            let staged = staging.stage_page(&source_page)?;
             machine.commit_page(staged.commit_receipt())?;
             machine.checkpoint().save(&checkpoint_path)?;
         }
@@ -148,7 +152,7 @@ mod tests {
         assert_eq!(report.page_count, 2);
         assert!(report.terminal);
         assert!(staging.path().join("checkpoint.json").is_file());
-        let resumed = StagingRevision::resume(root.path(), "sync").unwrap();
+        let resumed = StagingRevision::resume(root.path(), "sync", 2).unwrap();
         assert_eq!(resumed.path(), staging.path());
     }
 }

@@ -5,13 +5,14 @@ use std::{
 };
 
 use market_types::{
-    EventPayload, IndicativeAuctionKind, InstrumentId, MarketId, MatchTime, Symbol, TradingDate,
+    AuctionEvidence, AuctionPurpose, EventPayload, InstrumentId, MarketId, MatchTime, Symbol,
+    TradingDate,
 };
-use twse_normalizer::{NormalizationErrorKind, NormalizerConfig, TwseNormalizer};
+use teralion_provider::twse::{NormalizationErrorKind, NormalizerConfig, TwseNormalizer};
 
 fn fixture_lines() -> Vec<String> {
     let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../fixtures/teralion/twse/SYNTH-TWSE-W/2026-07-20/regular-quotes");
+        .join("../../../fixtures/providers/teralion/twse/SYNTH-TWSE-W/2026-07-20/regular-quotes");
     let mut paths = fs::read_dir(directory)
         .unwrap()
         .map(|entry| entry.unwrap().path())
@@ -34,7 +35,7 @@ fn fixture_lines() -> Vec<String> {
 
 fn warrant_normalizer() -> TwseNormalizer {
     TwseNormalizer::new(
-        NormalizerConfig::new_warrant(
+        NormalizerConfig::twse_warrant(
             InstrumentId::new(MarketId::Twse, Symbol::new("SYNTH-TWSE-W").unwrap()),
             TradingDate::parse("2026-07-20").unwrap(),
             MatchTime::parse("2026-07-20T08:55:00+08:00").unwrap(),
@@ -61,11 +62,17 @@ fn synthetic_warrant_fixture_normalizes_offline() {
         |(quotes, trades, opening, closing), event| match event.payload() {
             EventPayload::QuoteSnapshot(_) => (quotes + 1, trades, opening, closing),
             EventPayload::TradeBatch(_) => (quotes, trades + 1, opening, closing),
-            EventPayload::IndicativeAuction(auction) => match auction.kind() {
-                IndicativeAuctionKind::Opening => (quotes, trades, opening + 1, closing),
-                IndicativeAuctionKind::Closing => (quotes, trades, opening, closing + 1),
-                IndicativeAuctionKind::IntradayStability { .. }
-                | IndicativeAuctionKind::IntradayUnclassified => (quotes, trades, opening, closing),
+            EventPayload::IndicativeAuction(auction) => match auction.observation().purpose() {
+                AuctionEvidence::Known(AuctionPurpose::Opening) => {
+                    (quotes, trades, opening + 1, closing)
+                }
+                AuctionEvidence::Known(AuctionPurpose::Closing) => {
+                    (quotes, trades, opening, closing + 1)
+                }
+                AuctionEvidence::Known(AuctionPurpose::Periodic)
+                | AuctionEvidence::Known(AuctionPurpose::VolatilityInterruption)
+                | AuctionEvidence::NoObservation
+                | AuctionEvidence::Unknown => (quotes, trades, opening, closing),
             },
             EventPayload::BookSnapshot(_) => panic!("warrant quote must not produce a book event"),
             EventPayload::MarketStatus(_) => {
@@ -94,7 +101,7 @@ fn m5_warrant_profile_rejects_wrong_market_and_equity_profile_rejects_warrant_fo
     ));
 
     let equity = TwseNormalizer::new(
-        NormalizerConfig::new(
+        NormalizerConfig::twse(
             InstrumentId::new(MarketId::Twse, Symbol::new("SYNTH-TWSE-W").unwrap()),
             TradingDate::parse("2026-07-20").unwrap(),
             MatchTime::parse("2026-07-20T08:55:00+08:00").unwrap(),

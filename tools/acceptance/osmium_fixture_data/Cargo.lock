@@ -143,14 +143,10 @@ dependencies = [
  "blake3",
  "market-types",
  "replay-engine",
- "reqwest",
  "run-planner",
  "serde",
  "serde_json",
  "sha2",
- "taifex-normalizer",
- "tpex-normalizer",
- "twse-normalizer",
  "zstd",
 ]
 
@@ -616,9 +612,6 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "strategy-api",
- "taifex-normalizer",
- "tpex-normalizer",
- "twse-normalizer",
 ]
 
 [[package]]
@@ -632,9 +625,7 @@ dependencies = [
  "run-planner",
  "serde_json",
  "strategy-api",
- "taifex-normalizer",
- "tpex-normalizer",
- "twse-normalizer",
+ "teralion-provider",
 ]
 
 [[package]]
@@ -1067,10 +1058,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "taifex-normalizer"
+name = "teralion-provider"
 version = "0.1.0"
 dependencies = [
+ "blake3",
+ "data-sync",
  "market-types",
+ "reqwest",
+ "run-planner",
  "serde",
  "serde_json",
 ]
@@ -1190,15 +1185,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 
 [[package]]
-name = "tpex-normalizer"
-version = "0.1.0"
-dependencies = [
- "market-types",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "tracing"
 version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1222,15 +1208,6 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
-
-[[package]]
-name = "twse-normalizer"
-version = "0.1.0"
-dependencies = [
- "market-types",
- "serde",
- "serde_json",
-]
 
 [[package]]
 name = "typenum"

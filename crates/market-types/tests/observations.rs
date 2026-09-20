@@ -1,6 +1,7 @@
 use market_types::{
-    EventError, MarketAnnotations, Observation, ObservedTrade, Price, Quantity, QuantityUnit,
-    QuoteSnapshot, TradeBatch, TradeBatchOrdering, TradeObservationKind, Volume,
+    BookSide, BookSideKind, CompleteBookSnapshot, EventError, MarketAnnotations, Observation,
+    ObservedTrade, Price, Quantity, QuantityUnit, QuoteSnapshot, TradeBatch, TradeBatchOrdering,
+    TradeObservationKind, Volume,
 };
 
 #[test]
@@ -60,4 +61,38 @@ fn quote_and_trade_batch_reject_mixed_quantity_units() {
         batch,
         Err(EventError::QuantityUnitMismatch { .. })
     ));
+}
+
+#[test]
+fn generic_firm_payloads_do_not_assume_continuous_without_provider_evidence() {
+    let book = CompleteBookSnapshot::new(
+        BookSide::new(BookSideKind::Bid, Vec::new()).unwrap(),
+        BookSide::new(BookSideKind::Ask, Vec::new()).unwrap(),
+    )
+    .unwrap();
+    let quote = QuoteSnapshot::new(
+        book.clone(),
+        Observation::NoObservation,
+        Observation::NoObservation,
+        MarketAnnotations::None,
+    )
+    .unwrap();
+    assert_eq!(quote.market_signal(), &Observation::NoObservation);
+
+    let snapshot = market_types::BookSnapshot::new(book, MarketAnnotations::None);
+    assert_eq!(snapshot.market_signal(), &Observation::NoObservation);
+
+    let trade = ObservedTrade::new(
+        Price::parse("100").unwrap(),
+        Quantity::new(1, QuantityUnit::TradingUnit).unwrap(),
+        TradeObservationKind::Regular,
+    );
+    let batch = TradeBatch::new(
+        vec![trade],
+        TradeBatchOrdering::Unspecified,
+        Observation::NoObservation,
+        MarketAnnotations::None,
+    )
+    .unwrap();
+    assert_eq!(batch.market_signal(), &Observation::NoObservation);
 }

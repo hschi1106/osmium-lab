@@ -8,7 +8,7 @@ use market_types::{InstrumentId, MarketId};
 use run_planner::{SourceId, SourcePartitionKey};
 use serde::{Deserialize, Serialize};
 
-use crate::{LocalSourceRepository, SourceInspection};
+use crate::{LocalSourceRepository, SourceInspection, hex};
 
 pub const PARTITION_LAYOUT_VERSION: u16 = 2;
 pub const PARTITION_MANIFEST_FILE: &str = "partition.yaml";
@@ -31,7 +31,7 @@ impl SourcePartitionManifest {
     pub fn from_key(key: &SourcePartitionKey) -> Self {
         Self {
             layout_version: PARTITION_LAYOUT_VERSION,
-            source: source_name(key.source()).to_owned(),
+            source: source_name(key.source()),
             instrument_market: key.instrument().market().discriminant(),
             instrument_symbol: key.instrument().symbol().as_str().to_owned(),
             trading_date_epoch_days: key.trading_date().as_epoch_days(),
@@ -211,8 +211,8 @@ fn encoded_symbol_path(value: &str) -> PathBuf {
     path
 }
 
-fn source_name(source: SourceId) -> &'static str {
-    source.storage_namespace()
+fn source_name(source: SourceId) -> String {
+    source.storage_namespace().to_owned()
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), PartitionRepositoryError> {
@@ -220,16 +220,6 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), PartitionRepositoryErro
     fs::write(&temporary, bytes)?;
     fs::rename(temporary, path)?;
     Ok(())
-}
-
-fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(DIGITS[(byte >> 4) as usize] as char);
-        output.push(DIGITS[(byte & 0x0f) as usize] as char);
-    }
-    output
 }
 
 #[derive(Debug)]
@@ -290,7 +280,7 @@ mod tests {
             }
         };
         SourcePartitionKey::new(
-            SourceId::TeralionFeedArchive,
+            SourceId::new("synthetic-source").unwrap(),
             instrument,
             date,
             [SessionKind::Regular],

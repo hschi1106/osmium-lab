@@ -1,142 +1,138 @@
-# 系統架構總覽
+# 架構與 ownership 總覽
 
-## 1. 核心邊界
+本頁是 production responsibility 的 canonical map。產品範圍由
+[`product-requirements.md`](../product-requirements.md) 定義；event semantics 與 execution
+細節分別由[回播模型](replay-model.md)和[執行與帳務模型](execution-model.md)定義。
 
-`osmium-lab` 將資料準備與離線執行分開：
-
-```text
-online
-provider adapter -> sync -> staging -> verified source
-
-offline
-verified source -> normalizer -> replay cache -> replay engine
-                                                -> MarketState
-                                                -> Strategy
-                                                -> Simulation / Accounting
-                                                -> Run artifacts
-```
-
-架構遵守下列不變條件：
-
-- verified source 是可重用事實；replay cache 是可刪除、可重建的衍生 artifact。
-- provider wire type 只存在於各自的 adapter／normalizer 邊界，domain 與 strategy 不依賴 wire schema。
-- `match_time` 是唯一 replay clock；相同時間使用版本化 deterministic tie-break。
-- `MarketState` 只表達成交與完整 snapshot 能支持的狀態，不重建逐筆委託或 queue。
-- strategy 只能取得 read-only state，不能修改 event、clock 或 source。
-- execution plan 先凍結 explicit universe，replayer 只開啟所需 streams。
-- source 準備完成後，執行流程預設離線。
-
-## 2. Workspace 責任
-
-| Crate | 責任 |
-| --- | --- |
-| `market-types` | exact domain primitive、event schema 與 canonical encoding |
-| `market-state` | snapshot reducer、read-only view 與 state checksum |
-| `normalizer/{twse,tpex,taifex}` | 目前內建 adapter 的 market／format wire mapping 與驗證 |
-| `data-sync` | source adapter dispatch、目前的 Teralion transport、source repository、verify 與 replay cache |
-| `run-planner` | effective config、partition、session plan 與 execution plan |
-| `replay-engine` | stream validation、deterministic merge、clock 與 event occurrence |
-| `strategy-api` | strategy lifecycle、context、output、orders、timers 與 registry |
-| `execution-sim` | fill evidence、scheduled execution 與 accounting |
-| `osmium-config` | YAML schema 與跨區塊驗證 |
-| `osmium-runner` | replay、strategy、simulation、accounting 與 artifact 協調 |
-| `osmium-cli` | command contract、輸出格式、TUI 與 exit status |
-
-依賴方向由 orchestration 指向 domain core：
+## 核心資料路徑
 
 ```text
-osmium-cli -> osmium-config / osmium-runner / data-sync
-osmium-runner -> replay-engine / strategy-api / execution-sim
-replay-engine -> market-state -> market-types
-normalizers -> market-types
+Source
+  ↓ provider adapter / normalizer
+DomainEvent
+  ↓ replay engine
+MarketState
+  ↓ read-only context
+Strategy
+  ↓ intent
+Execution
+  ↓ fill
+Accounting
+  ↓
+Artifacts
 ```
 
-domain crates 不反向依賴 CLI、filesystem layout、任何 provider transport 或 run artifact serializer。
+Online acquisition 與 offline execution 分離：
 
-## 3. 元件責任
+```text
+online:  provider → staging → verified immutable source
+offline: verified source → rebuildable cache → replay → backtest → artifacts
+```
 
-### Configuration 與 Planner
+不變條件：
 
-- 解析 `config_version: 3` 並拒絕 unknown／secret fields；每個 universe instrument 必須明確指定 `instrument_class`。
-- 解析 compiled strategy、parameters、universe、instrument economics 與 simulation policy。
-- 以 calendar、instrument profile 與 session kinds 建立 `SessionPlan`。
-- 比較 source/cache state，產生固定的 `ExecutionPlan` 與 identity。
+- verified source 是可重用 fact；cache 是 derived、deletable、rebuildable artifact；
+- provider wire type 只存在 adapter boundary，core 只使用 versioned domain types；
+- `match_time` 是唯一 replay clock，同時間事件使用版本化 deterministic ordering；
+- MarketState 只根據成交與完整 snapshot 更新，不重建 order-by-order queue；
+- strategy 只讀 post-event state，沒有 next-event/future access；
+- planner 先凍結 explicit universe，replayer 只開所需 streams；
+- execution/accounting 不改寫 event、state 或 source evidence。
 
-Planner 不下載 payload、不正規化事件，也不執行 strategy。
+## 唯一 owner
 
-### Source Adapter 與 Repository
+### Provider adapter：wire → neutral evidence
 
-- 依 stable `SourceId` 選擇 adapter；目前內建 Teralion coverage、range、ticks、instrument 與 opaque cursor 實作。
-- 使用 frozen query、staging、checksums 與 atomic publish 建立 source revision。
-- 提供本地 verify 與 immutable read。
+`crates/providers/teralion` 擁有 credential、network/query、opaque cursor、wire envelope、market-specific
+validation、normalization 與 source sync orchestration。它把 raw record 轉成 provider-neutral
+`DomainEvent`，或明確 skip/reject；不擁有 replay ordering、cross-event MarketState 或 fill policy。
 
-Repository 不解讀 provider wire semantics 或 domain event，也不維護 market state。通用 partition
-integrity、cache codec 與 lifecycle validation 不列舉 provider formats；wire conformance 由各 adapter
-自己的測試與外部資料 certification 負責。
+### data-sync：verified source 與 cache lifecycle
 
-### Normalizer 與 Cache
+`crates/data-sync` 擁有 provider-neutral staging/repository、manifest/checksum verification、immutable
+source publication，以及 replay cache codec、identity、reuse/rebuild/publication。它不解讀 Teralion
+fields，也不決定 session、strategy 或 fill。
 
-- 依 market、instrument kind 與 source format 選擇唯一 mapping。
-- 驗證 identity、`match_time`、exact price／quantity、snapshot shape 與 market-specific flags。
-- 產生 versioned `DomainEvent` 或明確的 known-skip diagnostic。
-- cache descriptor 綁定 source checksum、mapping、event schema、ordering 與 cache format。
+### Planner：validated/frozen execution facts
 
-未知格式沒有 generic fallback。cache build 失敗不修改 published source。
+`crates/osmium-config` 解析 `config_version: 3` 並建立 typed input；`crates/run-planner` 擁有 effective
+config、sessions、partitions、instrument contract/economics identity、local artifact classification 與
+`ExecutionPlan`。Planner 不下載、normalize、replay 或執行 strategy。
 
-### Replay 與 MarketState
+### Replay engine：deterministic stream playback
 
-- 驗證 streams 與 plan 相容，使用 bounded merge 依 ordering key 取出事件。
-- 推進 `ReplayClock`，原子套用 state transition，再產生 strategy context。
-- 每個 instrument 維護獨立 state；完整 book snapshot 直接替換舊 book。
+`crates/replay-engine` 驗證 plan/binding，選擇性開啟 streams，以 bounded merge 依 ordering key 推進
+`ReplayClock`，並協調 event transition。它不連接 provider、不解碼 wire、不決定成交。
 
-Replay Engine 不呼叫任何 source provider、不解讀 wire payload，也不決定 fill。
+### MarketState reducer：cross-event market state
 
-### Strategy Runtime
+`crates/market-state` 是 book/trade/volume/auction/phase cross-event state 與 transition 的唯一 owner。
+Reducer 先驗證後 atomic commit；read-only `MarketStateView` 提供給 strategy。Provider 與 runner 不得
+另建平行 auction FSM。
 
-- 解析 registry 中的 compiled strategy，驗證 identity、parameters、universe 與 sessions。
-- 固定執行 `initialize`、session/timer/event callbacks、feedback 與 `finalize`。
-- callback output 以 transaction 收集；error 或 panic 不提交 partial output。
+### Strategy：decision logic only
 
-Strategy 不取得 mutable `MarketState`、next event 或 source repository handle。
+`crates/strategy-api` 擁有 lifecycle、context、output transaction、compiled factory/registry、order
+intent、scheduled request、timer 與 feedback API。Concrete strategy 只決定何時輸出 intent；不能修改
+market state、決定 fill、結算 cash，或進行 I/O/future lookup。
 
-### Simulation 與 Accounting
+### ExecutionSim：order lifecycle 與 fill semantics
 
-- 驗證 order intent 與 scheduled request。
-- 依 execution policy、origin boundary、TradingContext 與可觀察 evidence 判定 fill。
-- 套用 slippage、fee、tax、multiplier、cash、position 與 marking。
-- 產生 deterministic feedback 並在結束時 reconciliation。
+`crates/execution-sim` 擁有 acceptance、restriction、activation、partial fill、cancellation、allocation、
+fill evidence 與 order status。`Simulator` 處理 market-event causal path；`ScheduledDepthSimulator`
+處理 control-time visibility/activation/expiry/depth consumption。兩者的 trigger/time model 本質不同，
+但共用的 order/fill/accounting policy仍由此 crate 擁有。
 
-Simulation 不修改 replay event 或 MarketState，也不宣稱重建真實撮合。
+### Accounting：fill → ledger/positions/P&L
 
-### Result Writer 與 Inspector
+同一 `execution-sim` crate 的 accounting owner 驗證 instrument economics，原子套用 fills、fees、taxes、
+cash charges、cash、positions、average cost、realized/unrealized P&L 與 reconciliation。Runner 只提供
+已驗證 config 與 final mark，不重算 formula。
 
-- 以 staging 建立 output，在成功或明確失敗狀態下發布 run artifacts。
-- 保存 effective config checksum、plan identity、版本、checksums、strategy metadata、warnings、orders、fills 與績效。
-- `inspect` 只讀既有 artifacts，不重跑策略或存取網路。
+### Runner：orchestration only
 
-## 4. 線上與離線能力
+`crates/osmium-runner` 串起 replay callbacks、simulation feedback、ledger settlement、finalization 與
+artifact publication。它不解析 YAML、provider wire 或重複實作 execution/accounting policy。
 
-| 能力 | 網路／API key | Source mutation | Strategy |
+### CLI：composition root 與 user contract
+
+`crates/osmium-cli` 擁有 arguments、output/error contract，組合 provider、registry、planner、runner 與
+filesystem workflow。它可選擇 concrete implementation，但不成為 domain policy owner。
+
+## 依賴方向
+
+```text
+osmium-cli → osmium-config / providers/teralion / data-sync / osmium-runner
+osmium-runner → replay-engine / strategy-api / execution-sim
+replay-engine → market-state → market-types
+providers/teralion → data-sync / run-planner / market-types
+```
+
+Domain crates 不反向依賴 CLI、provider transport 或 artifact serializer。
+
+## Command capability boundary
+
+| Command | Network | Mutates source/cache/run | Executes strategy |
 | --- | --- | --- | --- |
-| `config check`、本地 `plan` | 否 | 否 | 僅建立與驗證 instance |
-| `data sync` | 是 | 發布新 source revision | 否 |
+| `config check`, `plan` | 否 | 否 | 僅 resolve/validate instance |
+| `data sync` | 缺 source 時是 | source | 否 |
 | `data verify` | 否 | 否 | 否 |
-| `cache prepare` | 否 | 否，只建立 derived cache | 否 |
+| `cache prepare` | 否 | cache | 否 |
 | `replay` | 否 | 否 | 否 |
-| `backtest` | 否 | 否 | 是 |
-| `run` | 視 plan 而定 | 可能發布 source/cache/run | 有 `--output` 時是 |
-| `display` | 否 | 否 | 否 |
+| `backtest` | 否 | run output | 是 |
+| `run` | 視 plan | 可能 source/cache/run | 有 output 時是 |
 | `inspect` | 否 | 否 | 否 |
 
-credential 只能進入 sync transport context，不得進入設定、manifest、cache、log、strategy context 或 run output。
+Credential 只能進入 sync transport context，不得進入 config、identity、manifest、cache、log、strategy
+context 或 run output。
 
-## 5. 原子性與可重現
+## Atomicity 與 determinism
 
-- source 完成所有 cursor pages、metadata 與 checksum 驗證後才可 publish。
-- cache 完整建立並驗證 lineage 後才可 publish。
-- event transition 失敗時，不得留下已推進 clock 或 partial state。
-- callback 失敗時，不得提交該 callback 的 partial output。
-- fill、cash、position、fee、tax 與 P&L transition 必須一致；reconciliation 失敗使 run failed。
-- concurrency 可以用於下載、驗證、正規化與 prefetch，但不得改變 warning 集合、event order、callbacks、fill allocation 或 accounting result。
+- source/cache 完整驗證後才 atomic publish；
+- event transition 失敗不留下 advanced clock 或 partial state；
+- callback error/panic 不提交該 callback 的 partial output；
+- fill、cash、position、fees/taxes 與 P&L 必須 reconciliation；
+- concurrency 不得改變 warnings、event order、callbacks、allocation 或 accounting result；
+- run output 使用 staging + create-new publication，不覆寫既有 evidence。
 
-詳細流程見 [資料流程與儲存](data-flow.md)、[回播模型](replay-model.md)與[模擬與帳務](execution-model.md)。
+Artifact lifecycle 與 identities 見[資料流程](data-flow.md)。

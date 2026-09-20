@@ -8,9 +8,9 @@ use replay_engine::{
 };
 
 use crate::{
-    ContextError, SessionSegment, Strategy, StrategyDeclaration, StrategyEventContext,
-    StrategyFinalizeContext, StrategyInitializationContext, StrategyOutput,
-    StrategyOutputEncodingError, StrategyOutputSink, TwseTradingContextEvaluator,
+    MarketTradingContextEvaluator, SessionSegment, Strategy, StrategyDeclaration,
+    StrategyEventContext, StrategyFinalizeContext, StrategyInitializationContext, StrategyOutput,
+    StrategyOutputSink,
 };
 
 #[derive(Debug)]
@@ -196,17 +196,17 @@ pub fn run_strategy<S: Strategy>(
             .state(event.instrument())
             .expect("replay commit guarantees instrument state")
             .view();
-        let trading = TwseTradingContextEvaluator
-            .evaluate(event, commit.occurrence(), state, segment)
-            .map_err(|error| {
-                failure(
-                    &core,
-                    &output,
-                    StrategyRunErrorCategory::Context,
-                    error.to_string(),
-                    Some(commit.occurrence()),
-                )
-            })?;
+        let trading =
+            MarketTradingContextEvaluator::evaluate(event, commit.occurrence(), state, segment)
+                .map_err(|error| {
+                    failure(
+                        &core,
+                        &output,
+                        StrategyRunErrorCategory::Context,
+                        error.to_string(),
+                        Some(commit.occurrence()),
+                    )
+                })?;
         let context = StrategyEventContext::new_with_states(
             commit.occurrence(),
             event,
@@ -340,14 +340,4 @@ fn failure_after_complete_error(
         processed_prefix_checksum,
         committed_output_count: output.records().len(),
     }))
-}
-
-#[allow(dead_code)]
-fn output_error_is_stable(error: StrategyOutputEncodingError) -> String {
-    error.to_string()
-}
-
-#[allow(dead_code)]
-fn context_error_is_stable(error: ContextError) -> String {
-    error.to_string()
 }
