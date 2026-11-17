@@ -5,8 +5,7 @@ use market_types::{
     AuctionEvidence, AuctionObservation, AuctionPurpose, BookLevel, BookSide, BookSideKind,
     CompleteBookSnapshot, DomainEvent, EventPayload, IndicativeAuction, InstrumentId,
     MarketAnnotations, MarketId, MarketSignal, MatchTime, Observation, Price, Quantity,
-    QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol, TradingDate, TwseQuoteAnnotations,
-    VolatilityDirection, Volume,
+    QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol, TradingDate, VolatilityDirection, Volume,
 };
 use replay_engine::ReplayCore;
 use strategy_api::{
@@ -66,26 +65,25 @@ fn book() -> CompleteBookSnapshot {
     .unwrap()
 }
 
-fn quote(time: &str, cumulative: u64, status: u8, limits: u8) -> DomainEvent {
-    let annotations = TwseQuoteAnnotations::new(status, limits);
+#[derive(Clone, Copy)]
+enum Shape {
+    OpeningTrial { delayed: bool },
+    Continuous,
+    VolatilityDown,
+    ClosingUncross,
+}
+
+fn quote(time: &str, cumulative: u64, shape: Shape) -> DomainEvent {
     let match_time = MatchTime::parse(time).unwrap();
-    let payload = if annotations.status().trial() {
-        let observation = if annotations.status().opening_marker() || match_time < segment().open()
-        {
-            AuctionObservation::opening(annotations.status().delayed_open(), false)
-        } else if annotations.status().closing_marker() {
-            AuctionObservation::closing(annotations.status().delayed_close(), false)
-        } else {
-            AuctionObservation::periodic(false, false)
-        };
+    let payload = if let Shape::OpeningTrial { delayed } = shape {
         EventPayload::IndicativeAuction(
             IndicativeAuction::new(
-                observation,
+                AuctionObservation::opening(delayed, false),
                 Observation::NoObservation,
                 Observation::NoObservation,
                 Observation::Set(book()),
                 Observation::Set(Volume::new(cumulative, QuantityUnit::TradingUnit)),
-                MarketAnnotations::TwseQuote(annotations),
+                MarketAnnotations::None,
             )
             .unwrap(),
         )
@@ -95,32 +93,22 @@ fn quote(time: &str, cumulative: u64, status: u8, limits: u8) -> DomainEvent {
                 book(),
                 Observation::NoObservation,
                 Observation::Set(Volume::new(cumulative, QuantityUnit::TradingUnit)),
-                MarketAnnotations::TwseQuote(annotations),
+                MarketAnnotations::None,
             )
             .unwrap()
-            .with_market_signal(Observation::Set(
-                if annotations.limits().instant_trend()
-                    == market_types::InstantTrend::VolatilityInterruptionDown
-                {
+            .with_market_signal(Observation::Set(match shape {
+                Shape::VolatilityDown => {
                     MarketSignal::AuctionCollecting(AuctionObservation::volatility_interruption(
                         VolatilityDirection::Down,
                         false,
                         false,
                     ))
-                } else if annotations.limits().instant_trend()
-                    == market_types::InstantTrend::VolatilityInterruptionUp
-                {
-                    MarketSignal::AuctionCollecting(AuctionObservation::volatility_interruption(
-                        VolatilityDirection::Up,
-                        false,
-                        false,
-                    ))
-                } else if annotations.status().closing_marker() {
+                }
+                Shape::ClosingUncross => {
                     MarketSignal::AuctionUncross(AuctionObservation::closing(false, false))
-                } else {
-                    MarketSignal::Continuous
-                },
-            )),
+                }
+                Shape::Continuous | Shape::OpeningTrial { .. } => MarketSignal::Continuous,
+            })),
         )
     };
     DomainEvent::new(
@@ -134,7 +122,11 @@ fn quote(time: &str, cumulative: u64, status: u8, limits: u8) -> DomainEvent {
 }
 
 fn delayed_open_auction() -> DomainEvent {
-    quote("2026-07-27T08:59:59+08:00", 0, 0xc0, 0)
+    quote(
+        "2026-07-27T08:59:59+08:00",
+        0,
+        Shape::OpeningTrial { delayed: true },
+    )
 }
 
 fn binary_identity() -> BinaryIdentity {
@@ -218,9 +210,13 @@ impl Strategy for ContextObserver {
 #[test]
 fn callback_observes_committed_post_event_state_and_context() {
     let events = vec![
-        quote("2026-07-27T08:55:00+08:00", 0, 0x80, 0),
-        quote("2026-07-27T09:00:00+08:00", 1, 0x10, 0),
-        quote("2026-07-27T13:30:00.000001+08:00", 1, 0x04, 0),
+        quote(
+            "2026-07-27T08:55:00+08:00",
+            0,
+            Shape::OpeningTrial { delayed: false },
+        ),
+        quote("2026-07-27T09:00:00+08:00", 1, Shape::Continuous),
+        quote("2026-07-27T13:30:00.000001+08:00", 1, Shape::ClosingUncross),
     ];
     let completed = run_strategy(core(), ContextObserver::new(), &segment(), events).unwrap();
 
@@ -266,7 +262,7 @@ fn boxed_strategy_runs_through_the_generic_lifecycle() {
         core(),
         strategy,
         &segment(),
-        vec![quote("2026-07-27T09:00:00+08:00", 1, 0x10, 0)],
+        vec![quote("2026-07-27T09:00:00+08:00", 1, Shape::Continuous)],
     )
     .unwrap();
     assert_eq!(completed.callback_count(), 1);
@@ -283,8 +279,8 @@ fn example_strategy_declares_only_2330_and_emits_in_fixed_order() {
         strategy,
         &segment(),
         vec![
-            quote("2026-07-27T09:00:00+08:00", 10, 0x10, 0),
-            quote("2026-07-27T09:00:01+08:00", 11, 0x10, 0),
+            quote("2026-07-27T09:00:00+08:00", 10, Shape::Continuous),
+            quote("2026-07-27T09:00:01+08:00", 11, Shape::Continuous),
         ],
     )
     .unwrap();
@@ -313,8 +309,8 @@ fn example_strategy_declares_only_2330_and_emits_in_fixed_order() {
 #[test]
 fn deterministic_output_is_independent_of_input_order() {
     let events = vec![
-        quote("2026-07-27T09:00:00+08:00", 10, 0x10, 0),
-        quote("2026-07-27T09:00:01+08:00", 11, 0x10, 0),
+        quote("2026-07-27T09:00:00+08:00", 10, Shape::Continuous),
+        quote("2026-07-27T09:00:01+08:00", 11, Shape::Continuous),
     ];
     let first = run_strategy(
         core(),
@@ -403,7 +399,7 @@ fn failed_callback_discards_current_batch_after_core_commit() {
         core(),
         FailingStrategy::new(FailureMode::Error),
         &segment(),
-        vec![quote("2026-07-27T09:00:00+08:00", 1, 0x10, 0)],
+        vec![quote("2026-07-27T09:00:00+08:00", 1, Shape::Continuous)],
     )
     .unwrap_err();
     assert_eq!(
@@ -423,7 +419,7 @@ fn panic_and_unavailable_capability_have_stable_categories() {
         core(),
         FailingStrategy::new(FailureMode::Panic),
         &segment(),
-        vec![quote("2026-07-27T09:00:00+08:00", 1, 0x10, 0)],
+        vec![quote("2026-07-27T09:00:00+08:00", 1, Shape::Continuous)],
     )
     .unwrap_err();
     assert_eq!(
@@ -435,7 +431,7 @@ fn panic_and_unavailable_capability_have_stable_categories() {
         core(),
         FailingStrategy::new(FailureMode::Capability),
         &segment(),
-        vec![quote("2026-07-27T09:00:00+08:00", 1, 0x10, 0)],
+        vec![quote("2026-07-27T09:00:00+08:00", 1, Shape::Continuous)],
     )
     .unwrap_err();
     assert_eq!(
@@ -448,25 +444,29 @@ fn panic_and_unavailable_capability_have_stable_categories() {
 fn session_phase_and_twse_indicative_rules_are_explicit() {
     let cases = [
         (
-            quote("2026-07-27T08:59:59+08:00", 0, 0x80, 0),
+            quote(
+                "2026-07-27T08:59:59+08:00",
+                0,
+                Shape::OpeningTrial { delayed: false },
+            ),
             SessionPhase::WarmUp,
             MatchingState::Enabled(market_types::MatchingMethod::CallAuction),
             NewOrderEntry::Restricted(OrderRestrictionReason::PreOpenLimitOrdersOnly),
         ),
         (
-            quote("2026-07-27T09:00:00+08:00", 1, 0x10, 0),
+            quote("2026-07-27T09:00:00+08:00", 1, Shape::Continuous),
             SessionPhase::Active,
             MatchingState::Enabled(market_types::MatchingMethod::Continuous),
             NewOrderEntry::Allowed,
         ),
         (
-            quote("2026-07-27T09:01:00+08:00", 2, 0x10, 1),
+            quote("2026-07-27T09:01:00+08:00", 2, Shape::VolatilityDown),
             SessionPhase::Active,
             MatchingState::Enabled(market_types::MatchingMethod::CallAuction),
             NewOrderEntry::Restricted(OrderRestrictionReason::AuctionCollecting),
         ),
         (
-            quote("2026-07-27T13:30:00.000001+08:00", 2, 0x04, 0),
+            quote("2026-07-27T13:30:00.000001+08:00", 2, Shape::ClosingUncross),
             SessionPhase::CoolDown,
             MatchingState::Enabled(market_types::MatchingMethod::CallAuction),
             NewOrderEntry::Blocked(OrderBlockReason::CoolDown),

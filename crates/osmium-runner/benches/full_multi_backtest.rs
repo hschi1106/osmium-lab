@@ -12,7 +12,7 @@ use market_types::{
     BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, Decimal, DomainEvent, EventPayload,
     InstrumentId, MarketAnnotations, MarketId, MarketSignal, MatchTime, Observation, ObservedTrade,
     Price, PricePolicy, Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol,
-    TradeObservationKind, TradingDate, TwseQuoteAnnotations, Volume,
+    TradeObservationKind, TradingDate, Volume,
 };
 use osmium_runner::{MultiSessionSchedule, run_multi_backtest};
 use replay_engine::{
@@ -109,7 +109,7 @@ impl Case {
                             sequence as u64 + 1,
                             QuantityUnit::TradingUnit,
                         )),
-                        MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0x10, 0)),
+                        MarketAnnotations::None,
                     )
                     .unwrap()
                     .with_market_signal(Observation::Set(MarketSignal::Continuous));
@@ -287,7 +287,7 @@ fn fixture_payload() -> EventPayload {
         book,
         Observation::NoObservation,
         Observation::NoObservation,
-        MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0x10, 0)),
+        MarketAnnotations::None,
     )
     .unwrap();
     EventPayload::QuoteSnapshot(quote)

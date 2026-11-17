@@ -7,7 +7,7 @@ use market_types::{
     BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventPayload,
     InstrumentId, MarketAnnotations, MarketId, MatchTime, Observation, ObservedTrade, Price,
     Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol, TradeObservationKind,
-    TradingDate, TwseQuoteAnnotations, Volume,
+    TradingDate, Volume,
 };
 use replay_engine::{
     EventStream, ReplayCore, ReplayPlan, ReplayStreamBinding, ReplayStreamFactory,
@@ -209,7 +209,7 @@ fn fixture_payload() -> EventPayload {
             TradeObservationKind::Regular,
         )),
         Observation::Set(Volume::new(12_345, unit)),
-        MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0, 0)),
+        MarketAnnotations::None,
     )
     .unwrap();
     EventPayload::QuoteSnapshot(quote)

@@ -101,14 +101,6 @@ impl CanonicalValue for MarketAnnotations {
     fn append_canonical(&self, bytes: &mut Vec<u8>) -> Result<(), CanonicalEncodingError> {
         bytes.push(self.discriminant());
         match self {
-            Self::TwseQuote(annotation) => {
-                bytes.push(annotation.status_flags_raw());
-                bytes.push(annotation.limit_flags_raw());
-            }
-            Self::TpexQuote(annotation) => {
-                bytes.push(annotation.status_flags_raw());
-                bytes.push(annotation.limit_flags_raw());
-            }
             Self::None => {}
         }
         Ok(())

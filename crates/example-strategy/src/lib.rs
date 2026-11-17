@@ -173,8 +173,7 @@ mod tests {
     use market_types::{
         AuctionObservation, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent,
         EventPayload, IndicativeAuction, MarketAnnotations, MarketId, MarketSignal, MatchTime,
-        Observation, QuoteSnapshot, SourceFormatId, Symbol, TradingDate, TwseQuoteAnnotations,
-        Volume,
+        Observation, QuoteSnapshot, SourceFormatId, Symbol, TradingDate, Volume,
     };
     use replay_engine::ReplayCore;
     use strategy_api::{
@@ -264,7 +263,7 @@ mod tests {
         );
     }
 
-    fn twse_quote(time: &str, ask: &str, status: u8) -> DomainEvent {
+    fn twse_quote(time: &str, ask: &str, trial: bool) -> DomainEvent {
         let quantity = Quantity::new(10, QuantityUnit::TradingUnit).unwrap();
         let book = CompleteBookSnapshot::new(
             BookSide::new(
@@ -279,8 +278,7 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let annotations = TwseQuoteAnnotations::new(status, 0);
-        let payload = if annotations.status().trial() {
+        let payload = if trial {
             EventPayload::IndicativeAuction(
                 IndicativeAuction::new(
                     AuctionObservation::opening(false, false),
@@ -288,7 +286,7 @@ mod tests {
                     Observation::NoObservation,
                     Observation::Set(book),
                     Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
-                    MarketAnnotations::TwseQuote(annotations),
+                    MarketAnnotations::None,
                 )
                 .unwrap(),
             )
@@ -298,7 +296,7 @@ mod tests {
                     book,
                     Observation::NoObservation,
                     Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
-                    MarketAnnotations::TwseQuote(annotations),
+                    MarketAnnotations::None,
                 )
                 .unwrap()
                 .with_market_signal(Observation::Set(MarketSignal::Continuous)),
@@ -353,10 +351,10 @@ mod tests {
             .into_parts()
             .0;
         let events = [
-            twse_quote("2026-07-20T08:59:59+08:00", "100", 0x80),
-            twse_quote("2026-07-20T09:00:00+08:00", "102", 0x10),
-            twse_quote("2026-07-20T09:00:01+08:00", "101", 0x10),
-            twse_quote("2026-07-20T09:00:02+08:00", "100", 0x10),
+            twse_quote("2026-07-20T08:59:59+08:00", "100", true),
+            twse_quote("2026-07-20T09:00:00+08:00", "102", false),
+            twse_quote("2026-07-20T09:00:01+08:00", "101", false),
+            twse_quote("2026-07-20T09:00:02+08:00", "100", false),
         ];
         let mut emitted = Vec::new();
         for event in &events {

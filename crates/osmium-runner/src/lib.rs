@@ -1049,7 +1049,7 @@ mod tests {
                         cumulative,
                         QuantityUnit::TradingUnit,
                     )),
-                    MarketAnnotations::TwseQuote(market_types::TwseQuoteAnnotations::new(0, 0)),
+                    MarketAnnotations::None,
                 )
                 .unwrap()
                 .with_market_signal(market_types::Observation::Set(

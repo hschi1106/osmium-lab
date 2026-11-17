@@ -8,7 +8,7 @@ use market_types::{
     BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventPayload,
     InstrumentId, MarketAnnotations, MarketId, MatchTime, Observation, ObservedTrade, Price,
     Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol, TradeBatch, TradeBatchOrdering,
-    TradeObservationKind, TradingDate, TwseQuoteAnnotations, Volume,
+    TradeObservationKind, TradingDate, Volume,
 };
 use replay_engine::{
     EventStream, OrderingKey, ReplayClock, ReplayContextWindow, ReplayCore, ReplayError,
@@ -78,7 +78,7 @@ fn quote_for(
                 book(),
                 Observation::Set(trade("100", 1, TradeObservationKind::Regular)),
                 Observation::Set(Volume::new(cumulative, QuantityUnit::TradingUnit)),
-                MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(16, 0)),
+                MarketAnnotations::None,
             )
             .unwrap(),
         ),
@@ -108,7 +108,7 @@ fn intermediate(micros: i64, cumulative: u64) -> DomainEvent {
                 vec![trade("99.5", 1, TradeObservationKind::Intermediate)],
                 TradeBatchOrdering::SourceSequencePreserved,
                 Observation::Set(Volume::new(cumulative, QuantityUnit::TradingUnit)),
-                MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(16, 0)),
+                MarketAnnotations::None,
             )
             .unwrap(),
         ),

@@ -908,8 +908,8 @@ mod tests {
         AuctionObservation, BookLevel, BookSide, BookSideKind, BookSnapshot, CompleteBookSnapshot,
         Decimal, EventPayload, IndicativeAuction, MarketAnnotations, MarketId, MarketSignal,
         MarketStatusObservation, Observation, ObservedTrade, Price, Quantity, QuantityUnit,
-        QuoteSnapshot, SourceFormatId, Symbol, TpexQuoteAnnotations, TradeObservationKind,
-        TradingDate, TwseQuoteAnnotations, VolatilityDirection, Volume,
+        QuoteSnapshot, SourceFormatId, Symbol, TradeObservationKind, TradingDate,
+        VolatilityDirection, Volume,
     };
     use replay_engine::{ReplayStreamBinding, StableStreamDescriptorId};
     use strategy_api::{
@@ -977,7 +977,7 @@ mod tests {
                         book.clone(),
                         trade,
                         Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
-                        MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0, 0)),
+                        MarketAnnotations::None,
                     )
                     .unwrap(),
                 ),
@@ -1185,7 +1185,7 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let quote_event = |match_time, limit_flags| {
+        let quote_event = |match_time| {
             DomainEvent::new(
                 instrument,
                 date,
@@ -1197,7 +1197,7 @@ mod tests {
                         book.clone(),
                         Observation::NoObservation,
                         Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
-                        MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0x10, limit_flags)),
+                        MarketAnnotations::None,
                     )
                     .unwrap()
                     .with_market_signal(Observation::Set(MarketSignal::Continuous)),
@@ -1211,17 +1211,14 @@ mod tests {
             pause_time,
             None,
             EventPayload::MarketStatus(
-                MarketStatusObservation::new(
-                    Observation::NoObservation,
-                    MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0x10, 0x01)),
-                )
-                .with_market_signal(Observation::Set(
-                    MarketSignal::AuctionCollecting(AuctionObservation::volatility_interruption(
-                        VolatilityDirection::Down,
-                        false,
-                        false,
-                    )),
-                )),
+                MarketStatusObservation::new(Observation::NoObservation, MarketAnnotations::None)
+                    .with_market_signal(Observation::Set(MarketSignal::AuctionCollecting(
+                        AuctionObservation::volatility_interruption(
+                            VolatilityDirection::Down,
+                            false,
+                            false,
+                        ),
+                    ))),
             ),
         );
         let core = ReplayCore::new_multi(
@@ -1302,7 +1299,7 @@ mod tests {
             core,
             strategy,
             &plan,
-            &mut Factory(vec![quote_event(event_time, 0), pause_event]),
+            &mut Factory(vec![quote_event(event_time), pause_event]),
             &MultiSessionSchedule::new([(instrument, vec![segment])]).unwrap(),
             0,
             simulator,
@@ -1516,7 +1513,7 @@ mod tests {
                         book,
                         Observation::NoObservation,
                         Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
-                        MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0, 0)),
+                        MarketAnnotations::None,
                     )
                     .unwrap()
                     .with_market_signal(Observation::Set(MarketSignal::Continuous)),
@@ -1634,7 +1631,7 @@ mod tests {
         )
         .unwrap();
         let quantity = Quantity::new(1, QuantityUnit::TradingUnit).unwrap();
-        let make_event = |at, status, trade| {
+        let make_event = |at, trial: bool, trade| {
             let book = CompleteBookSnapshot::new(
                 BookSide::new(
                     BookSideKind::Bid,
@@ -1648,8 +1645,7 @@ mod tests {
                 .unwrap(),
             )
             .unwrap();
-            let annotations = TpexQuoteAnnotations::new(status, 0);
-            let payload = if annotations.status().trial() {
+            let payload = if trial {
                 EventPayload::IndicativeAuction(
                     IndicativeAuction::new(
                         AuctionObservation::opening(false, false),
@@ -1657,7 +1653,7 @@ mod tests {
                         Observation::Set(quantity),
                         Observation::Set(book),
                         Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
-                        MarketAnnotations::TpexQuote(annotations),
+                        MarketAnnotations::None,
                     )
                     .unwrap(),
                 )
@@ -1667,15 +1663,11 @@ mod tests {
                         book,
                         trade,
                         Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
-                        MarketAnnotations::TpexQuote(annotations),
+                        MarketAnnotations::None,
                     )
                     .unwrap()
                     .with_market_signal(Observation::Set(
-                        if annotations.status().opening_marker() {
-                            MarketSignal::AuctionUncross(AuctionObservation::opening(false, false))
-                        } else {
-                            MarketSignal::Continuous
-                        },
+                        MarketSignal::AuctionUncross(AuctionObservation::opening(false, false)),
                     )),
                 )
             };
@@ -1689,10 +1681,10 @@ mod tests {
             )
         };
         let events = vec![
-            make_event(trial_time, 0x88, Observation::NoObservation),
+            make_event(trial_time, true, Observation::NoObservation),
             make_event(
                 match_time,
-                0x08,
+                false,
                 Observation::Set(ObservedTrade::new(
                     Price::parse("100").unwrap(),
                     quantity,

@@ -761,8 +761,7 @@ mod tests {
     use market_types::{
         AuctionObservation, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, EventPayload,
         IndicativeAuction, MarketAnnotations, MarketId, Observation, ObservedTrade, QuoteSnapshot,
-        SourceFormatId, Symbol, TradeObservationKind, TradingDate, TwseQuoteAnnotations,
-        VolatilityDirection, Volume,
+        SourceFormatId, Symbol, TradeObservationKind, TradingDate, VolatilityDirection, Volume,
     };
     use replay_engine::ReplayCore;
 
@@ -805,7 +804,11 @@ mod tests {
         )
     }
 
-    fn twse_event(micros: i64, cumulative: u64, limit_flags: u8) -> DomainEvent {
+    fn quote_event(
+        micros: i64,
+        cumulative: u64,
+        volatility: Option<VolatilityDirection>,
+    ) -> DomainEvent {
         let template = event();
         let EventPayload::QuoteSnapshot(snapshot) = template.payload() else {
             unreachable!("event helper creates a quote")
@@ -814,22 +817,17 @@ mod tests {
             snapshot.book().clone(),
             snapshot.trade().clone(),
             Observation::Set(Volume::new(cumulative, QuantityUnit::TradingUnit)),
-            MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0x10, limit_flags)),
+            MarketAnnotations::None,
         )
         .unwrap()
-        .with_market_signal(Observation::Set(match limit_flags {
-            0x01 => MarketSignal::AuctionCollecting(AuctionObservation::volatility_interruption(
-                VolatilityDirection::Down,
-                false,
-                false,
-            )),
-            0x02 => MarketSignal::AuctionCollecting(AuctionObservation::volatility_interruption(
-                VolatilityDirection::Up,
-                false,
-                false,
-            )),
-            _ => MarketSignal::Continuous,
-        }));
+        .with_market_signal(Observation::Set(volatility.map_or(
+            MarketSignal::Continuous,
+            |direction| {
+                MarketSignal::AuctionCollecting(AuctionObservation::volatility_interruption(
+                    direction, false, false,
+                ))
+            },
+        )));
         DomainEvent::new(
             *template.instrument(),
             template.trading_date(),
@@ -932,8 +930,8 @@ mod tests {
 
     #[test]
     fn volatility_interruption_restricts_new_orders_and_cancels_pending_market_orders() {
-        let normal_event = twse_event(1, 1, 0);
-        let pause_event = twse_event(2, 2, 0x01);
+        let normal_event = quote_event(1, 1, None);
+        let pause_event = quote_event(2, 2, Some(VolatilityDirection::Down));
         let instrument = *normal_event.instrument();
         let other_instrument = InstrumentId::new(MarketId::Twse, Symbol::new("2317").unwrap());
         let date = normal_event.trading_date();

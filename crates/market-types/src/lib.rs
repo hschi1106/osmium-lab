@@ -18,10 +18,7 @@ mod trade;
 mod trading_date;
 mod volume;
 
-pub use annotations::{
-    InstantTrend, LimitPosition, MarketAnnotations, MatchingMethod, TpexLimits,
-    TpexQuoteAnnotations, TpexStatus, TwseLimits, TwseQuoteAnnotations, TwseStatus,
-};
+pub use annotations::{MarketAnnotations, MatchingMethod};
 pub use book::{BOOK_DEPTH, BookError, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot};
 pub use canonical::{
     CanonicalEncodingError, CanonicalValue, append_bytes, append_length, append_optional_u64,

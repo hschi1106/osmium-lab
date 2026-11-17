@@ -6,7 +6,7 @@ use market_types::{
     BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventPayload,
     InstrumentId, MarketAnnotations, MarketId, MatchTime, Observation, ObservedTrade, Price,
     Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId, Symbol, TradeObservationKind,
-    TradingDate, TwseQuoteAnnotations, Volume,
+    TradingDate, Volume,
 };
 use replay_engine::{ReplayCore, order_events};
 
@@ -51,7 +51,7 @@ fn quote(
                 snapshot,
                 trade,
                 Observation::Set(Volume::new(volume, QuantityUnit::TradingUnit)),
-                MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(16, 0)),
+                MarketAnnotations::None,
             )
             .unwrap(),
         ),

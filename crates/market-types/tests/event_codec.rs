@@ -6,8 +6,8 @@ use market_types::{
     CANONICAL_EVENT_VERSION, CompleteBookSnapshot, DomainEvent, EVENT_SCHEMA_VERSION, EventPayload,
     IndicativeAuction, InstrumentId, MarketAnnotations, MarketId, MarketStatusObservation,
     MatchTime, Observation, ObservedTrade, Price, Quantity, QuantityUnit, QuoteSnapshot,
-    SourceFormatId, Symbol, TpexQuoteAnnotations, TradeBatch, TradeBatchOrdering,
-    TradeObservationKind, TradingDate, VolatilityDirection, Volume,
+    SourceFormatId, Symbol, TradeBatch, TradeBatchOrdering, TradeObservationKind, TradingDate,
+    VolatilityDirection, Volume,
 };
 use support::empty_book;
 
@@ -288,38 +288,6 @@ fn market_order_quantity_roundtrips_separately_from_priced_levels() {
 }
 
 #[test]
-fn tpex_quote_annotations_roundtrip_as_market_specific_event_data() {
-    let annotations = TpexQuoteAnnotations::new(0x84, 0b00_00_00_01);
-    let snapshot = QuoteSnapshot::new(
-        empty_book(),
-        Observation::NoObservation,
-        Observation::Set(Volume::new(0, QuantityUnit::TradingUnit)),
-        MarketAnnotations::TpexQuote(annotations),
-    )
-    .unwrap();
-    let event = DomainEvent::new(
-        InstrumentId::new(MarketId::Tpex, Symbol::new("6488").unwrap()),
-        TradingDate::parse("2026-07-20").unwrap(),
-        SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
-        MatchTime::parse("2026-07-20T13:30:00+08:00").unwrap(),
-        None,
-        EventPayload::QuoteSnapshot(snapshot),
-    );
-    let canonical = event.to_canonical_bytes().unwrap();
-    assert_eq!(
-        DomainEvent::from_canonical_bytes(&canonical).unwrap(),
-        event
-    );
-    let EventPayload::QuoteSnapshot(snapshot) = event.payload() else {
-        unreachable!()
-    };
-    let MarketAnnotations::TpexQuote(decoded) = snapshot.annotations() else {
-        panic!("TPEx event must preserve the TPEx-specific annotation variant")
-    };
-    assert_eq!(decoded, &annotations);
-}
-
-#[test]
 fn canonical_trade_batch_rejects_count_larger_than_the_frame() {
     let trade = ObservedTrade::new(
         Price::parse("100").unwrap(),
@@ -414,7 +382,7 @@ fn canonical_decoder_rejects_trailing_bytes_and_survives_frame_mutations() {
         )),
         encode(EventPayload::MarketStatus(MarketStatusObservation::new(
             Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
-            MarketAnnotations::TpexQuote(TpexQuoteAnnotations::new(0x10, 0x02)),
+            MarketAnnotations::None,
         ))),
     ];
 

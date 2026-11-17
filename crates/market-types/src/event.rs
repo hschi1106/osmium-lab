@@ -4,10 +4,9 @@ use crate::{
     AuctionEvidence, AuctionObservation, AuctionPurpose, BookLevel, BookSide, BookSideKind,
     CanonicalEncodingError, CanonicalValue, CompleteBookSnapshot, Decimal, InstrumentId,
     MarketAnnotations, MarketId, MarketSignal, MatchTime, Observation, ObservedTrade, Price,
-    Quantity, QuantityUnit, SourceFormatId, Symbol, TpexQuoteAnnotations, TradeBatchOrdering,
-    TradeError, TradeObservationKind, TradingDate, TwseQuoteAnnotations, UnknownValue,
-    VolatilityDirection, Volume, append_bytes, append_length, append_optional_u64,
-    trade::validate_trade_units,
+    Quantity, QuantityUnit, SourceFormatId, Symbol, TradeBatchOrdering, TradeError,
+    TradeObservationKind, TradingDate, UnknownValue, VolatilityDirection, Volume, append_bytes,
+    append_length, append_optional_u64, trade::validate_trade_units,
 };
 
 pub const MARKET_TYPES_VERSION: u16 = 11;
@@ -800,14 +799,6 @@ impl<'a> CanonicalParser<'a> {
     fn annotations(&mut self) -> Result<MarketAnnotations, CanonicalDecodingError> {
         match self.u8()? {
             0 => Ok(MarketAnnotations::None),
-            1 => Ok(MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(
-                self.u8()?,
-                self.u8()?,
-            ))),
-            2 => Ok(MarketAnnotations::TpexQuote(TpexQuoteAnnotations::new(
-                self.u8()?,
-                self.u8()?,
-            ))),
             _ => Err(CanonicalDecodingError::InvalidValue),
         }
     }

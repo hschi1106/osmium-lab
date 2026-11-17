@@ -9,8 +9,8 @@ use market_types::{
     BookSnapshot, CompleteBookSnapshot, DomainEvent, EventKind, EventPayload, IndicativeAuction,
     InstrumentId, MarketAnnotations, MarketId, MarketSignal, MarketStatusObservation, MatchTime,
     Observation, ObservedTrade, Price, Quantity, QuantityUnit, QuoteSnapshot, SourceFormatId,
-    Symbol, TpexQuoteAnnotations, TradeBatch, TradeBatchOrdering, TradeObservationKind,
-    TradingDate, TwseQuoteAnnotations, UnknownValue, VolatilityDirection, Volume,
+    Symbol, TradeBatch, TradeBatchOrdering, TradeObservationKind, TradingDate, UnknownValue,
+    VolatilityDirection, Volume,
 };
 
 fn instrument(symbol: &str) -> InstrumentId {
@@ -81,7 +81,7 @@ fn quote_event(
                 snapshot_book,
                 observed_trade,
                 cumulative_volume,
-                MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(16, 0)),
+                MarketAnnotations::None,
             )
             .unwrap()
             .with_market_signal(Observation::Set(MarketSignal::Continuous)),
@@ -103,7 +103,7 @@ fn stability_event(micros: i64) -> DomainEvent {
                 Observation::Set(Quantity::new(20, QuantityUnit::TradingUnit).unwrap()),
                 Observation::Set(book(&["104"], &["106"])),
                 Observation::Set(Volume::new(999, QuantityUnit::TradingUnit)),
-                MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0x80, 0x02)),
+                MarketAnnotations::None,
             )
             .unwrap(),
         ),
@@ -122,7 +122,7 @@ fn paused_firm_quote_event(micros: i64) -> DomainEvent {
                 book(&["102"], &["103"]),
                 Observation::NoObservation,
                 Observation::Set(Volume::new(11, QuantityUnit::TradingUnit)),
-                MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(16, 0x01)),
+                MarketAnnotations::None,
             )
             .unwrap()
             .with_market_signal(Observation::Set(MarketSignal::AuctionCollecting(
@@ -146,7 +146,7 @@ fn volatility_pause_status_event(micros: i64, volume: u64) -> DomainEvent {
         EventPayload::MarketStatus(
             MarketStatusObservation::new(
                 Observation::Set(Volume::new(volume, QuantityUnit::TradingUnit)),
-                MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(16, 0x02)),
+                MarketAnnotations::None,
             )
             .with_market_signal(Observation::Set(MarketSignal::AuctionCollecting(
                 AuctionObservation::volatility_interruption(
@@ -183,7 +183,7 @@ fn neutral_auction_quote_updates_signal_without_raw_flag_validation() {
                 book(&["104"], &["106"]),
                 Observation::NoObservation,
                 Observation::Set(Volume::new(999, QuantityUnit::TradingUnit)),
-                MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0x80, 0)),
+                MarketAnnotations::None,
             )
             .unwrap()
             .with_market_signal(Observation::Set(MarketSignal::AuctionCollecting(
@@ -215,7 +215,7 @@ fn reserved_firm_quote_event(micros: i64) -> DomainEvent {
                 book(&["102"], &["103"]),
                 Observation::NoObservation,
                 Observation::Set(Volume::new(11, QuantityUnit::TradingUnit)),
-                MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0x01, 0)),
+                MarketAnnotations::None,
             )
             .unwrap()
             .with_market_signal(Observation::Unknown(UnknownValue::Unsigned(0x0100))),
@@ -245,7 +245,7 @@ fn tpex_profile_accepts_tpex_annotations_and_replaces_the_book() {
                 book(&["100"], &["101"]),
                 Observation::NoObservation,
                 Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
-                MarketAnnotations::TpexQuote(TpexQuoteAnnotations::new(16, 0)),
+                MarketAnnotations::None,
             )
             .unwrap(),
         ),
@@ -281,7 +281,7 @@ fn tpex_warrant_profile_accepts_tpex_warrant_quote_events() {
                 book(&["100"], &["101"]),
                 Observation::NoObservation,
                 Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
-                MarketAnnotations::TpexQuote(TpexQuoteAnnotations::new(16, 0)),
+                MarketAnnotations::None,
             )
             .unwrap(),
         ),
@@ -377,7 +377,7 @@ fn trade_batch_preserves_book_and_increments_version_once() {
         vec![trade("100.5", 2, TradeObservationKind::Intermediate)],
         TradeBatchOrdering::SourceSequencePreserved,
         Observation::Set(Volume::new(12, QuantityUnit::TradingUnit)),
-        MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(16, 0)),
+        MarketAnnotations::None,
     )
     .unwrap();
     let event = DomainEvent::new(
@@ -566,7 +566,7 @@ fn book_snapshot_preserves_trade_and_volume_under_an_explicit_profile() {
         None,
         EventPayload::BookSnapshot(BookSnapshot::new(
             book(&["100"], &["101"]),
-            MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0, 0)),
+            MarketAnnotations::None,
         )),
     );
     reducer
@@ -669,7 +669,7 @@ fn intraday_stability_updates_only_indicative_state() {
                 Observation::Set(Quantity::new(20, QuantityUnit::TradingUnit).unwrap()),
                 Observation::Set(book(&["104"], &["106"])),
                 Observation::Set(Volume::new(999, QuantityUnit::TradingUnit)),
-                MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(0x80, 0x02)),
+                MarketAnnotations::None,
             )
             .unwrap(),
         ),
@@ -786,7 +786,7 @@ fn market_status_does_not_clear_indicative_state_even_with_normal_flags() {
         None,
         EventPayload::MarketStatus(MarketStatusObservation::new(
             Observation::Set(Volume::new(11, QuantityUnit::TradingUnit)),
-            MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(16, 0)),
+            MarketAnnotations::None,
         )),
     );
 
@@ -854,7 +854,7 @@ fn tpex_normal_matching_event_clears_prior_indicative_observation() {
         SegmentBoundaryPolicy::Carry,
         1,
     );
-    let quote = |micros, status_flags, limit_flags| {
+    let quote = |micros| {
         DomainEvent::new(
             instrument,
             date(),
@@ -866,10 +866,7 @@ fn tpex_normal_matching_event_clears_prior_indicative_observation() {
                     book(&["100"], &["101"]),
                     Observation::NoObservation,
                     Observation::Set(Volume::new(10, QuantityUnit::TradingUnit)),
-                    MarketAnnotations::TpexQuote(TpexQuoteAnnotations::new(
-                        status_flags,
-                        limit_flags,
-                    )),
+                    MarketAnnotations::None,
                 )
                 .unwrap()
                 .with_market_signal(Observation::Set(MarketSignal::Continuous)),
@@ -877,9 +874,7 @@ fn tpex_normal_matching_event_clears_prior_indicative_observation() {
         )
     };
     let mut state = MarketState::new(instrument, date());
-    reducer
-        .apply(&mut state, &quote(1, 16, 0), &context)
-        .unwrap();
+    reducer.apply(&mut state, &quote(1), &context).unwrap();
     let trial = DomainEvent::new(
         instrument,
         date(),
@@ -897,15 +892,13 @@ fn tpex_normal_matching_event_clears_prior_indicative_observation() {
                 Observation::Set(Quantity::new(5, QuantityUnit::TradingUnit).unwrap()),
                 Observation::NoObservation,
                 Observation::Set(Volume::new(10, QuantityUnit::TradingUnit)),
-                MarketAnnotations::TpexQuote(TpexQuoteAnnotations::new(0x80, 0x01)),
+                MarketAnnotations::None,
             )
             .unwrap(),
         ),
     );
     reducer.apply(&mut state, &trial, &context).unwrap();
-    reducer
-        .apply(&mut state, &quote(3, 16, 0), &context)
-        .unwrap();
+    reducer.apply(&mut state, &quote(3), &context).unwrap();
 
     assert!(matches!(
         state.indicative_auction(),
