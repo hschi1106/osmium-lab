@@ -77,8 +77,8 @@ impl Error for SessionSegmentIdError {}
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AppliedEventRef {
     match_time: MatchTime,
+    observed_time: MatchTime,
     source_format: SourceFormatId,
-    source_phase: u8,
     event_kind: EventKind,
     source_sequence: Option<u64>,
     event_fingerprint: EventFingerprint,
@@ -88,8 +88,8 @@ impl AppliedEventRef {
     pub fn from_event(event: &DomainEvent) -> Result<Self, market_types::CanonicalEncodingError> {
         Ok(Self {
             match_time: event.match_time(),
+            observed_time: event.observed_time(),
             source_format: *event.source_format(),
-            source_phase: source_phase_for_event(event),
             event_kind: event.payload().kind(),
             source_sequence: event.source_sequence(),
             event_fingerprint: event.fingerprint()?,
@@ -112,8 +112,8 @@ impl AppliedEventRef {
     }
 
     #[must_use]
-    pub const fn source_phase(&self) -> u8 {
-        self.source_phase
+    pub const fn observed_time(&self) -> MatchTime {
+        self.observed_time
     }
 
     #[must_use]
@@ -124,29 +124,6 @@ impl AppliedEventRef {
     #[must_use]
     pub const fn event_fingerprint(&self) -> EventFingerprint {
         self.event_fingerprint
-    }
-}
-
-fn source_phase_for_event(event: &DomainEvent) -> u8 {
-    if !matches!(
-        event.instrument().market(),
-        market_types::MarketId::Twse | market_types::MarketId::Tpex
-    ) || event.source_format().as_str() != "STOCK_REALTIME"
-    {
-        return 0;
-    }
-    match event.payload() {
-        market_types::EventPayload::TradeBatch(_) => 10,
-        market_types::EventPayload::QuoteSnapshot(_)
-        | market_types::EventPayload::BookSnapshot(_)
-        | market_types::EventPayload::MarketStatus(_) => 20,
-        market_types::EventPayload::IndicativeAuction(auction) => {
-            if auction.book().as_set().is_some() {
-                20
-            } else {
-                10
-            }
-        }
     }
 }
 

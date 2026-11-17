@@ -40,6 +40,7 @@ fn canonical_quote_frame_has_the_documented_field_order() {
     expected.extend_from_slice(&1_u32.to_be_bytes());
     expected.push(b'X');
     expected.extend_from_slice(&1_i64.to_be_bytes());
+    expected.extend_from_slice(&1_i64.to_be_bytes());
     expected.push(0);
     expected.push(10);
     expected.extend_from_slice(&[0; 12]);
@@ -341,7 +342,7 @@ fn canonical_trade_batch_rejects_count_larger_than_the_frame() {
         EventPayload::TradeBatch(batch),
     );
     let canonical = event.to_canonical_bytes().unwrap();
-    let count_offset = 33;
+    let count_offset = 41;
 
     let mut oversized = canonical.clone();
     oversized[count_offset..count_offset + 4].copy_from_slice(&u32::MAX.to_be_bytes());
@@ -455,4 +456,36 @@ fn canonical_decoder_rejects_trailing_bytes_and_survives_frame_mutations() {
             }
         }
     }
+}
+
+#[test]
+fn observed_time_roundtrips_and_must_not_precede_match_time() {
+    let event = DomainEvent::new(
+        InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap()),
+        TradingDate::from_epoch_days(0).unwrap(),
+        SourceFormatId::new("TWSE_F6").unwrap(),
+        MatchTime::from_unix_microseconds(10),
+        Some(7),
+        EventPayload::MarketStatus(MarketStatusObservation::new(
+            Observation::NoObservation,
+            MarketAnnotations::None,
+        )),
+    );
+    assert_eq!(event.observed_time(), event.match_time());
+    assert_eq!(
+        event
+            .clone()
+            .with_observed_time(MatchTime::from_unix_microseconds(9)),
+        Err(market_types::EventError::ObservedBeforeMatch)
+    );
+
+    let late = event
+        .with_observed_time(MatchTime::from_unix_microseconds(25))
+        .unwrap();
+    let decoded = DomainEvent::from_canonical_bytes(&late.to_canonical_bytes().unwrap()).unwrap();
+    assert_eq!(decoded, late);
+    assert_eq!(
+        decoded.observed_time(),
+        MatchTime::from_unix_microseconds(25)
+    );
 }

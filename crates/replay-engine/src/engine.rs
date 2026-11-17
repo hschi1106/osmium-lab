@@ -75,8 +75,10 @@ impl Error for ReplayContextWindowError {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplayClock {
     Unstarted,
+    /// Positioned after event `event_ordinal`; `observed_time` is that event's
+    /// observable time, which never decreases under ordering rule v5.
     At {
-        match_time: MatchTime,
+        observed_time: MatchTime,
         event_ordinal: u64,
     },
 }
@@ -91,10 +93,10 @@ impl ReplayClock {
     }
 
     #[must_use]
-    pub const fn match_time(self) -> Option<MatchTime> {
+    pub const fn observed_time(self) -> Option<MatchTime> {
         match self {
             Self::Unstarted => None,
-            Self::At { match_time, .. } => Some(match_time),
+            Self::At { observed_time, .. } => Some(observed_time),
         }
     }
 }
@@ -188,7 +190,7 @@ pub struct ReplayCore {
     last_ordering_key: Option<OrderingKey>,
     last_canonical_event: Option<Vec<u8>>,
     event_stream: ReplayEventStreamHasher,
-    first_match_time: Option<MatchTime>,
+    first_observed_time: Option<MatchTime>,
 }
 
 impl ReplayCore {
@@ -283,7 +285,7 @@ impl ReplayCore {
             last_ordering_key: None,
             last_canonical_event: None,
             event_stream: ReplayEventStreamHasher::new(),
-            first_match_time: None,
+            first_observed_time: None,
         })
     }
 
@@ -519,10 +521,11 @@ impl ReplayCore {
         };
         self.event_stream.append_prepared(&prepared_checksum);
         self.clock = ReplayClock::At {
-            match_time: event.match_time(),
+            observed_time: event.observed_time(),
             event_ordinal: next_ordinal,
         };
-        self.first_match_time.get_or_insert(event.match_time());
+        self.first_observed_time
+            .get_or_insert(event.observed_time());
         self.last_ordering_key = Some(ordering_key.clone());
         self.last_canonical_event = Some(prepared_checksum.canonical().to_vec());
 
@@ -543,8 +546,8 @@ impl ReplayCore {
             final_state_checksum(self.states.values()).map_err(ReplayError::FinalStateEncoding)?;
         let summary = ReplaySummary {
             event_count: self.event_stream.event_count(),
-            first_match_time: self.first_match_time,
-            last_match_time: self.clock.match_time(),
+            first_observed_time: self.first_observed_time,
+            last_observed_time: self.clock.observed_time(),
             event_checksum,
             final_state_checksum,
         };
@@ -631,8 +634,8 @@ impl CompletedReplay {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReplaySummary {
     event_count: u64,
-    first_match_time: Option<MatchTime>,
-    last_match_time: Option<MatchTime>,
+    first_observed_time: Option<MatchTime>,
+    last_observed_time: Option<MatchTime>,
     event_checksum: ReplayEventStreamChecksum,
     final_state_checksum: FinalStateChecksum,
 }
@@ -644,13 +647,13 @@ impl ReplaySummary {
     }
 
     #[must_use]
-    pub const fn first_match_time(self) -> Option<MatchTime> {
-        self.first_match_time
+    pub const fn first_observed_time(self) -> Option<MatchTime> {
+        self.first_observed_time
     }
 
     #[must_use]
-    pub const fn last_match_time(self) -> Option<MatchTime> {
-        self.last_match_time
+    pub const fn last_observed_time(self) -> Option<MatchTime> {
+        self.last_observed_time
     }
 
     #[must_use]

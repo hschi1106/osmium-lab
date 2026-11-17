@@ -11,8 +11,8 @@ use crate::{
 };
 
 pub const MARKET_TYPES_VERSION: u16 = 11;
-pub const EVENT_SCHEMA_VERSION: u16 = 9;
-pub const CANONICAL_EVENT_VERSION: u16 = 9;
+pub const EVENT_SCHEMA_VERSION: u16 = 10;
+pub const CANONICAL_EVENT_VERSION: u16 = 10;
 const CANONICAL_MAGIC: &[u8; 4] = b"OSME";
 const CANONICAL_TRADE_BYTES: usize = 16 + 9 + 1;
 const MIN_TRADE_BATCH_SUFFIX_BYTES: usize = 1 + 1 + 1;
@@ -363,11 +363,13 @@ pub struct DomainEvent {
     trading_date: TradingDate,
     source_format: SourceFormatId,
     match_time: MatchTime,
+    observed_time: MatchTime,
     source_sequence: Option<u64>,
     payload: EventPayload,
 }
 
 impl DomainEvent {
+    /// Constructs an event whose `observed_time` equals its `match_time`.
     #[must_use]
     pub const fn new(
         instrument: InstrumentId,
@@ -382,9 +384,22 @@ impl DomainEvent {
             trading_date,
             source_format,
             match_time,
+            observed_time: match_time,
             source_sequence,
             payload,
         }
+    }
+
+    /// Sets the time at which the event became observable in its source stream.
+    ///
+    /// For a sequenced feed this is the running maximum of exchange time over the
+    /// messages disseminated so far, so it is never earlier than `match_time`.
+    pub fn with_observed_time(mut self, observed_time: MatchTime) -> Result<Self, EventError> {
+        if observed_time < self.match_time {
+            return Err(EventError::ObservedBeforeMatch);
+        }
+        self.observed_time = observed_time;
+        Ok(self)
     }
 
     #[must_use]
@@ -407,6 +422,12 @@ impl DomainEvent {
         self.match_time
     }
 
+    /// Time at which the event became observable; the replay clock orders by it.
+    #[must_use]
+    pub const fn observed_time(&self) -> MatchTime {
+        self.observed_time
+    }
+
     #[must_use]
     pub const fn source_sequence(&self) -> Option<u64> {
         self.source_sequence
@@ -419,7 +440,9 @@ impl DomainEvent {
 
     /// Encodes the current canonical event frame.
     pub fn to_canonical_bytes(&self) -> Result<Vec<u8>, CanonicalEncodingError> {
-        if !self.match_time.is_utc_iso8601_representable() {
+        if !self.match_time.is_utc_iso8601_representable()
+            || !self.observed_time.is_utc_iso8601_representable()
+        {
             return Err(CanonicalEncodingError::InvalidMatchTime);
         }
         let mut bytes = Vec::with_capacity(256);
@@ -431,6 +454,7 @@ impl DomainEvent {
         bytes.extend_from_slice(&self.trading_date.to_canonical_bytes());
         append_bytes(self.source_format.as_bytes(), &mut bytes)?;
         bytes.extend_from_slice(&self.match_time.as_unix_microseconds().to_be_bytes());
+        bytes.extend_from_slice(&self.observed_time.as_unix_microseconds().to_be_bytes());
         append_optional_u64(self.source_sequence, &mut bytes);
         bytes.push(self.payload.discriminant());
         encode_payload(&self.payload, &mut bytes)?;
@@ -455,7 +479,10 @@ impl DomainEvent {
         let source_format = SourceFormatId::new(parser.string()?)
             .map_err(|_| CanonicalDecodingError::InvalidValue)?;
         let match_time = MatchTime::from_unix_microseconds(parser.i64()?);
-        if !match_time.is_utc_iso8601_representable() {
+        let observed_time = MatchTime::from_unix_microseconds(parser.i64()?);
+        if !match_time.is_utc_iso8601_representable()
+            || !observed_time.is_utc_iso8601_representable()
+        {
             return Err(CanonicalDecodingError::InvalidValue);
         }
         let source_sequence = match parser.u8()? {
@@ -531,14 +558,16 @@ impl DomainEvent {
         if !parser.is_finished() {
             return Err(CanonicalDecodingError::TrailingBytes);
         }
-        Ok(Self::new(
+        Self::new(
             InstrumentId::new(market, symbol),
             trading_date,
             source_format,
             match_time,
             source_sequence,
             payload,
-        ))
+        )
+        .with_observed_time(observed_time)
+        .map_err(|_| CanonicalDecodingError::InvalidValue)
     }
 
     /// Computes BLAKE3-256 over the canonical event frame.
@@ -815,6 +844,7 @@ pub enum EventError {
         expected: QuantityUnit,
         actual: QuantityUnit,
     },
+    ObservedBeforeMatch,
 }
 
 impl fmt::Display for EventError {
@@ -825,6 +855,9 @@ impl fmt::Display for EventError {
                 formatter,
                 "event quantity unit mismatch: {expected:?} != {actual:?}"
             ),
+            Self::ObservedBeforeMatch => {
+                formatter.write_str("event observed_time must not precede match_time")
+            }
         }
     }
 }
@@ -833,7 +866,7 @@ impl Error for EventError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::InvalidTrades(error) => Some(error),
-            Self::QuantityUnitMismatch { .. } => None,
+            Self::QuantityUnitMismatch { .. } | Self::ObservedBeforeMatch => None,
         }
     }
 }

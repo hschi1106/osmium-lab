@@ -2,8 +2,7 @@ use std::{cmp::Ordering, collections::BTreeSet, error::Error, fmt};
 
 use market_types::{
     AuctionEvidence, AuctionObservation, AuctionPurpose, CanonicalEncodingError, DomainEvent,
-    EventPayload, IndicativeAuction, MarketSignal, Observation, QuantityUnit, TradeObservationKind,
-    UnknownValue, Volume,
+    EventPayload, IndicativeAuction, MarketSignal, Observation, QuantityUnit, UnknownValue, Volume,
 };
 
 use crate::{
@@ -13,7 +12,7 @@ use crate::{
 };
 
 pub const MARKET_STATE_VERSION: u16 = 7;
-pub const STATE_REDUCER_VERSION: u16 = 6;
+pub const STATE_REDUCER_VERSION: u16 = 7;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SegmentBoundaryPolicy {
@@ -112,7 +111,6 @@ impl MarketStateReducer {
         self.profile
             .validate_event(event)
             .map_err(StateTransitionError::Profile)?;
-        validate_realtime_shape(event)?;
 
         let event_ref =
             AppliedEventRef::from_event(event).map_err(StateTransitionError::CanonicalEncoding)?;
@@ -540,43 +538,15 @@ fn clear_indicative_auction(
     }
 }
 
-fn validate_realtime_shape(event: &DomainEvent) -> Result<(), StateTransitionError> {
-    let error = match event.instrument().market() {
-        market_types::MarketId::Twse => StateTransitionError::InvalidTwseRealtimeShape,
-        market_types::MarketId::Tpex => StateTransitionError::InvalidTpexRealtimeShape,
-        _ => return Ok(()),
-    };
-    if event.source_format().as_str() != "STOCK_REALTIME" {
-        return Ok(());
-    }
-    match event.payload() {
-        EventPayload::QuoteSnapshot(_) => Ok(()),
-        EventPayload::TradeBatch(batch)
-            if batch
-                .trades()
-                .iter()
-                .all(|trade| trade.observation_kind() == TradeObservationKind::Intermediate) =>
-        {
-            Ok(())
-        }
-        EventPayload::IndicativeAuction(_) => Ok(()),
-        EventPayload::MarketStatus(_) => Ok(()),
-        EventPayload::BookSnapshot(_) | EventPayload::TradeBatch(_) => Err(error),
-    }
-}
-
+/// Restriction of the replay ordering key (rule v5) to one instrument.
 fn compare_within_instrument(left: &AppliedEventRef, right: &AppliedEventRef) -> Ordering {
-    left.match_time()
-        .cmp(&right.match_time())
+    left.observed_time()
+        .cmp(&right.observed_time())
         .then_with(|| left.source_format().cmp(right.source_format()))
-        .then_with(|| source_phase_for_ref(left).cmp(&source_phase_for_ref(right)))
-        .then_with(|| left.event_kind().cmp(&right.event_kind()))
         .then_with(|| left.source_sequence().cmp(&right.source_sequence()))
+        .then_with(|| left.event_kind().cmp(&right.event_kind()))
+        .then_with(|| left.match_time().cmp(&right.match_time()))
         .then_with(|| left.event_fingerprint().cmp(&right.event_fingerprint()))
-}
-
-fn source_phase_for_ref(event: &AppliedEventRef) -> u8 {
-    event.source_phase()
 }
 
 #[derive(Debug, Clone)]
@@ -666,8 +636,6 @@ pub enum StateTransitionError {
     CanonicalEncoding(CanonicalEncodingError),
     MatchTimeRegression,
     OrderingRegression,
-    InvalidTwseRealtimeShape,
-    InvalidTpexRealtimeShape,
     CumulativeVolumeRegression {
         previous: u64,
         next: u64,
@@ -700,12 +668,6 @@ impl fmt::Display for StateTransitionError {
             }
             Self::MatchTimeRegression => formatter.write_str("event match_time regressed"),
             Self::OrderingRegression => formatter.write_str("event ordering key regressed"),
-            Self::InvalidTwseRealtimeShape => {
-                formatter.write_str("invalid TWSE STOCK_REALTIME domain event shape")
-            }
-            Self::InvalidTpexRealtimeShape => {
-                formatter.write_str("invalid TPEx STOCK_REALTIME domain event shape")
-            }
             Self::CumulativeVolumeRegression { previous, next } => write!(
                 formatter,
                 "cumulative volume regressed from {previous} to {next}"

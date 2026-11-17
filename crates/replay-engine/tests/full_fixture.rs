@@ -129,5 +129,5 @@ fn neutral_domain_events_replay_is_deterministic_and_preserves_event_order() {
         panic!("neutral quote event should expose its observed trade")
     };
     assert_eq!(last_trade.price(), Price::parse("101").unwrap());
-    assert!(first.summary().last_match_time().is_some());
+    assert!(first.summary().last_observed_time().is_some());
 }

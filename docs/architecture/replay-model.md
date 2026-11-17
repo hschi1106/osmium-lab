@@ -9,9 +9,14 @@ instrument
 trading_date
 source_format
 match_time
+observed_time
 source_sequence?
 payload
 ```
+
+`match_time` 是交易所撮合／揭示時間（marketdata `exch_ts`）；`observed_time` 是該 event 在來源
+stream 中可被觀察到的時間，預設等於 `match_time`，且不得早於 `match_time`。sequenced feed 以
+「至今已揭示訊息的最大 `exch_ts`」作為 `observed_time`（見 ADR-0007）。
 
 payload 支援 `QuoteSnapshot`、`BookSnapshot`、`TradeBatch`、`MarketStatus` 與單一 `IndicativeAuction`。
 auction 以 provider-neutral `AuctionObservation` 表達 `AuctionPurpose::{Opening, Closing,
@@ -27,20 +32,25 @@ volatility direction 各自可為 `Known`、`NoObservation` 或 `Unknown`。同�
 
 ## 2. 排序與時間
 
-`match_time` 是 replay clock 與第一排序鍵。ordering rule version 4 的內容鍵依序為：
+`observed_time` 是 replay clock 與第一排序鍵。ordering rule version 5 的內容鍵依序為：
 
 ```text
-match_time
+observed_time
 market_rank
-symbol
 source_format
-source_phase_rank
-event_kind_rank
 source_sequence
+symbol
+event_kind_rank
+match_time
 event_fingerprint
 ```
 
-TWSE／TPEx `STOCK_REALTIME` 的 intermediate trade 使用較早的 `source_phase_rank`，確保同一撮合時間的 `TradeBatch` 先於 final `QuoteSnapshot`。其餘 tie-break 只保證 deterministic order，不代表交易所全域封包順序。
+同一 sequenced feed（`source_format`）內，`source_sequence` 即交易所揭示順序；因 `observed_time`
+是 running max，兩者不會互相矛盾，所以 feed 內順序完全由 sequence 決定，跨 symbol 也不會讓策略
+看見尚未揭示的結果（例如 13:30 收盤集合競價陸續揭示）。`symbol`、`event_kind_rank`、`match_time`
+與 fingerprint 只在沒有 sequence 的 event 之間做 deterministic tie-break，不代表交易所全域順序。
+
+Reducer 對單一 instrument 使用同一排序鍵的限制版本檢查順序，並另外拒絕 `match_time` 倒退。
 
 stream 必須符合相同 schema、ordering 與 canonical version；單一 stream 時間不得倒退。multi-stream merge 只保留每條 stream 的 head，因此記憶體用量與 stream 數量相關，而非事件總量。
 

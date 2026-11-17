@@ -11,9 +11,8 @@ use market_types::{
     TradeObservationKind, TradingDate, TwseQuoteAnnotations, Volume,
 };
 use replay_engine::{
-    EventStream, OrderingError, OrderingKey, ReplayClock, ReplayContextWindow, ReplayCore,
-    ReplayError, ReplayPlan, ReplayStreamBinding, ReplayStreamFactory, StableStreamDescriptorId,
-    order_events,
+    EventStream, OrderingKey, ReplayClock, ReplayContextWindow, ReplayCore, ReplayError,
+    ReplayPlan, ReplayStreamBinding, ReplayStreamFactory, StableStreamDescriptorId, order_events,
 };
 
 fn instrument() -> InstrumentId {
@@ -86,11 +85,22 @@ fn quote_for(
     )
 }
 
+fn sequenced(event: DomainEvent, sequence: u64) -> DomainEvent {
+    DomainEvent::new(
+        *event.instrument(),
+        event.trading_date(),
+        *event.source_format(),
+        event.match_time(),
+        Some(sequence),
+        event.payload().clone(),
+    )
+}
+
 fn intermediate(micros: i64, cumulative: u64) -> DomainEvent {
     DomainEvent::new(
         instrument(),
         date(),
-        SourceFormatId::new("STOCK_REALTIME").unwrap(),
+        SourceFormatId::new("TWSE_F6").unwrap(),
         MatchTime::from_unix_microseconds(micros),
         None,
         EventPayload::TradeBatch(
@@ -213,36 +223,40 @@ impl ReplayStreamFactory for MergeFactory {
 }
 
 #[test]
-fn ordering_v2_places_twse_intermediate_before_final_and_retains_duplicates() {
-    let intermediate = intermediate(10, 10);
-    let final_quote = quote(10, "STOCK_REALTIME", 11, None);
-    let snapshot = quote(10, "STOCK_SNAPSHOT", 11, None);
-    let duplicate = snapshot.clone();
+fn ordering_v5_follows_source_sequence_within_a_stream_and_retains_duplicates() {
+    let intermediate = sequenced(intermediate(10, 10), 5);
+    let final_quote = quote(10, "TWSE_F6", 11, Some(6));
+    let unsequenced = quote(10, "TWSE_F6", 11, None);
+    let duplicate = unsequenced.clone();
 
     let ordered = order_events(vec![
-        duplicate,
         final_quote.clone(),
-        snapshot.clone(),
+        duplicate,
         intermediate.clone(),
+        unsequenced.clone(),
     ])
     .unwrap();
-    assert_eq!(ordered.len(), 4);
-    assert_eq!(ordered[0], intermediate);
-    assert_eq!(ordered[1], final_quote);
-    assert_eq!(ordered[2], snapshot);
-    assert_eq!(ordered[3], snapshot);
     assert_eq!(
-        OrderingKey::for_event(&ordered[0])
-            .unwrap()
-            .source_phase_rank(),
-        10
+        ordered,
+        vec![unsequenced.clone(), unsequenced, intermediate, final_quote]
     );
-    assert_eq!(
-        OrderingKey::for_event(&ordered[1])
-            .unwrap()
-            .source_phase_rank(),
-        20
-    );
+}
+
+#[test]
+fn ordering_v5_orders_by_observed_time_before_match_time() {
+    let other = InstrumentId::new(MarketId::Twse, Symbol::new("2317").unwrap());
+    // Close-auction result for 2330 matched at 5 but was disseminated at 10,
+    // after 2317's event matched and disseminated at 8.
+    let late = quote(5, "TWSE_F6", 1, Some(7))
+        .with_observed_time(MatchTime::from_unix_microseconds(10))
+        .unwrap();
+    let early = quote_for(&other, date(), 8, "TWSE_F6", 1, Some(6));
+
+    let ordered = order_events(vec![late.clone(), early.clone()]).unwrap();
+    assert_eq!(ordered, vec![early, late.clone()]);
+    let key = OrderingKey::for_event(&late).unwrap();
+    assert_eq!(key.observed_time(), MatchTime::from_unix_microseconds(10));
+    assert_eq!(key.match_time(), MatchTime::from_unix_microseconds(5));
 }
 
 #[test]
@@ -503,30 +517,6 @@ fn source_sequence_none_sorts_before_some_before_fingerprint() {
 }
 
 #[test]
-fn invalid_twse_realtime_trade_shape_is_rejected() {
-    let event = DomainEvent::new(
-        instrument(),
-        date(),
-        SourceFormatId::new("STOCK_REALTIME").unwrap(),
-        MatchTime::from_unix_microseconds(10),
-        None,
-        EventPayload::TradeBatch(
-            TradeBatch::new(
-                vec![trade("100", 1, TradeObservationKind::Regular)],
-                TradeBatchOrdering::SourceSequencePreserved,
-                Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
-                MarketAnnotations::TwseQuote(TwseQuoteAnnotations::new(16, 0)),
-            )
-            .unwrap(),
-        ),
-    );
-    assert!(matches!(
-        order_events(vec![event]),
-        Err(OrderingError::InvalidTwseRealtimeShape)
-    ));
-}
-
-#[test]
 fn replay_clock_state_and_checksum_commit_once_per_event() {
     let mut core = core();
     let first = quote(10, "STOCK_SNAPSHOT", 10, None);
@@ -536,7 +526,7 @@ fn replay_clock_state_and_checksum_commit_once_per_event() {
     assert_eq!(
         core.clock(),
         ReplayClock::At {
-            match_time: MatchTime::from_unix_microseconds(10),
+            observed_time: MatchTime::from_unix_microseconds(10),
             event_ordinal: 1
         }
     );
@@ -624,8 +614,8 @@ fn shuffled_inputs_produce_identical_checksums_and_final_state() {
 fn empty_selected_event_sequence_has_a_framed_checksum_and_initial_state() {
     let completed = core().complete().unwrap();
     assert_eq!(completed.summary().event_count(), 0);
-    assert_eq!(completed.summary().first_match_time(), None);
-    assert_eq!(completed.summary().last_match_time(), None);
+    assert_eq!(completed.summary().first_observed_time(), None);
+    assert_eq!(completed.summary().last_observed_time(), None);
     assert_eq!(
         completed.state(&instrument()).unwrap().book(),
         &StateField::initial()
@@ -636,7 +626,7 @@ fn empty_selected_event_sequence_has_a_framed_checksum_and_initial_state() {
     canonical.extend_from_slice(&1_u16.to_be_bytes());
     canonical.extend_from_slice(&market_types::EVENT_SCHEMA_VERSION.to_be_bytes());
     canonical.extend_from_slice(&market_types::CANONICAL_EVENT_VERSION.to_be_bytes());
-    canonical.extend_from_slice(&4_u16.to_be_bytes());
+    canonical.extend_from_slice(&replay_engine::ORDERING_RULE_VERSION.to_be_bytes());
     canonical.push(0);
     canonical.extend_from_slice(&0_u64.to_be_bytes());
     assert_eq!(

@@ -1,22 +1,27 @@
 use std::{error::Error, fmt};
 
 use market_types::{
-    CanonicalEncodingError, DomainEvent, EventFingerprint, EventPayload, MatchTime, SourceFormatId,
-    Symbol, TradeObservationKind,
+    CanonicalEncodingError, DomainEvent, EventFingerprint, MatchTime, SourceFormatId, Symbol,
 };
 
-pub const ORDERING_RULE_VERSION: u16 = 4;
+pub const ORDERING_RULE_VERSION: u16 = 5;
 
-/// Fully materialized deterministic event ordering key.
+/// Fully materialized deterministic event ordering key (rule v5).
+///
+/// Events order by the time they became observable, then by market and source
+/// stream. Within one sequenced stream the exchange sequence is authoritative, so
+/// `observed_time` (a running maximum of exchange time) never contradicts it.
+/// Symbol, kind, match time and fingerprint only break ties among unsequenced
+/// events.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct OrderingKey {
-    match_time: MatchTime,
+    observed_time: MatchTime,
     market_rank: u8,
-    symbol: Symbol,
     source_format: SourceFormatId,
-    source_phase_rank: u8,
-    event_kind_rank: u8,
     source_sequence: Option<u64>,
+    symbol: Symbol,
+    event_kind_rank: u8,
+    match_time: MatchTime,
     event_fingerprint: EventFingerprint,
 }
 
@@ -32,24 +37,29 @@ impl OrderingKey {
             .to_canonical_bytes()
             .map_err(OrderingError::CanonicalEncoding)?;
         let fingerprint = EventFingerprint::hash_canonical_bytes(&canonical);
-        let key = Self::for_event_with_fingerprint(event, fingerprint)?;
+        let key = Self::for_event_with_fingerprint(event, fingerprint);
         Ok((key, canonical))
     }
 
     fn for_event_with_fingerprint(
         event: &DomainEvent,
         event_fingerprint: EventFingerprint,
-    ) -> Result<Self, OrderingError> {
-        Ok(Self {
-            match_time: event.match_time(),
+    ) -> Self {
+        Self {
+            observed_time: event.observed_time(),
             market_rank: event.instrument().market().ordering_rank(),
-            symbol: *event.instrument().symbol(),
             source_format: *event.source_format(),
-            source_phase_rank: source_phase_rank(event)?,
-            event_kind_rank: event.payload().discriminant(),
             source_sequence: event.source_sequence(),
+            symbol: *event.instrument().symbol(),
+            event_kind_rank: event.payload().discriminant(),
+            match_time: event.match_time(),
             event_fingerprint,
-        })
+        }
+    }
+
+    #[must_use]
+    pub const fn observed_time(&self) -> MatchTime {
+        self.observed_time
     }
 
     #[must_use]
@@ -70,11 +80,6 @@ impl OrderingKey {
     #[must_use]
     pub const fn source_format(&self) -> &SourceFormatId {
         &self.source_format
-    }
-
-    #[must_use]
-    pub const fn source_phase_rank(&self) -> u8 {
-        self.source_phase_rank
     }
 
     #[must_use]
@@ -125,40 +130,9 @@ impl PreparedOrderEvent {
     }
 }
 
-fn source_phase_rank(event: &DomainEvent) -> Result<u8, OrderingError> {
-    let invalid_shape = match event.instrument().market() {
-        market_types::MarketId::Twse => OrderingError::InvalidTwseRealtimeShape,
-        market_types::MarketId::Tpex => OrderingError::InvalidTpexRealtimeShape,
-        _ => return Ok(0),
-    };
-    if event.source_format().as_str() != "STOCK_REALTIME" {
-        return Ok(0);
-    }
-
-    match event.payload() {
-        EventPayload::QuoteSnapshot(_) | EventPayload::MarketStatus(_) => Ok(20),
-        EventPayload::TradeBatch(batch)
-            if !batch.trades().is_empty()
-                && batch.trades().iter().all(|trade| {
-                    trade.observation_kind() == TradeObservationKind::Intermediate
-                }) =>
-        {
-            Ok(10)
-        }
-        EventPayload::IndicativeAuction(auction) => Ok(if auction.book().as_set().is_some() {
-            20
-        } else {
-            10
-        }),
-        EventPayload::BookSnapshot(_) | EventPayload::TradeBatch(_) => Err(invalid_shape),
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderingError {
     CanonicalEncoding(CanonicalEncodingError),
-    InvalidTwseRealtimeShape,
-    InvalidTpexRealtimeShape,
     EventFingerprintCollision,
 }
 
@@ -167,12 +141,6 @@ impl fmt::Display for OrderingError {
         match self {
             Self::CanonicalEncoding(error) => {
                 write!(formatter, "canonical event encoding failed: {error}")
-            }
-            Self::InvalidTwseRealtimeShape => {
-                formatter.write_str("invalid TWSE STOCK_REALTIME ordering shape")
-            }
-            Self::InvalidTpexRealtimeShape => {
-                formatter.write_str("invalid TPEx STOCK_REALTIME ordering shape")
             }
             Self::EventFingerprintCollision => {
                 formatter.write_str("equal ordering keys have different canonical event bytes")
@@ -185,9 +153,7 @@ impl Error for OrderingError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::CanonicalEncoding(error) => Some(error),
-            Self::InvalidTwseRealtimeShape
-            | Self::InvalidTpexRealtimeShape
-            | Self::EventFingerprintCollision => None,
+            Self::EventFingerprintCollision => None,
         }
     }
 }
