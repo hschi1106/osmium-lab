@@ -349,6 +349,15 @@ pub enum EventKind {
 }
 
 impl EventKind {
+    /// Every event kind, in discriminant order.
+    pub const ALL: [Self; 5] = [
+        Self::QuoteSnapshot,
+        Self::BookSnapshot,
+        Self::TradeBatch,
+        Self::IndicativeAuction,
+        Self::MarketStatus,
+    ];
+
     #[must_use]
     pub const fn discriminant(self) -> u8 {
         self as u8

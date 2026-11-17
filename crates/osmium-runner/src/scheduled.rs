@@ -901,9 +901,7 @@ mod tests {
         AccountingModel, ChargeBasis, ChargeModel, ChargeSides, InstrumentEconomics,
         InstrumentLedgerConfig, RoundingPolicy, ScheduledDepthModel, ScheduledInstrumentConfig,
     };
-    use market_state::{
-        MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
-    };
+    use market_state::{MarketState, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId};
     use market_types::{
         AuctionObservation, BookLevel, BookSide, BookSideKind, BookSnapshot, CompleteBookSnapshot,
         Decimal, EventPayload, IndicativeAuction, MarketAnnotations, MarketId, MarketSignal,
@@ -969,7 +967,7 @@ mod tests {
             DomainEvent::new(
                 instrument,
                 date,
-                SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
+                SourceFormatId::new("TWSE_F6").unwrap(),
                 MatchTime::from_unix_microseconds(1),
                 None,
                 EventPayload::QuoteSnapshot(
@@ -1189,7 +1187,7 @@ mod tests {
             DomainEvent::new(
                 instrument,
                 date,
-                SourceFormatId::new("STOCK_REALTIME").unwrap(),
+                SourceFormatId::new("TWSE_F17").unwrap(),
                 match_time,
                 None,
                 EventPayload::QuoteSnapshot(
@@ -1207,7 +1205,7 @@ mod tests {
         let pause_event = DomainEvent::new(
             instrument,
             date,
-            SourceFormatId::new("STOCK_REALTIME").unwrap(),
+            SourceFormatId::new("TWSE_F17").unwrap(),
             pause_time,
             None,
             EventPayload::MarketStatus(
@@ -1223,7 +1221,7 @@ mod tests {
         );
         let core = ReplayCore::new_multi(
             vec![MarketState::new(instrument, date)],
-            vec![(instrument, MarketStateReducer::twse_regular())],
+            vec![(instrument, twse_reducer())],
             vec![(
                 instrument,
                 ReducerContext::new(
@@ -1358,7 +1356,7 @@ mod tests {
         let event = DomainEvent::new(
             instrument,
             date,
-            SourceFormatId::new("I080").unwrap(),
+            SourceFormatId::new("TAIFEX").unwrap(),
             event_time,
             None,
             EventPayload::BookSnapshot(
@@ -1368,7 +1366,7 @@ mod tests {
         );
         let core = ReplayCore::new_multi(
             vec![MarketState::new(instrument, date)],
-            vec![(instrument, MarketStateReducer::taifex_futures())],
+            vec![(instrument, taifex_reducer())],
             vec![(
                 instrument,
                 ReducerContext::new(date, segment_id, SegmentBoundaryPolicy::Carry, 1),
@@ -1505,7 +1503,7 @@ mod tests {
             DomainEvent::new(
                 instrument,
                 date,
-                SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
+                SourceFormatId::new("TWSE_F6").unwrap(),
                 match_time,
                 None,
                 EventPayload::QuoteSnapshot(
@@ -1523,7 +1521,7 @@ mod tests {
         let events = vec![make_event(first_time), make_event(second_time)];
         let core = ReplayCore::new_multi(
             vec![MarketState::new(instrument, date)],
-            vec![(instrument, MarketStateReducer::twse_regular())],
+            vec![(instrument, twse_reducer())],
             vec![(
                 instrument,
                 ReducerContext::new(date, segment_id, SegmentBoundaryPolicy::Carry, 1),
@@ -1674,7 +1672,7 @@ mod tests {
             DomainEvent::new(
                 instrument,
                 date,
-                SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
+                SourceFormatId::new("TPEX_F6").unwrap(),
                 at,
                 None,
                 payload,
@@ -1694,7 +1692,7 @@ mod tests {
         ];
         let core = ReplayCore::new_multi(
             vec![MarketState::new(instrument, date)],
-            vec![(instrument, MarketStateReducer::tpex_regular())],
+            vec![(instrument, tpex_reducer())],
             vec![(
                 instrument,
                 ReducerContext::new(date, segment_id, SegmentBoundaryPolicy::Carry, 1),
@@ -1781,5 +1779,45 @@ mod tests {
             ScheduledOrderStatus::Filled
         );
         assert_eq!(completed.performance.fill_count(), 1);
+    }
+
+    fn twse_reducer() -> market_state::MarketStateReducer {
+        market_state::MarketStateReducer::new(
+            market_state::MarketStateProfile::accepting_all(
+                market_types::MarketId::Twse,
+                &[
+                    market_types::SourceFormatId::new("TWSE_F17").unwrap(),
+                    market_types::SourceFormatId::new("TWSE_F6").unwrap(),
+                ],
+                market_state::CumulativeVolumePolicy::NonDecreasingWithinSegment {
+                    unit: market_types::QuantityUnit::TradingUnit,
+                },
+            )
+            .unwrap(),
+        )
+    }
+
+    fn tpex_reducer() -> market_state::MarketStateReducer {
+        market_state::MarketStateReducer::new(
+            market_state::MarketStateProfile::accepting_all(
+                market_types::MarketId::Tpex,
+                &[market_types::SourceFormatId::new("TPEX_F6").unwrap()],
+                market_state::CumulativeVolumePolicy::NonDecreasingWithinSegment {
+                    unit: market_types::QuantityUnit::TradingUnit,
+                },
+            )
+            .unwrap(),
+        )
+    }
+
+    fn taifex_reducer() -> market_state::MarketStateReducer {
+        market_state::MarketStateReducer::new(
+            market_state::MarketStateProfile::accepting_all(
+                market_types::MarketId::Taifex,
+                &[market_types::SourceFormatId::new("TAIFEX").unwrap()],
+                market_state::CumulativeVolumePolicy::Unconstrained,
+            )
+            .unwrap(),
+        )
     }
 }

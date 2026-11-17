@@ -67,36 +67,6 @@ impl MarketStateReducer {
     }
 
     #[must_use]
-    pub fn twse_regular() -> Self {
-        Self::new(MarketStateProfile::twse_regular())
-    }
-
-    #[must_use]
-    pub fn taifex_futures() -> Self {
-        Self::new(MarketStateProfile::taifex_futures())
-    }
-
-    #[must_use]
-    pub fn taifex_options() -> Self {
-        Self::new(MarketStateProfile::taifex_options())
-    }
-
-    #[must_use]
-    pub fn twse_warrant() -> Self {
-        Self::new(MarketStateProfile::twse_warrant())
-    }
-
-    #[must_use]
-    pub fn tpex_regular() -> Self {
-        Self::new(MarketStateProfile::tpex_regular())
-    }
-
-    #[must_use]
-    pub fn tpex_warrant() -> Self {
-        Self::new(MarketStateProfile::tpex_warrant())
-    }
-
-    #[must_use]
     pub const fn profile(&self) -> &MarketStateProfile {
         &self.profile
     }

@@ -1,8 +1,6 @@
 use std::{hint::black_box, time::Instant};
 
-use market_state::{
-    MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
-};
+use market_state::{MarketState, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId};
 use market_types::{
     BookLevel, BookSide, BookSideKind, CANONICAL_EVENT_VERSION, CompleteBookSnapshot, DomainEvent,
     EVENT_SCHEMA_VERSION, EventFingerprint, EventPayload, InstrumentId, MarketAnnotations,
@@ -66,7 +64,7 @@ fn fixture_event() -> DomainEvent {
     DomainEvent::new(
         InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap()),
         TradingDate::parse("2026-08-12").unwrap(),
-        SourceFormatId::new("STOCK_REALTIME").unwrap(),
+        SourceFormatId::new("TWSE_F17").unwrap(),
         MatchTime::parse("2026-08-12T09:00:00.125+08:00").unwrap(),
         Some(42),
         EventPayload::QuoteSnapshot(quote),
@@ -136,7 +134,7 @@ impl EventStream for ReplaySlice<'_> {
 fn replay_core(instrument: &InstrumentId, date: TradingDate) -> ReplayCore {
     ReplayCore::new(
         vec![MarketState::new(*instrument, date)],
-        MarketStateReducer::twse_regular(),
+        twse_reducer(),
         ReducerContext::new(
             date,
             SessionSegmentId::new("regular").unwrap(),
@@ -279,4 +277,20 @@ fn main() {
         "median speedup: {:.2}x (synthetic fixed five-level TWSE quote; {ITERATIONS} iterations/round)",
         baseline_median as f64 / optimized_median as f64,
     );
+}
+
+fn twse_reducer() -> market_state::MarketStateReducer {
+    market_state::MarketStateReducer::new(
+        market_state::MarketStateProfile::accepting_all(
+            market_types::MarketId::Twse,
+            &[
+                market_types::SourceFormatId::new("TWSE_F17").unwrap(),
+                market_types::SourceFormatId::new("TWSE_F6").unwrap(),
+            ],
+            market_state::CumulativeVolumePolicy::NonDecreasingWithinSegment {
+                unit: market_types::QuantityUnit::TradingUnit,
+            },
+        )
+        .unwrap(),
+    )
 }

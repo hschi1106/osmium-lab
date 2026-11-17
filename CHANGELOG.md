@@ -12,3 +12,7 @@
   source sequence 排序，replay clock 改為 observed time。移除 Teralion `STOCK_REALTIME` phase rank。
 - 新增 `osmium-md`：讀取 marketdata F6／F17／F23 parquet，驗證 manifest identity，計算全 feed
   observed time，並將訊息 mapping 為 `DomainEvent`（見 [marketdata 介面](docs/interfaces/marketdata.md)）。
+- 移除 Teralion raw status／limit bit annotations（`TwseQuoteAnnotations` 等）；`MarketAnnotations`
+  只保留 `None` 作為日後中性 annotation 的 canonical 欄位。
+- 移除內建 Teralion market-state profiles（`twse_regular`、`taifex_futures` 等），改以
+  `MarketStateProfile::accepting_all` 建立；marketdata feed profile 由 `Feed::state_profile` 提供。

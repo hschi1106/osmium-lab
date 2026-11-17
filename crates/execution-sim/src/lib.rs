@@ -755,9 +755,7 @@ impl MultiSimulator {
 
 #[cfg(test)]
 mod tests {
-    use market_state::{
-        MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
-    };
+    use market_state::{MarketState, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId};
     use market_types::{
         AuctionObservation, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, EventPayload,
         IndicativeAuction, MarketAnnotations, MarketId, Observation, ObservedTrade, QuoteSnapshot,
@@ -785,7 +783,7 @@ mod tests {
         DomainEvent::new(
             InstrumentId::new(MarketId::Twse, Symbol::new("2330").unwrap()),
             TradingDate::parse("2026-07-27").unwrap(),
-            SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
+            SourceFormatId::new("TWSE_F6").unwrap(),
             MatchTime::from_unix_microseconds(1),
             None,
             EventPayload::QuoteSnapshot(
@@ -946,7 +944,7 @@ mod tests {
         .unwrap();
         let mut core = ReplayCore::new(
             vec![MarketState::new(instrument, date)],
-            MarketStateReducer::twse_regular(),
+            twse_reducer(),
             ReducerContext::new(date, segment_id, SegmentBoundaryPolicy::Carry, 1),
         )
         .unwrap();
@@ -1092,5 +1090,21 @@ mod tests {
             add_latency(MatchTime::from_unix_microseconds(0), u64::MAX, 0),
             Err(SimulationError::LatencyOverflow)
         ));
+    }
+
+    fn twse_reducer() -> market_state::MarketStateReducer {
+        market_state::MarketStateReducer::new(
+            market_state::MarketStateProfile::accepting_all(
+                market_types::MarketId::Twse,
+                &[
+                    market_types::SourceFormatId::new("TWSE_F17").unwrap(),
+                    market_types::SourceFormatId::new("TWSE_F6").unwrap(),
+                ],
+                market_state::CumulativeVolumePolicy::NonDecreasingWithinSegment {
+                    unit: market_types::QuantityUnit::TradingUnit,
+                },
+            )
+            .unwrap(),
+        )
     }
 }

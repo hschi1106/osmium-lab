@@ -1,7 +1,7 @@
 use std::fmt;
 
-use market_state::{CumulativeVolumePolicy, MarketStateProfile, SourceFormatRule};
-use market_types::{EventKind, MarketId, QuantityUnit, SourceFormatId};
+use market_state::{CumulativeVolumePolicy, MarketStateProfile};
+use market_types::{MarketId, QuantityUnit, SourceFormatId};
 
 /// A marketdata exchange feed: one `part` of the `trades`／`books` tables.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -98,24 +98,12 @@ impl Feed {
     /// Market-state profile accepting every event kind this feed produces.
     #[must_use]
     pub fn state_profile(self) -> MarketStateProfile {
-        let rule = SourceFormatRule::new(
-            self.source_format(),
-            vec![
-                EventKind::QuoteSnapshot,
-                EventKind::BookSnapshot,
-                EventKind::TradeBatch,
-                EventKind::IndicativeAuction,
-                EventKind::MarketStatus,
-            ],
-        )
-        .expect("feed profile lists event kinds");
-        MarketStateProfile::new(
+        MarketStateProfile::accepting_all(
             self.market(),
-            vec![rule],
+            &[self.source_format()],
             CumulativeVolumePolicy::NonDecreasingWithinSegment {
                 unit: self.quantity_unit(),
             },
-            1,
         )
         .expect("feed market-state profile is valid")
     }

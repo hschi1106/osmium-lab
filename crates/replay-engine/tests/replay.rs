@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use market_state::{
-    MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
-    StateField, StateTransitionError,
+    MarketState, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId, StateField,
+    StateTransitionError,
 };
 use market_types::{
     BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventPayload,
@@ -118,7 +118,7 @@ fn intermediate(micros: i64, cumulative: u64) -> DomainEvent {
 fn core() -> ReplayCore {
     ReplayCore::new(
         vec![MarketState::new(instrument(), date())],
-        MarketStateReducer::twse_regular(),
+        twse_reducer(),
         context(),
     )
     .unwrap()
@@ -191,7 +191,7 @@ struct MergeFactory {
 fn unstarted_core_fork_replays_independently() {
     let mut committed = core();
     let mut visible = committed.fork_unstarted().unwrap();
-    let event = quote(10, "STOCK_REALTIME", 1, Some(1));
+    let event = quote(10, "TWSE_F17", 1, Some(1));
 
     let committed_receipt = committed.apply_ordered(&event).unwrap();
     assert!(matches!(
@@ -305,15 +305,15 @@ fn multi_stream_replay_merges_bounded_heads_and_ignores_sentinel() {
             (
                 first_binding.descriptor_id(),
                 vec![
-                    quote(10, "STOCK_SNAPSHOT", 10, None),
-                    quote(30, "STOCK_SNAPSHOT", 30, None),
+                    quote(10, "TWSE_F6", 10, None),
+                    quote(30, "TWSE_F6", 30, None),
                 ],
             ),
             (
                 second_binding.descriptor_id(),
                 vec![
-                    quote_for(&second, date(), 20, "STOCK_SNAPSHOT", 20, None),
-                    quote_for(&second, date(), 30, "STOCK_SNAPSHOT", 30, None),
+                    quote_for(&second, date(), 20, "TWSE_F6", 20, None),
+                    quote_for(&second, date(), 30, "TWSE_F6", 30, None),
                 ],
             ),
         ]),
@@ -324,10 +324,7 @@ fn multi_stream_replay_merges_bounded_heads_and_ignores_sentinel() {
             MarketState::new(instrument(), date()),
             MarketState::new(second, date()),
         ],
-        vec![
-            (instrument(), MarketStateReducer::twse_regular()),
-            (second, MarketStateReducer::twse_regular()),
-        ],
+        vec![(instrument(), twse_reducer()), (second, twse_reducer())],
         vec![(instrument(), context()), (second, context())],
     )
     .unwrap();
@@ -363,10 +360,7 @@ fn multi_stream_binding_order_does_not_change_checksum() {
                 MarketState::new(instrument(), date()),
                 MarketState::new(second, date()),
             ],
-            vec![
-                (instrument(), MarketStateReducer::twse_regular()),
-                (second, MarketStateReducer::twse_regular()),
-            ],
+            vec![(instrument(), twse_reducer()), (second, twse_reducer())],
             vec![(instrument(), context()), (second, context())],
         )
         .unwrap()
@@ -376,15 +370,15 @@ fn multi_stream_binding_order_does_not_change_checksum() {
             (
                 first_binding.descriptor_id(),
                 vec![
-                    quote(10, "STOCK_SNAPSHOT", 10, None),
-                    quote(30, "STOCK_SNAPSHOT", 30, None),
+                    quote(10, "TWSE_F6", 10, None),
+                    quote(30, "TWSE_F6", 30, None),
                 ],
             ),
             (
                 second_binding.descriptor_id(),
                 vec![
-                    quote_for(&second, date(), 20, "STOCK_SNAPSHOT", 20, None),
-                    quote_for(&second, date(), 30, "STOCK_SNAPSHOT", 30, None),
+                    quote_for(&second, date(), 20, "TWSE_F6", 20, None),
+                    quote_for(&second, date(), 30, "TWSE_F6", 30, None),
                 ],
             ),
         ]),
@@ -430,7 +424,7 @@ fn context_schedule_resets_observable_state_at_segment_boundary() {
     let regular = context();
     let mut core = ReplayCore::new_multi_with_schedules(
         vec![MarketState::new(instrument(), date())],
-        vec![(instrument(), MarketStateReducer::twse_regular())],
+        vec![(instrument(), twse_reducer())],
         vec![(instrument(), regular.clone())],
         vec![(
             instrument(),
@@ -452,8 +446,8 @@ fn context_schedule_resets_observable_state_at_segment_boundary() {
     )
     .unwrap();
     core.replay(vec![
-        quote(5, "STOCK_SNAPSHOT", 10, None),
-        quote(15, "STOCK_SNAPSHOT", 1, None),
+        quote(5, "TWSE_F6", 10, None),
+        quote(15, "TWSE_F6", 1, None),
     ])
     .unwrap();
     let completed = core.complete().unwrap();
@@ -474,7 +468,7 @@ fn context_schedule_resets_state_across_trading_dates() {
     );
     let mut core = ReplayCore::new_multi_with_schedules(
         vec![MarketState::new(instrument(), date())],
-        vec![(instrument(), MarketStateReducer::twse_regular())],
+        vec![(instrument(), twse_reducer())],
         vec![(instrument(), first_context.clone())],
         vec![(
             instrument(),
@@ -497,8 +491,8 @@ fn context_schedule_resets_state_across_trading_dates() {
     .unwrap();
 
     core.replay(vec![
-        quote_for(&instrument(), date(), 5, "STOCK_SNAPSHOT", 10, None),
-        quote_for(&instrument(), next_date, 15, "STOCK_SNAPSHOT", 1, None),
+        quote_for(&instrument(), date(), 5, "TWSE_F6", 10, None),
+        quote_for(&instrument(), next_date, 15, "TWSE_F6", 1, None),
     ])
     .unwrap();
 
@@ -510,8 +504,8 @@ fn context_schedule_resets_state_across_trading_dates() {
 
 #[test]
 fn source_sequence_none_sorts_before_some_before_fingerprint() {
-    let without = quote(10, "STOCK_SNAPSHOT", 10, None);
-    let with = quote(10, "STOCK_SNAPSHOT", 10, Some(0));
+    let without = quote(10, "TWSE_F6", 10, None);
+    let with = quote(10, "TWSE_F6", 10, Some(0));
     let ordered = order_events(vec![with.clone(), without.clone()]).unwrap();
     assert_eq!(ordered, vec![without, with]);
 }
@@ -519,7 +513,7 @@ fn source_sequence_none_sorts_before_some_before_fingerprint() {
 #[test]
 fn replay_clock_state_and_checksum_commit_once_per_event() {
     let mut core = core();
-    let first = quote(10, "STOCK_SNAPSHOT", 10, None);
+    let first = quote(10, "TWSE_F6", 10, None);
     let commit = core.apply_ordered(&first).unwrap();
     assert_eq!(commit.occurrence().run_event_ordinal(), 1);
     assert_eq!(commit.occurrence().instrument_state_version(), 1);
@@ -540,14 +534,13 @@ fn replay_clock_state_and_checksum_commit_once_per_event() {
 #[test]
 fn precommit_ordering_and_state_errors_leave_current_event_uncommitted() {
     let mut core = core();
-    core.apply_ordered(&quote(10, "STOCK_SNAPSHOT", 10, None))
-        .unwrap();
+    core.apply_ordered(&quote(10, "TWSE_F6", 10, None)).unwrap();
     let before_clock = core.clock();
     let before_state = core.state(&instrument()).unwrap().clone();
     let before_checksum = core.processed_prefix_checksum();
 
     let ordering_error = core
-        .apply_ordered(&quote(9, "STOCK_SNAPSHOT", 11, None))
+        .apply_ordered(&quote(9, "TWSE_F6", 11, None))
         .unwrap_err();
     assert!(matches!(
         ordering_error,
@@ -558,7 +551,7 @@ fn precommit_ordering_and_state_errors_leave_current_event_uncommitted() {
     assert_eq!(core.processed_prefix_checksum(), before_checksum);
 
     let state_error = core
-        .apply_ordered(&quote(11, "STOCK_SNAPSHOT", 9, None))
+        .apply_ordered(&quote(11, "TWSE_F6", 9, None))
         .unwrap_err();
     assert!(matches!(
         state_error,
@@ -575,9 +568,9 @@ fn precommit_ordering_and_state_errors_leave_current_event_uncommitted() {
 #[test]
 fn shuffled_inputs_produce_identical_checksums_and_final_state() {
     let events = vec![
-        quote(11, "STOCK_SNAPSHOT", 11, None),
-        quote(10, "STOCK_SNAPSHOT", 10, None),
-        quote(12, "STOCK_SNAPSHOT", 12, None),
+        quote(11, "TWSE_F6", 11, None),
+        quote(10, "TWSE_F6", 10, None),
+        quote(12, "TWSE_F6", 12, None),
     ];
     let mut reversed = events.clone();
     reversed.reverse();
@@ -633,4 +626,20 @@ fn empty_selected_event_sequence_has_a_framed_checksum_and_initial_state() {
         completed.summary().event_checksum().as_bytes(),
         blake3::hash(&canonical).as_bytes()
     );
+}
+
+fn twse_reducer() -> market_state::MarketStateReducer {
+    market_state::MarketStateReducer::new(
+        market_state::MarketStateProfile::accepting_all(
+            market_types::MarketId::Twse,
+            &[
+                market_types::SourceFormatId::new("TWSE_F17").unwrap(),
+                market_types::SourceFormatId::new("TWSE_F6").unwrap(),
+            ],
+            market_state::CumulativeVolumePolicy::NonDecreasingWithinSegment {
+                unit: market_types::QuantityUnit::TradingUnit,
+            },
+        )
+        .unwrap(),
+    )
 }

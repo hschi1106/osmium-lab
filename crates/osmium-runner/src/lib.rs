@@ -436,9 +436,7 @@ mod tests {
         AccountingModel, ChargeBasis, ChargeModel, ChargeSides, EvidenceMode, FillModel,
         InstrumentEconomics, InstrumentLedgerConfig, MultiLedger, QuantityPolicy, RoundingPolicy,
     };
-    use market_state::{
-        MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
-    };
+    use market_state::{MarketState, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId};
     use market_types::{
         BookLevel, BookSide, BookSideKind, BookSnapshot, CompleteBookSnapshot, Decimal,
         DomainEvent, EventPayload, InstrumentId, MarketAnnotations, MarketId, MatchTime, Price,
@@ -489,7 +487,7 @@ mod tests {
         .unwrap();
         let core = ReplayCore::new_multi(
             vec![MarketState::new(instrument, date)],
-            vec![(instrument, MarketStateReducer::twse_regular())],
+            vec![(instrument, twse_reducer())],
             vec![(
                 instrument,
                 ReducerContext::new(date, segment_id, SegmentBoundaryPolicy::Carry, 1),
@@ -663,7 +661,7 @@ mod tests {
         DomainEvent::new(
             *instrument,
             TradingDate::parse("2026-07-27").unwrap(),
-            SourceFormatId::new("I080").unwrap(),
+            SourceFormatId::new("TAIFEX").unwrap(),
             match_time,
             None,
             EventPayload::BookSnapshot(
@@ -707,7 +705,7 @@ mod tests {
         ];
         let core = ReplayCore::new_multi(
             vec![MarketState::new(instrument, date)],
-            vec![(instrument, MarketStateReducer::taifex_futures())],
+            vec![(instrument, taifex_reducer())],
             vec![(
                 instrument,
                 ReducerContext::new(date, segment_id, SegmentBoundaryPolicy::Carry, 1),
@@ -880,10 +878,7 @@ mod tests {
                 MarketState::new(equity, date),
                 MarketState::new(option, date),
             ],
-            vec![
-                (equity, MarketStateReducer::twse_regular()),
-                (option, MarketStateReducer::taifex_options()),
-            ],
+            vec![(equity, twse_reducer()), (option, taifex_reducer())],
             vec![
                 (
                     equity,
@@ -1038,7 +1033,7 @@ mod tests {
         DomainEvent::new(
             *instrument,
             TradingDate::parse("2026-07-27").unwrap(),
-            SourceFormatId::new("STOCK_REALTIME").unwrap(),
+            SourceFormatId::new("TWSE_F17").unwrap(),
             match_time,
             None,
             EventPayload::QuoteSnapshot(
@@ -1056,6 +1051,33 @@ mod tests {
                     market_types::MarketSignal::Continuous,
                 )),
             ),
+        )
+    }
+
+    fn twse_reducer() -> market_state::MarketStateReducer {
+        market_state::MarketStateReducer::new(
+            market_state::MarketStateProfile::accepting_all(
+                market_types::MarketId::Twse,
+                &[
+                    market_types::SourceFormatId::new("TWSE_F17").unwrap(),
+                    market_types::SourceFormatId::new("TWSE_F6").unwrap(),
+                ],
+                market_state::CumulativeVolumePolicy::NonDecreasingWithinSegment {
+                    unit: market_types::QuantityUnit::TradingUnit,
+                },
+            )
+            .unwrap(),
+        )
+    }
+
+    fn taifex_reducer() -> market_state::MarketStateReducer {
+        market_state::MarketStateReducer::new(
+            market_state::MarketStateProfile::accepting_all(
+                market_types::MarketId::Taifex,
+                &[market_types::SourceFormatId::new("TAIFEX").unwrap()],
+                market_state::CumulativeVolumePolicy::Unconstrained,
+            )
+            .unwrap(),
         )
     }
 }

@@ -18,7 +18,7 @@ fn indicative_auction_roundtrips_without_becoming_a_trade() {
     let event = DomainEvent::new(
         InstrumentId::new(MarketId::Taifex, Symbol::new("TXFH6").unwrap()),
         TradingDate::parse("2026-07-20").unwrap(),
-        SourceFormatId::new("I022").unwrap(),
+        SourceFormatId::new("TAIFEX").unwrap(),
         MatchTime::parse("2026-07-20T08:40:00+08:00").unwrap(),
         None,
         EventPayload::IndicativeAuction(auction),

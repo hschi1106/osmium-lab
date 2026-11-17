@@ -40,7 +40,7 @@ fn event(micros: i64, payload: EventPayload) -> DomainEvent {
     DomainEvent::new(
         instrument("2330"),
         date(),
-        SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
+        SourceFormatId::new("TWSE_F6").unwrap(),
         MatchTime::from_unix_microseconds(micros),
         None,
         payload,
@@ -98,7 +98,7 @@ fn apply(
 
 #[test]
 fn opening_and_delayed_opening_uncross_end_in_continuous_phase() {
-    let reducer = MarketStateReducer::twse_regular();
+    let reducer = twse_reducer();
     let mut state = MarketState::new(instrument("2330"), date());
 
     apply(
@@ -147,7 +147,7 @@ fn opening_and_delayed_opening_uncross_end_in_continuous_phase() {
 
 #[test]
 fn closing_uncross_closes_without_erasing_the_last_firm_book() {
-    let reducer = MarketStateReducer::twse_regular();
+    let reducer = twse_reducer();
     let mut state = MarketState::new(instrument("2330"), date());
     let firm = quote(
         1,
@@ -197,7 +197,7 @@ fn closing_uncross_closes_without_erasing_the_last_firm_book() {
 
 #[test]
 fn periodic_uncross_resets_delay_for_next_round_and_reasserts_after_explicit_trigger() {
-    let reducer = MarketStateReducer::twse_regular();
+    let reducer = twse_reducer();
     let mut state = MarketState::new(instrument("2330"), date());
     let round_n = AuctionObservation::periodic(true, true);
     for micros in [1, 2] {
@@ -274,7 +274,7 @@ fn periodic_uncross_resets_delay_for_next_round_and_reasserts_after_explicit_tri
 
 #[test]
 fn auction_no_observation_carries_same_round_fields_but_unknown_invalidates_only_that_field() {
-    let reducer = MarketStateReducer::twse_regular();
+    let reducer = twse_reducer();
     let mut state = MarketState::new(instrument("2330"), date());
     let interruption = AuctionObservation::volatility_interruption_with_evidence(
         AuctionEvidence::Known(VolatilityDirection::Down),
@@ -341,7 +341,7 @@ fn auction_no_observation_carries_same_round_fields_but_unknown_invalidates_only
 
 #[test]
 fn uncross_without_known_purpose_does_not_infer_a_post_state() {
-    let reducer = MarketStateReducer::twse_regular();
+    let reducer = twse_reducer();
     let mut state = MarketState::new(instrument("2330"), date());
     apply(
         &reducer,
@@ -361,7 +361,7 @@ fn uncross_without_known_purpose_does_not_infer_a_post_state() {
 
 #[test]
 fn indicative_payloads_merge_partial_observations_before_state_publication() {
-    let reducer = MarketStateReducer::twse_regular();
+    let reducer = twse_reducer();
     let mut state = MarketState::new(instrument("2330"), date());
     let interruption = AuctionObservation::volatility_interruption_with_evidence(
         AuctionEvidence::Known(VolatilityDirection::Up),
@@ -398,7 +398,7 @@ fn indicative_payloads_merge_partial_observations_before_state_publication() {
 
 #[test]
 fn volatility_interruption_result_returns_to_continuous_without_using_a_trial_book() {
-    let reducer = MarketStateReducer::twse_regular();
+    let reducer = twse_reducer();
     let mut state = MarketState::new(instrument("2330"), date());
     let firm = quote(
         1,
@@ -443,7 +443,7 @@ fn volatility_interruption_result_returns_to_continuous_without_using_a_trial_bo
 
 #[test]
 fn no_observation_keeps_phase_but_unknown_signal_is_not_continuous() {
-    let reducer = MarketStateReducer::twse_regular();
+    let reducer = twse_reducer();
     let mut state = MarketState::new(instrument("2330"), date());
     let observation = AuctionObservation::opening(false, false);
     apply(
@@ -488,7 +488,7 @@ fn no_observation_keeps_phase_but_unknown_signal_is_not_continuous() {
 
 #[test]
 fn session_reset_clears_auction_context_and_states_are_instrument_local() {
-    let reducer = MarketStateReducer::twse_regular();
+    let reducer = twse_reducer();
     let mut first = MarketState::new(instrument("2330"), date());
     let second = MarketState::new(instrument("2317"), date());
     let opening = auction(1, AuctionObservation::opening(false, false));
@@ -527,7 +527,7 @@ fn session_reset_clears_auction_context_and_states_are_instrument_local() {
 
 #[test]
 fn equivalent_neutral_event_sequences_have_the_same_final_state_checksum() {
-    let reducer = MarketStateReducer::twse_regular();
+    let reducer = twse_reducer();
     let events = [
         quote(
             1,
@@ -562,4 +562,20 @@ fn equivalent_neutral_event_sequences_have_the_same_final_state_checksum() {
         );
     }
     assert_eq!(left.fingerprint().unwrap(), right.fingerprint().unwrap());
+}
+
+fn twse_reducer() -> market_state::MarketStateReducer {
+    market_state::MarketStateReducer::new(
+        market_state::MarketStateProfile::accepting_all(
+            market_types::MarketId::Twse,
+            &[
+                market_types::SourceFormatId::new("TWSE_F17").unwrap(),
+                market_types::SourceFormatId::new("TWSE_F6").unwrap(),
+            ],
+            market_state::CumulativeVolumePolicy::NonDecreasingWithinSegment {
+                unit: market_types::QuantityUnit::TradingUnit,
+            },
+        )
+        .unwrap(),
+    )
 }

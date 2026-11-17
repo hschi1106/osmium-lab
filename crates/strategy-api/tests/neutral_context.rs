@@ -1,6 +1,5 @@
 use market_state::{
-    MarketPhase, MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy,
-    SessionSegmentId, StateField,
+    MarketPhase, MarketState, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId, StateField,
 };
 use market_types::{
     AuctionObservation, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent,
@@ -36,7 +35,7 @@ fn segment() -> SessionSegment {
 fn core() -> ReplayCore {
     ReplayCore::new(
         vec![MarketState::new(instrument(), date())],
-        MarketStateReducer::twse_regular(),
+        twse_reducer(),
         ReducerContext::new(
             date(),
             SessionSegmentId::new("regular").unwrap(),
@@ -68,7 +67,7 @@ fn event(time: &str, payload: EventPayload) -> DomainEvent {
     DomainEvent::new(
         instrument(),
         date(),
-        SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
+        SourceFormatId::new("TWSE_F6").unwrap(),
         MatchTime::parse(time).unwrap(),
         None,
         payload,
@@ -293,4 +292,20 @@ fn no_observation_falls_back_to_state_but_unknown_does_not_fall_back_to_continuo
     );
     assert_eq!(unknown.matching(), MatchingState::Unknown);
     assert_eq!(unknown.new_order_entry(), NewOrderEntry::Unknown);
+}
+
+fn twse_reducer() -> market_state::MarketStateReducer {
+    market_state::MarketStateReducer::new(
+        market_state::MarketStateProfile::accepting_all(
+            market_types::MarketId::Twse,
+            &[
+                market_types::SourceFormatId::new("TWSE_F17").unwrap(),
+                market_types::SourceFormatId::new("TWSE_F6").unwrap(),
+            ],
+            market_state::CumulativeVolumePolicy::NonDecreasingWithinSegment {
+                unit: market_types::QuantityUnit::TradingUnit,
+            },
+        )
+        .unwrap(),
+    )
 }

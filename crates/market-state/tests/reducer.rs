@@ -73,7 +73,7 @@ fn quote_event(
     DomainEvent::new(
         instrument("2330"),
         date(),
-        SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
+        SourceFormatId::new("TWSE_F6").unwrap(),
         MatchTime::from_unix_microseconds(micros),
         None,
         EventPayload::QuoteSnapshot(
@@ -93,7 +93,7 @@ fn stability_event(micros: i64) -> DomainEvent {
     DomainEvent::new(
         instrument("2330"),
         date(),
-        SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
+        SourceFormatId::new("TWSE_F6").unwrap(),
         MatchTime::from_unix_microseconds(micros),
         None,
         EventPayload::IndicativeAuction(
@@ -114,7 +114,7 @@ fn paused_firm_quote_event(micros: i64) -> DomainEvent {
     DomainEvent::new(
         instrument("2330"),
         date(),
-        SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
+        SourceFormatId::new("TWSE_F6").unwrap(),
         MatchTime::from_unix_microseconds(micros),
         None,
         EventPayload::QuoteSnapshot(
@@ -140,7 +140,7 @@ fn volatility_pause_status_event(micros: i64, volume: u64) -> DomainEvent {
     DomainEvent::new(
         instrument("2330"),
         date(),
-        SourceFormatId::new("STOCK_REALTIME").unwrap(),
+        SourceFormatId::new("TWSE_F17").unwrap(),
         MatchTime::from_unix_microseconds(micros),
         None,
         EventPayload::MarketStatus(
@@ -161,7 +161,7 @@ fn volatility_pause_status_event(micros: i64, volume: u64) -> DomainEvent {
 
 #[test]
 fn neutral_auction_quote_updates_signal_without_raw_flag_validation() {
-    let reducer = MarketStateReducer::twse_regular();
+    let reducer = twse_reducer();
     let mut state = MarketState::new(instrument("2330"), date());
     let context = context("regular", SegmentBoundaryPolicy::Carry);
     let firm = quote_event(
@@ -175,7 +175,7 @@ fn neutral_auction_quote_updates_signal_without_raw_flag_validation() {
     let trial_quote = DomainEvent::new(
         instrument("2330"),
         date(),
-        SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
+        SourceFormatId::new("TWSE_F6").unwrap(),
         MatchTime::from_unix_microseconds(2),
         None,
         EventPayload::QuoteSnapshot(
@@ -207,7 +207,7 @@ fn reserved_firm_quote_event(micros: i64) -> DomainEvent {
     DomainEvent::new(
         instrument("2330"),
         date(),
-        SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
+        SourceFormatId::new("TWSE_F6").unwrap(),
         MatchTime::from_unix_microseconds(micros),
         None,
         EventPayload::QuoteSnapshot(
@@ -221,78 +221,6 @@ fn reserved_firm_quote_event(micros: i64) -> DomainEvent {
             .with_market_signal(Observation::Unknown(UnknownValue::Unsigned(0x0100))),
         ),
     )
-}
-
-#[test]
-fn tpex_profile_accepts_tpex_annotations_and_replaces_the_book() {
-    let instrument = InstrumentId::new(MarketId::Tpex, Symbol::new("6488").unwrap());
-    let date = TradingDate::parse("2026-07-27").unwrap();
-    let reducer = MarketStateReducer::tpex_regular();
-    let context = ReducerContext::new(
-        date,
-        SessionSegmentId::new("regular").unwrap(),
-        SegmentBoundaryPolicy::Carry,
-        1,
-    );
-    let event = DomainEvent::new(
-        instrument,
-        date,
-        SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
-        MatchTime::parse("2026-07-27T09:00:00+08:00").unwrap(),
-        None,
-        EventPayload::QuoteSnapshot(
-            QuoteSnapshot::new(
-                book(&["100"], &["101"]),
-                Observation::NoObservation,
-                Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
-                MarketAnnotations::None,
-            )
-            .unwrap(),
-        ),
-    );
-    let mut state = MarketState::new(instrument, date);
-    reducer.apply(&mut state, &event, &context).unwrap();
-    assert_eq!(state.state_version(), 1);
-    assert_eq!(
-        state.view().best_bid().unwrap().price(),
-        Price::parse("100").unwrap()
-    );
-}
-
-#[test]
-fn tpex_warrant_profile_accepts_tpex_warrant_quote_events() {
-    let instrument = InstrumentId::new(MarketId::Tpex, Symbol::new("6488").unwrap());
-    let date = TradingDate::parse("2026-07-27").unwrap();
-    let reducer = MarketStateReducer::tpex_warrant();
-    let context = ReducerContext::new(
-        date,
-        SessionSegmentId::new("regular").unwrap(),
-        SegmentBoundaryPolicy::Carry,
-        1,
-    );
-    let event = DomainEvent::new(
-        instrument,
-        date,
-        SourceFormatId::new("WARRANT_SNAPSHOT").unwrap(),
-        MatchTime::parse("2026-07-27T09:00:00+08:00").unwrap(),
-        None,
-        EventPayload::QuoteSnapshot(
-            QuoteSnapshot::new(
-                book(&["100"], &["101"]),
-                Observation::NoObservation,
-                Observation::Set(Volume::new(1, QuantityUnit::TradingUnit)),
-                MarketAnnotations::None,
-            )
-            .unwrap(),
-        ),
-    );
-    let mut state = MarketState::new(instrument, date);
-    reducer.apply(&mut state, &event, &context).unwrap();
-    assert_eq!(state.state_version(), 1);
-    assert_eq!(
-        state.view().best_ask().unwrap().price(),
-        Price::parse("101").unwrap()
-    );
 }
 
 #[test]
@@ -317,7 +245,7 @@ fn initial_state_preserves_unavailable_semantics() {
 
 #[test]
 fn quote_replaces_book_atomically_and_no_observation_preserves_trade_origin() {
-    let reducer = MarketStateReducer::twse_regular();
+    let reducer = twse_reducer();
     let context = context("regular", SegmentBoundaryPolicy::Carry);
     let mut state = MarketState::new(instrument("2330"), date());
     let first = quote_event(
@@ -361,7 +289,7 @@ fn quote_replaces_book_atomically_and_no_observation_preserves_trade_origin() {
 
 #[test]
 fn trade_batch_preserves_book_and_increments_version_once() {
-    let reducer = MarketStateReducer::twse_regular();
+    let reducer = twse_reducer();
     let context = context("regular", SegmentBoundaryPolicy::Carry);
     let mut state = MarketState::new(instrument("2330"), date());
     let quote = quote_event(
@@ -383,7 +311,7 @@ fn trade_batch_preserves_book_and_increments_version_once() {
     let event = DomainEvent::new(
         instrument("2330"),
         date(),
-        SourceFormatId::new("STOCK_REALTIME").unwrap(),
+        SourceFormatId::new("TWSE_F17").unwrap(),
         MatchTime::from_unix_microseconds(2),
         None,
         EventPayload::TradeBatch(batch),
@@ -400,7 +328,7 @@ fn trade_batch_preserves_book_and_increments_version_once() {
 
 #[test]
 fn status_only_pause_preserves_firm_book_and_trade() {
-    let reducer = MarketStateReducer::twse_regular();
+    let reducer = twse_reducer();
     let context = context("regular", SegmentBoundaryPolicy::Carry);
     let mut state = MarketState::new(instrument("2330"), date());
     let quote = quote_event(
@@ -439,7 +367,7 @@ fn status_only_pause_preserves_firm_book_and_trade() {
 
 #[test]
 fn clear_unknown_and_volume_regression_have_explicit_atomic_behavior() {
-    let reducer = MarketStateReducer::twse_regular();
+    let reducer = twse_reducer();
     let context = context("regular", SegmentBoundaryPolicy::Carry);
     let mut state = MarketState::new(instrument("2330"), date());
     let first = quote_event(
@@ -502,7 +430,7 @@ fn clear_unknown_and_volume_regression_have_explicit_atomic_behavior() {
 
 #[test]
 fn segment_reset_is_committed_with_the_first_new_segment_event() {
-    let reducer = MarketStateReducer::twse_regular();
+    let reducer = twse_reducer();
     let mut state = MarketState::new(instrument("2330"), date());
     reducer
         .apply(
@@ -594,7 +522,7 @@ fn taifex_opening_indicative_is_timeline_without_trade_or_volume_state() {
     let event = DomainEvent::new(
         instrument,
         trading_date,
-        SourceFormatId::new("I022").unwrap(),
+        SourceFormatId::new("TAIFEX").unwrap(),
         MatchTime::parse("2026-07-20T08:40:00+08:00").unwrap(),
         None,
         EventPayload::IndicativeAuction(
@@ -609,7 +537,7 @@ fn taifex_opening_indicative_is_timeline_without_trade_or_volume_state() {
             .unwrap(),
         ),
     );
-    let reducer = MarketStateReducer::taifex_futures();
+    let reducer = taifex_reducer();
     let mut state = MarketState::new(instrument, trading_date);
     let context = ReducerContext::new(
         trading_date,
@@ -642,7 +570,7 @@ fn taifex_opening_indicative_is_timeline_without_trade_or_volume_state() {
 
 #[test]
 fn intraday_stability_updates_only_indicative_state() {
-    let reducer = MarketStateReducer::twse_regular();
+    let reducer = twse_reducer();
     let mut state = MarketState::new(instrument("2330"), date());
     let context = context("regular", SegmentBoundaryPolicy::Carry);
     let firm = quote_event(
@@ -659,7 +587,7 @@ fn intraday_stability_updates_only_indicative_state() {
     let trial = DomainEvent::new(
         instrument("2330"),
         date(),
-        SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
+        SourceFormatId::new("TWSE_F6").unwrap(),
         MatchTime::from_unix_microseconds(2),
         None,
         EventPayload::IndicativeAuction(
@@ -698,7 +626,7 @@ fn intraday_stability_updates_only_indicative_state() {
 
 #[test]
 fn continuous_resume_clears_indicative_state_without_mutating_firm_state() {
-    let reducer = MarketStateReducer::twse_regular();
+    let reducer = twse_reducer();
     let mut state = MarketState::new(instrument("2330"), date());
     let context = context("regular", SegmentBoundaryPolicy::Carry);
     let initial_firm = quote_event(
@@ -760,7 +688,7 @@ fn continuous_resume_clears_indicative_state_without_mutating_firm_state() {
 
 #[test]
 fn market_status_does_not_clear_indicative_state_even_with_normal_flags() {
-    let reducer = MarketStateReducer::twse_regular();
+    let reducer = twse_reducer();
     let mut state = MarketState::new(instrument("2330"), date());
     let context = context("regular", SegmentBoundaryPolicy::Carry);
     reducer
@@ -781,7 +709,7 @@ fn market_status_does_not_clear_indicative_state_even_with_normal_flags() {
     let status = DomainEvent::new(
         instrument("2330"),
         date(),
-        SourceFormatId::new("STOCK_REALTIME").unwrap(),
+        SourceFormatId::new("TWSE_F17").unwrap(),
         MatchTime::from_unix_microseconds(3),
         None,
         EventPayload::MarketStatus(MarketStatusObservation::new(
@@ -803,7 +731,7 @@ fn market_status_does_not_clear_indicative_state_even_with_normal_flags() {
 
 #[test]
 fn carry_session_boundary_clears_indicative_even_if_matching_stays_paused() {
-    let reducer = MarketStateReducer::twse_regular();
+    let reducer = twse_reducer();
     let mut state = MarketState::new(instrument("2330"), date());
     let regular = context("regular", SegmentBoundaryPolicy::Carry);
     let next_segment = context("next", SegmentBoundaryPolicy::Carry);
@@ -847,7 +775,7 @@ fn carry_session_boundary_clears_indicative_even_if_matching_stays_paused() {
 #[test]
 fn tpex_normal_matching_event_clears_prior_indicative_observation() {
     let instrument = InstrumentId::new(MarketId::Tpex, Symbol::new("6488").unwrap());
-    let reducer = MarketStateReducer::tpex_regular();
+    let reducer = tpex_reducer();
     let context = ReducerContext::new(
         date(),
         SessionSegmentId::new("regular").unwrap(),
@@ -858,7 +786,7 @@ fn tpex_normal_matching_event_clears_prior_indicative_observation() {
         DomainEvent::new(
             instrument,
             date(),
-            SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
+            SourceFormatId::new("TPEX_F6").unwrap(),
             MatchTime::from_unix_microseconds(micros),
             None,
             EventPayload::QuoteSnapshot(
@@ -878,7 +806,7 @@ fn tpex_normal_matching_event_clears_prior_indicative_observation() {
     let trial = DomainEvent::new(
         instrument,
         date(),
-        SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
+        SourceFormatId::new("TPEX_F6").unwrap(),
         MatchTime::from_unix_microseconds(2),
         None,
         EventPayload::IndicativeAuction(
@@ -943,4 +871,44 @@ fn initial_market_state_canonical_frame_matches_the_documented_layout() {
         state.fingerprint().unwrap().as_bytes(),
         blake3::hash(&canonical).as_bytes()
     );
+}
+
+fn twse_reducer() -> market_state::MarketStateReducer {
+    market_state::MarketStateReducer::new(
+        market_state::MarketStateProfile::accepting_all(
+            market_types::MarketId::Twse,
+            &[
+                market_types::SourceFormatId::new("TWSE_F17").unwrap(),
+                market_types::SourceFormatId::new("TWSE_F6").unwrap(),
+            ],
+            market_state::CumulativeVolumePolicy::NonDecreasingWithinSegment {
+                unit: market_types::QuantityUnit::TradingUnit,
+            },
+        )
+        .unwrap(),
+    )
+}
+
+fn tpex_reducer() -> market_state::MarketStateReducer {
+    market_state::MarketStateReducer::new(
+        market_state::MarketStateProfile::accepting_all(
+            market_types::MarketId::Tpex,
+            &[market_types::SourceFormatId::new("TPEX_F6").unwrap()],
+            market_state::CumulativeVolumePolicy::NonDecreasingWithinSegment {
+                unit: market_types::QuantityUnit::TradingUnit,
+            },
+        )
+        .unwrap(),
+    )
+}
+
+fn taifex_reducer() -> market_state::MarketStateReducer {
+    market_state::MarketStateReducer::new(
+        market_state::MarketStateProfile::accepting_all(
+            market_types::MarketId::Taifex,
+            &[market_types::SourceFormatId::new("TAIFEX").unwrap()],
+            market_state::CumulativeVolumePolicy::Unconstrained,
+        )
+        .unwrap(),
+    )
 }

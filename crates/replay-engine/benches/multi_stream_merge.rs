@@ -1,8 +1,6 @@
 use std::{collections::BTreeMap, error::Error, hint::black_box, time::Instant};
 
-use market_state::{
-    MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
-};
+use market_state::{MarketState, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId};
 use market_types::{
     BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventPayload,
     InstrumentId, MarketAnnotations, MarketId, MatchTime, Observation, ObservedTrade, Price,
@@ -101,7 +99,7 @@ impl Case {
                     DomainEvent::new(
                         instrument,
                         date,
-                        SourceFormatId::new("STOCK_REALTIME").unwrap(),
+                        SourceFormatId::new("TWSE_F17").unwrap(),
                         MatchTime::from_unix_microseconds(base_time + global_sequence as i64),
                         Some(global_sequence as u64),
                         template_payload.clone(),
@@ -132,7 +130,7 @@ impl Case {
             .instruments
             .iter()
             .cloned()
-            .map(|instrument| (instrument, MarketStateReducer::twse_regular()))
+            .map(|instrument| (instrument, twse_reducer()))
             .collect();
         let contexts = self
             .instruments
@@ -249,4 +247,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         );
     }
     Ok(())
+}
+
+fn twse_reducer() -> market_state::MarketStateReducer {
+    market_state::MarketStateReducer::new(
+        market_state::MarketStateProfile::accepting_all(
+            market_types::MarketId::Twse,
+            &[
+                market_types::SourceFormatId::new("TWSE_F17").unwrap(),
+                market_types::SourceFormatId::new("TWSE_F6").unwrap(),
+            ],
+            market_state::CumulativeVolumePolicy::NonDecreasingWithinSegment {
+                unit: market_types::QuantityUnit::TradingUnit,
+            },
+        )
+        .unwrap(),
+    )
 }

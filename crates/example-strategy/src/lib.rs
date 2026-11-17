@@ -167,9 +167,7 @@ impl StrategyFactory for PriceThresholdBuyOnceFactory {
 mod tests {
     use std::collections::BTreeMap;
 
-    use market_state::{
-        MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
-    };
+    use market_state::{MarketState, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId};
     use market_types::{
         AuctionObservation, BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent,
         EventPayload, IndicativeAuction, MarketAnnotations, MarketId, MarketSignal, MatchTime,
@@ -305,7 +303,7 @@ mod tests {
         DomainEvent::new(
             instrument(MarketId::Twse),
             TradingDate::parse("2026-07-20").unwrap(),
-            SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
+            SourceFormatId::new("TWSE_F6").unwrap(),
             MatchTime::parse(time).unwrap(),
             None,
             payload,
@@ -327,7 +325,7 @@ mod tests {
         .unwrap();
         let mut core = ReplayCore::new(
             vec![MarketState::new(twse, date)],
-            MarketStateReducer::twse_regular(),
+            twse_reducer(),
             ReducerContext::new(date, segment_id, SegmentBoundaryPolicy::Carry, 1),
         )
         .unwrap();
@@ -391,5 +389,21 @@ mod tests {
                 limit_price: Price::parse("101").unwrap()
             }
         );
+    }
+
+    fn twse_reducer() -> market_state::MarketStateReducer {
+        market_state::MarketStateReducer::new(
+            market_state::MarketStateProfile::accepting_all(
+                market_types::MarketId::Twse,
+                &[
+                    market_types::SourceFormatId::new("TWSE_F17").unwrap(),
+                    market_types::SourceFormatId::new("TWSE_F6").unwrap(),
+                ],
+                market_state::CumulativeVolumePolicy::NonDecreasingWithinSegment {
+                    unit: market_types::QuantityUnit::TradingUnit,
+                },
+            )
+            .unwrap(),
+        )
     }
 }

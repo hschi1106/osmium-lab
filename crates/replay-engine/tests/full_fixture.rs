@@ -1,6 +1,5 @@
 use market_state::{
-    LastTrade, MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy,
-    SessionSegmentId,
+    LastTrade, MarketState, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
 };
 use market_types::{
     BookLevel, BookSide, BookSideKind, CompleteBookSnapshot, DomainEvent, EventPayload,
@@ -62,7 +61,7 @@ fn neutral_events() -> Vec<DomainEvent> {
     vec![
         quote(
             1,
-            "STOCK_SNAPSHOT",
+            "TWSE_F6",
             book("100", "101"),
             Observation::Set(ObservedTrade::new(
                 Price::parse("101").unwrap(),
@@ -74,7 +73,7 @@ fn neutral_events() -> Vec<DomainEvent> {
         ),
         quote(
             2,
-            "STOCK_REALTIME",
+            "TWSE_F17",
             book("101", "102"),
             Observation::NoObservation,
             2,
@@ -86,7 +85,7 @@ fn neutral_events() -> Vec<DomainEvent> {
 fn core() -> ReplayCore {
     ReplayCore::new(
         vec![MarketState::new(instrument(), date())],
-        MarketStateReducer::twse_regular(),
+        twse_reducer(),
         ReducerContext::new(
             date(),
             SessionSegmentId::new("regular").unwrap(),
@@ -130,4 +129,20 @@ fn neutral_domain_events_replay_is_deterministic_and_preserves_event_order() {
     };
     assert_eq!(last_trade.price(), Price::parse("101").unwrap());
     assert!(first.summary().last_observed_time().is_some());
+}
+
+fn twse_reducer() -> market_state::MarketStateReducer {
+    market_state::MarketStateReducer::new(
+        market_state::MarketStateProfile::accepting_all(
+            market_types::MarketId::Twse,
+            &[
+                market_types::SourceFormatId::new("TWSE_F17").unwrap(),
+                market_types::SourceFormatId::new("TWSE_F6").unwrap(),
+            ],
+            market_state::CumulativeVolumePolicy::NonDecreasingWithinSegment {
+                unit: market_types::QuantityUnit::TradingUnit,
+            },
+        )
+        .unwrap(),
+    )
 }
