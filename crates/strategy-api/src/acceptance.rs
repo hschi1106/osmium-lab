@@ -161,12 +161,12 @@ impl Strategy for AcceptanceStrategy {
             return Ok(());
         }
 
-        let instrument = state.instrument().clone();
+        let instrument = *state.instrument();
         if !self.opened.contains(&instrument)
             && let Some(ask) = state.best_ask()
         {
             output.emit_order_intent(OrderIntent::new(
-                instrument.clone(),
+                instrument,
                 OrderSide::Buy,
                 Self::quantity(&instrument)?,
                 OrderType::Limit {
@@ -180,7 +180,7 @@ impl Strategy for AcceptanceStrategy {
             && let Some(bid) = state.best_bid()
         {
             output.emit_order_intent(OrderIntent::new(
-                instrument.clone(),
+                instrument,
                 OrderSide::Sell,
                 Self::quantity(&instrument)?,
                 OrderType::Limit {

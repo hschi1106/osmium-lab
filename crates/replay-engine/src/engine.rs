@@ -199,11 +199,11 @@ impl ReplayCore {
     ) -> Result<Self, ReplayError> {
         let reducer_contexts = states
             .iter()
-            .map(|state| (state.instrument().clone(), reducer_context.clone()))
+            .map(|state| (*state.instrument(), reducer_context.clone()))
             .collect::<Vec<_>>();
         let reducers = states
             .iter()
-            .map(|state| (state.instrument().clone(), reducer.clone()))
+            .map(|state| (*state.instrument(), reducer.clone()))
             .collect::<Vec<_>>();
         Self::new_multi(states, reducers, reducer_contexts)
     }
@@ -227,10 +227,7 @@ impl ReplayCore {
         }
         let mut by_instrument = BTreeMap::new();
         for state in states {
-            if by_instrument
-                .insert(state.instrument().clone(), state)
-                .is_some()
-            {
+            if by_instrument.insert(*state.instrument(), state).is_some() {
                 return Err(ReplayError::DuplicateInstrument);
             }
         }
@@ -303,15 +300,15 @@ impl ReplayCore {
             self.states.values().cloned().collect(),
             self.reducers
                 .iter()
-                .map(|(instrument, reducer)| (instrument.clone(), reducer.clone()))
+                .map(|(instrument, reducer)| (*instrument, reducer.clone()))
                 .collect(),
             self.reducer_contexts
                 .iter()
-                .map(|(instrument, context)| (instrument.clone(), context.clone()))
+                .map(|(instrument, context)| (*instrument, context.clone()))
                 .collect(),
             self.reducer_context_windows
                 .iter()
-                .map(|(instrument, windows)| (instrument.clone(), windows.to_vec()))
+                .map(|(instrument, windows)| (*instrument, windows.to_vec()))
                 .collect(),
         )
     }
@@ -486,7 +483,7 @@ impl ReplayCore {
         let reducer_context = self
             .context_for_event(event.instrument(), event.match_time())
             .ok_or_else(|| ReplayError::EventOutsideContextSchedule {
-                instrument: event.instrument().clone(),
+                instrument: *event.instrument(),
                 match_time: event.match_time(),
             })?
             .clone();
@@ -510,14 +507,14 @@ impl ReplayCore {
                 .commit(state, proposal)
                 .map_err(ReplayError::StateTransition)?
         } else {
-            let mut state = MarketState::new(event.instrument().clone(), event.trading_date());
+            let mut state = MarketState::new(*event.instrument(), event.trading_date());
             let proposal = reducer
                 .propose(&state, event, &reducer_context)
                 .map_err(ReplayError::StateTransition)?;
             let transition = reducer
                 .commit(&mut state, proposal)
                 .map_err(ReplayError::StateTransition)?;
-            self.states.insert(event.instrument().clone(), state);
+            self.states.insert(*event.instrument(), state);
             transition
         };
         self.event_stream.append_prepared(&prepared_checksum);

@@ -98,18 +98,18 @@ impl SessionProfileId {
         match instrument.market() {
             MarketId::Twse => match kind {
                 InstrumentClass::Equity | InstrumentClass::Warrant => Ok(Self::TwseRegular),
-                _ => Err(SessionPlanError::UnsupportedInstrument(instrument.clone())),
+                _ => Err(SessionPlanError::UnsupportedInstrument(*instrument)),
             },
             MarketId::Tpex => match kind {
                 InstrumentClass::Equity | InstrumentClass::Warrant => Ok(Self::TpexRegular),
-                _ => Err(SessionPlanError::UnsupportedInstrument(instrument.clone())),
+                _ => Err(SessionPlanError::UnsupportedInstrument(*instrument)),
             },
             MarketId::Taifex => match kind {
                 InstrumentClass::Option => Ok(Self::TaifexIndexOptions),
                 InstrumentClass::Future => {
-                    Err(SessionPlanError::SessionProfileRequired(instrument.clone()))
+                    Err(SessionPlanError::SessionProfileRequired(*instrument))
                 }
-                _ => Err(SessionPlanError::UnsupportedInstrument(instrument.clone())),
+                _ => Err(SessionPlanError::UnsupportedInstrument(*instrument)),
             },
         }
     }
@@ -237,7 +237,7 @@ impl SessionPlan {
             .as_bytes(),
         );
         Ok(Self {
-            instrument: instrument.clone(),
+            instrument: *instrument,
             trading_date,
             profile,
             calendar_version: SESSION_CALENDAR_VERSION,

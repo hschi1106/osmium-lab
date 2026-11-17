@@ -1057,19 +1057,15 @@ fn validate_instrument_charges(
 ) -> Result<(), ConfigError> {
     simulation
         .instrument_charges
-        .sort_by(|left, right| left.instrument.cmp(&right.instrument));
+        .sort_by_key(|left| left.instrument);
     for pair in simulation.instrument_charges.windows(2) {
         if pair[0].instrument == pair[1].instrument {
-            return Err(ConfigError::DuplicateInstrumentCharges(
-                pair[0].instrument.clone(),
-            ));
+            return Err(ConfigError::DuplicateInstrumentCharges(pair[0].instrument));
         }
     }
     for charges in &simulation.instrument_charges {
         if !universe.contains(&charges.instrument) {
-            return Err(ConfigError::ChargesOutsideUniverse(
-                charges.instrument.clone(),
-            ));
+            return Err(ConfigError::ChargesOutsideUniverse(charges.instrument));
         }
         validate_charge(&charges.fee, ConfigError::InvalidFee)?;
         validate_charge(&charges.tax, ConfigError::InvalidTax)?;
@@ -1085,7 +1081,7 @@ fn validate_instrument_charges(
             || day_trade.provenance.is_empty()
             || !(-1_439..=1_439).contains(&day_trade.timezone_offset_minutes)
         {
-            return Err(ConfigError::InvalidDayTradeTax(charges.instrument.clone()));
+            return Err(ConfigError::InvalidDayTradeTax(charges.instrument));
         }
         validate_charge(&day_trade.charge, ConfigError::InvalidTax)?;
         if day_trade.eligibility_required
@@ -1093,9 +1089,7 @@ fn validate_instrument_charges(
                 .iter()
                 .any(|date| !day_trade.is_eligible(*date))
         {
-            return Err(ConfigError::MissingDayTradeEligibility(
-                charges.instrument.clone(),
-            ));
+            return Err(ConfigError::MissingDayTradeEligibility(charges.instrument));
         }
     }
     Ok(())
@@ -1120,9 +1114,7 @@ fn validate_economics(
     let mut by_instrument = BTreeMap::new();
     for value in values {
         if !universe.contains(&value.instrument) {
-            return Err(ConfigError::EconomicsOutsideUniverse(
-                value.instrument.clone(),
-            ));
+            return Err(ConfigError::EconomicsOutsideUniverse(value.instrument));
         }
         if !valid_economics_terms(
             value.quantity_unit,
@@ -1130,18 +1122,16 @@ fn validate_economics(
             value.multiplier,
             &value.provenance,
         ) {
-            return Err(ConfigError::InvalidInstrumentEconomics(
-                value.instrument.clone(),
-            ));
+            return Err(ConfigError::InvalidInstrumentEconomics(value.instrument));
         }
-        let instrument = value.instrument.clone();
-        if by_instrument.insert(instrument.clone(), value).is_some() {
+        let instrument = value.instrument;
+        if by_instrument.insert(instrument, value).is_some() {
             return Err(ConfigError::DuplicateInstrumentEconomics(instrument));
         }
     }
     for instrument in universe {
         if !by_instrument.contains_key(instrument) {
-            return Err(ConfigError::MissingInstrumentEconomics(instrument.clone()));
+            return Err(ConfigError::MissingInstrumentEconomics(*instrument));
         }
     }
     Ok(by_instrument.into_values().collect())
@@ -1283,14 +1273,12 @@ fn validate_instrument_contracts(
     mut contracts: Vec<InstrumentContractConfig>,
     universe: &[InstrumentId],
 ) -> Result<Box<[InstrumentContractConfig]>, ConfigError> {
-    contracts.sort_by(|left, right| left.instrument.cmp(&right.instrument));
+    contracts.sort_by_key(|left| left.instrument);
     if let Some(pair) = contracts
         .windows(2)
         .find(|pair| pair[0].instrument == pair[1].instrument && pair[0] != pair[1])
     {
-        return Err(ConfigError::InvalidInstrumentContract(
-            pair[0].instrument.clone(),
-        ));
+        return Err(ConfigError::InvalidInstrumentContract(pair[0].instrument));
     }
     contracts.dedup_by(|left, right| left.instrument == right.instrument);
     if contracts.len() != universe.len() {
@@ -1314,9 +1302,7 @@ fn validate_instrument_contracts(
                 .as_ref()
                 .is_some_and(|reference| !reference.is_valid())
         {
-            return Err(ConfigError::InvalidInstrumentContract(
-                contract.instrument.clone(),
-            ));
+            return Err(ConfigError::InvalidInstrumentContract(contract.instrument));
         }
     }
     for instrument in universe {
@@ -1342,18 +1328,14 @@ fn validate_reference_economics(
             .iter()
             .find(|economics| economics.instrument() == &contract.instrument)
         else {
-            return Err(ConfigError::InvalidInstrumentContract(
-                contract.instrument.clone(),
-            ));
+            return Err(ConfigError::InvalidInstrumentContract(contract.instrument));
         };
         if economics.quantity_unit() != reference.quantity_unit()
             || economics.units_per_trading_unit() != reference.units_per_trading_unit()
             || economics.currency() != reference.currency()
             || economics.multiplier() != reference.multiplier()
         {
-            return Err(ConfigError::InvalidInstrumentContract(
-                contract.instrument.clone(),
-            ));
+            return Err(ConfigError::InvalidInstrumentContract(contract.instrument));
         }
     }
     Ok(())

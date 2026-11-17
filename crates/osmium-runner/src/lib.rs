@@ -115,7 +115,7 @@ pub fn run_multi_backtest<S: Strategy, F: ReplayStreamFactory>(
     let declaration = strategy.declaration();
     let core_instruments = core
         .states()
-        .map(|state| state.instrument().clone())
+        .map(|state| *state.instrument())
         .collect::<Vec<_>>();
     for (name, instruments) in [
         ("strategy", declaration.universe().to_vec()),
@@ -210,7 +210,7 @@ pub fn run_multi_backtest<S: Strategy, F: ReplayStreamFactory>(
         .iter()
         .map(|state| {
             (
-                state.instrument().clone(),
+                *state.instrument(),
                 final_mark(*state, allow_midpoint_fallback),
             )
         })
@@ -272,8 +272,7 @@ fn process_multi_event<S: Strategy>(
     let trading =
         MarketTradingContextEvaluator::evaluate(event, commit.occurrence(), state, segment)
             .map_err(|error| MultiBacktestError::Context(error.to_string()))?;
-    if let Some(previous) =
-        current_segments.insert(event.instrument().clone(), segment.id().clone())
+    if let Some(previous) = current_segments.insert(*event.instrument(), segment.id().clone())
         && previous != *segment.id()
     {
         let cancellations = simulator.cancel_segment_end_for(event.instrument(), &previous);
@@ -345,10 +344,7 @@ fn process_multi_event<S: Strategy>(
         feedback,
         false,
     )?;
-    last_contexts.insert(
-        event.instrument().clone(),
-        (commit.occurrence().clone(), trading),
-    );
+    last_contexts.insert(*event.instrument(), (commit.occurrence().clone(), trading));
     Ok(())
 }
 
@@ -492,10 +488,10 @@ mod tests {
         )
         .unwrap();
         let core = ReplayCore::new_multi(
-            vec![MarketState::new(instrument.clone(), date)],
-            vec![(instrument.clone(), MarketStateReducer::twse_regular())],
+            vec![MarketState::new(instrument, date)],
+            vec![(instrument, MarketStateReducer::twse_regular())],
             vec![(
-                instrument.clone(),
+                instrument,
                 ReducerContext::new(date, segment_id, SegmentBoundaryPolicy::Carry, 1),
             )],
         )
@@ -504,17 +500,17 @@ mod tests {
             [4; 32],
             vec![ReplayStreamBinding::new(
                 StableStreamDescriptorId::from_bytes([8; 32]),
-                instrument.clone(),
+                instrument,
                 date,
                 [2; 32],
                 [3; 32],
             )],
         )
         .unwrap();
-        let schedule = MultiSessionSchedule::new([(instrument.clone(), vec![segment])]).unwrap();
+        let schedule = MultiSessionSchedule::new([(instrument, vec![segment])]).unwrap();
         let strategy = AcceptanceStrategy::new(
             AcceptanceStrategy::source_binary_identity().unwrap(),
-            [instrument.clone()],
+            [instrument],
             [SessionKind::Regular],
         )
         .unwrap();
@@ -529,7 +525,7 @@ mod tests {
         let ledger = MultiLedger::new(
             Decimal::parse("1000000").unwrap(),
             [InstrumentLedgerConfig::new(
-                instrument.clone(),
+                instrument,
                 QuantityUnit::TradingUnit,
                 AccountingModel::EquityV1,
                 InstrumentEconomics {
@@ -543,7 +539,7 @@ mod tests {
         )
         .unwrap();
         let simulator = MultiSimulator::new([(
-            instrument.clone(),
+            instrument,
             QuantityUnit::TradingUnit,
             FillModel {
                 evidence: EvidenceMode::TopOfBook,
@@ -665,7 +661,7 @@ mod tests {
         )
         .unwrap();
         DomainEvent::new(
-            instrument.clone(),
+            *instrument,
             TradingDate::parse("2026-07-27").unwrap(),
             SourceFormatId::new("I080").unwrap(),
             match_time,
@@ -710,32 +706,31 @@ mod tests {
             ),
         ];
         let core = ReplayCore::new_multi(
-            vec![MarketState::new(instrument.clone(), date)],
-            vec![(instrument.clone(), MarketStateReducer::taifex_futures())],
+            vec![MarketState::new(instrument, date)],
+            vec![(instrument, MarketStateReducer::taifex_futures())],
             vec![(
-                instrument.clone(),
+                instrument,
                 ReducerContext::new(date, segment_id, SegmentBoundaryPolicy::Carry, 1),
             )],
         )
         .unwrap();
         let binding = ReplayStreamBinding::new(
             StableStreamDescriptorId::from_bytes([8; 32]),
-            instrument.clone(),
+            instrument,
             date,
             [2; 32],
             [3; 32],
         );
         let plan = ReplayPlan::new_multi([4; 32], vec![binding]).unwrap();
-        let schedule =
-            MultiSessionSchedule::new(vec![(instrument.clone(), vec![segment])]).unwrap();
+        let schedule = MultiSessionSchedule::new(vec![(instrument, vec![segment])]).unwrap();
         let strategy = AcceptanceStrategy::new(
             AcceptanceStrategy::source_binary_identity().unwrap(),
-            [instrument.clone()],
+            [instrument],
             [SessionKind::Regular],
         )
         .unwrap();
         let simulator = MultiSimulator::new([(
-            instrument.clone(),
+            instrument,
             QuantityUnit::Contract,
             execution_sim::FillModel {
                 evidence: execution_sim::EvidenceMode::TopOfBook,
@@ -750,7 +745,7 @@ mod tests {
         let ledger = MultiLedger::new(
             Decimal::parse("1000000").unwrap(),
             [InstrumentLedgerConfig::new(
-                instrument.clone(),
+                instrument,
                 QuantityUnit::Contract,
                 AccountingModel::FuturesV1,
                 InstrumentEconomics {
@@ -782,7 +777,7 @@ mod tests {
             strategy,
             &plan,
             &mut MultiFactory {
-                events: BTreeMap::from([(instrument.clone(), events)]),
+                events: BTreeMap::from([(instrument, events)]),
             },
             &schedule,
             simulator,
@@ -804,7 +799,7 @@ mod tests {
         );
         let root = tempfile::tempdir().unwrap();
         let output = root.path().join("run");
-        let metadata = artifact_strategy_metadata(instrument.clone(), &[SessionKind::Regular]);
+        let metadata = artifact_strategy_metadata(instrument, &[SessionKind::Regular]);
         publish_multi_backtest(&output, &completed, &[6; 32], "source", "cache", &metadata)
             .unwrap();
         let inspected = inspect_run(&output).unwrap();
@@ -882,20 +877,20 @@ mod tests {
         };
         let core = ReplayCore::new_multi(
             vec![
-                MarketState::new(equity.clone(), date),
-                MarketState::new(option.clone(), date),
+                MarketState::new(equity, date),
+                MarketState::new(option, date),
             ],
             vec![
-                (equity.clone(), MarketStateReducer::twse_regular()),
-                (option.clone(), MarketStateReducer::taifex_options()),
+                (equity, MarketStateReducer::twse_regular()),
+                (option, MarketStateReducer::taifex_options()),
             ],
             vec![
                 (
-                    equity.clone(),
+                    equity,
                     ReducerContext::new(date, session_id.clone(), SegmentBoundaryPolicy::Carry, 1),
                 ),
                 (
-                    option.clone(),
+                    option,
                     ReducerContext::new(date, session_id, SegmentBoundaryPolicy::Carry, 1),
                 ),
             ],
@@ -904,28 +899,26 @@ mod tests {
         let bindings = vec![
             ReplayStreamBinding::new(
                 StableStreamDescriptorId::from_bytes([8; 32]),
-                equity.clone(),
+                equity,
                 date,
                 [2; 32],
                 [3; 32],
             ),
             ReplayStreamBinding::new(
                 StableStreamDescriptorId::from_bytes([9; 32]),
-                option.clone(),
+                option,
                 date,
                 [4; 32],
                 [5; 32],
             ),
         ];
         let plan = ReplayPlan::new_multi([6; 32], bindings).unwrap();
-        let schedule = MultiSessionSchedule::new(vec![
-            (equity.clone(), vec![segment()]),
-            (option.clone(), vec![segment()]),
-        ])
-        .unwrap();
+        let schedule =
+            MultiSessionSchedule::new(vec![(equity, vec![segment()]), (option, vec![segment()])])
+                .unwrap();
         let strategy = AcceptanceStrategy::new(
             AcceptanceStrategy::source_binary_identity().unwrap(),
-            [equity.clone(), option.clone()],
+            [equity, option],
             [SessionKind::Regular],
         )
         .unwrap();
@@ -938,13 +931,13 @@ mod tests {
         };
         let simulator = MultiSimulator::new([
             (
-                equity.clone(),
+                equity,
                 QuantityUnit::TradingUnit,
                 fill_model(),
                 market_types::PricePolicy::PositiveOnly,
             ),
             (
-                option.clone(),
+                option,
                 QuantityUnit::Contract,
                 fill_model(),
                 market_types::PricePolicy::PositiveOnly,
@@ -963,7 +956,7 @@ mod tests {
             Decimal::parse("1000000").unwrap(),
             [
                 InstrumentLedgerConfig::new(
-                    equity.clone(),
+                    equity,
                     QuantityUnit::TradingUnit,
                     AccountingModel::EquityV1,
                     InstrumentEconomics {
@@ -975,7 +968,7 @@ mod tests {
                     zero_charge(),
                 ),
                 InstrumentLedgerConfig::new(
-                    option.clone(),
+                    option,
                     QuantityUnit::Contract,
                     AccountingModel::OptionsV1,
                     InstrumentEconomics {
@@ -994,10 +987,7 @@ mod tests {
             strategy,
             &plan,
             &mut MultiFactory {
-                events: BTreeMap::from([
-                    (equity.clone(), equity_events),
-                    (option.clone(), option_events),
-                ]),
+                events: BTreeMap::from([(equity, equity_events), (option, option_events)]),
             },
             &schedule,
             simulator,
@@ -1046,7 +1036,7 @@ mod tests {
         )
         .unwrap();
         DomainEvent::new(
-            instrument.clone(),
+            *instrument,
             TradingDate::parse("2026-07-27").unwrap(),
             SourceFormatId::new("STOCK_REALTIME").unwrap(),
             match_time,

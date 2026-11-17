@@ -90,7 +90,7 @@ impl Case {
             );
             let binding = ReplayStreamBinding::new(
                 descriptor_id,
-                instrument.clone(),
+                instrument,
                 date,
                 [stream_index as u8 + 1; 32],
                 [stream_index as u8 + 2; 32],
@@ -99,7 +99,7 @@ impl Case {
                 .map(|sequence| {
                     let global_sequence = sequence * stream_count + stream_index;
                     DomainEvent::new(
-                        instrument.clone(),
+                        instrument,
                         date,
                         SourceFormatId::new("STOCK_REALTIME").unwrap(),
                         MatchTime::from_unix_microseconds(base_time + global_sequence as i64),

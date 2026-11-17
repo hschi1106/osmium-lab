@@ -340,7 +340,7 @@ impl ScheduledDepthSimulator {
             let instrument = config.instrument;
             if indexed
                 .insert(
-                    instrument.clone(),
+                    instrument,
                     (config.quantity_unit, config.model, config.price_policy),
                 )
                 .is_some()
@@ -400,14 +400,14 @@ impl ScheduledDepthSimulator {
             return Err(ScheduledSimulationError::RegressingBookTime);
         }
         self.publish_visible_trading_state(VisibleTradingStateEvidence {
-            instrument: evidence.instrument.clone(),
+            instrument: evidence.instrument,
             match_time: evidence.match_time,
             visible_at: evidence.visible_at,
             matching: evidence.matching,
             new_order_entry: evidence.new_order_entry,
         })?;
         self.books.insert(
-            evidence.instrument.clone(),
+            evidence.instrument,
             VisibleBookState {
                 evidence,
                 consumed_bids: [0; BOOK_DEPTH],
@@ -436,8 +436,7 @@ impl ScheduledDepthSimulator {
         {
             return Err(ScheduledSimulationError::RegressingTradingStateTime);
         }
-        self.trading_states
-            .insert(evidence.instrument.clone(), evidence);
+        self.trading_states.insert(evidence.instrument, evidence);
         Ok(())
     }
 
@@ -455,7 +454,7 @@ impl ScheduledDepthSimulator {
             self.configs.get(request.intent().instrument())
         else {
             return Err(ScheduledSimulationError::InstrumentOutsideUniverse(
-                request.intent().instrument().clone(),
+                *request.intent().instrument(),
             ));
         };
         if request.intent().quantity().unit() != *quantity_unit {
@@ -583,7 +582,7 @@ impl ScheduledDepthSimulator {
         }
 
         let request = self.orders[order_index].request.clone();
-        let instrument = request.intent().instrument().clone();
+        let instrument = *request.intent().instrument();
         if self.trading_states.get(&instrument).is_some_and(|state| {
             state.visible_at <= at
                 && !super::entry_allowed(state.new_order_entry, request.intent().order_type())
@@ -723,7 +722,7 @@ impl ScheduledDepthSimulator {
                 order_id,
                 request.client_order_id().clone(),
                 request.batch_id().cloned(),
-                instrument.clone(),
+                instrument,
                 request.activate_at(),
                 at,
                 request.intent().side(),
@@ -802,7 +801,7 @@ impl ScheduledDepthSimulator {
     ) -> Result<Vec<OrderFeedback>, ScheduledSimulationError> {
         if !self.configs.contains_key(instrument) {
             return Err(ScheduledSimulationError::InstrumentOutsideUniverse(
-                instrument.clone(),
+                *instrument,
             ));
         }
         Ok(self
@@ -834,7 +833,7 @@ impl ScheduledDepthSimulator {
     ) -> Result<Vec<ScheduledActivation>, ScheduledSimulationError> {
         let Some((_, _, price_policy)) = self.configs.get(&evidence.instrument) else {
             return Err(ScheduledSimulationError::InstrumentOutsideUniverse(
-                evidence.instrument.clone(),
+                evidence.instrument,
             ));
         };
         if !price_policy.accepts(evidence.clearing_price) {
@@ -896,7 +895,7 @@ impl ScheduledDepthSimulator {
                 order_id,
                 request.client_order_id().clone(),
                 request.batch_id().cloned(),
-                evidence.instrument.clone(),
+                evidence.instrument,
                 request.activate_at(),
                 evidence.match_time,
                 request.intent().side(),
@@ -931,7 +930,7 @@ impl ScheduledDepthSimulator {
     ) -> Result<Option<ScheduledActivation>, ScheduledSimulationError> {
         let request = self.orders[order_index].request.clone();
         let order_id = self.orders[order_index].id;
-        let instrument = request.intent().instrument().clone();
+        let instrument = *request.intent().instrument();
         let (_, model, price_policy) = self
             .configs
             .get(&instrument)
@@ -1019,7 +1018,7 @@ impl ScheduledDepthSimulator {
                 order_id,
                 request.client_order_id().clone(),
                 request.batch_id().cloned(),
-                instrument.clone(),
+                instrument,
                 request.activate_at(),
                 at,
                 request.intent().side(),
@@ -1104,7 +1103,7 @@ impl ScheduledDepthSimulator {
             order_id,
             request.client_order_id().clone(),
             request.batch_id().cloned(),
-            request.intent().instrument().clone(),
+            *request.intent().instrument(),
             request.activate_at(),
             at,
             request.intent().side(),

@@ -89,7 +89,7 @@ pub fn run_scheduled_multi_backtest<S: Strategy, F: ReplayStreamFactory>(
     let declaration = strategy.declaration();
     let core_instruments = core
         .states()
-        .map(|state| state.instrument().clone())
+        .map(|state| *state.instrument())
         .collect::<Vec<_>>();
     for (name, instruments) in [
         ("strategy", declaration.universe().to_vec()),
@@ -213,7 +213,7 @@ pub fn run_scheduled_multi_backtest<S: Strategy, F: ReplayStreamFactory>(
         .iter()
         .map(|state| {
             (
-                state.instrument().clone(),
+                *state.instrument(),
                 final_mark(*state, allow_midpoint_fallback),
             )
         })
@@ -273,7 +273,7 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
             && let Some(clearing_price) = auction_clearing_price(&event)?
         {
             let evidence = AuctionMatchEvidence::new(
-                event.instrument().clone(),
+                *event.instrument(),
                 clearing_price,
                 event.match_time(),
                 visible_at,
@@ -366,7 +366,7 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
                     .simulator
                     .activate(order_id, sequence, at)
                     .map_err(|error| MultiBacktestError::Simulation(error.to_string()))?;
-                let instrument = self
+                let instrument = *self
                     .simulator
                     .orders()
                     .iter()
@@ -374,8 +374,7 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
                     .expect("activated order exists")
                     .request()
                     .intent()
-                    .instrument()
-                    .clone();
+                    .instrument();
                 self.settle_activations(
                     &instrument,
                     previous_fill_count,
@@ -393,7 +392,7 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
                 self.settle_activations(&instrument, previous_fill_count, results, at, sequence)
             }
             ScheduledBacktestControl::AllocateAuctionMatch(evidence) => {
-                let instrument = evidence.instrument().clone();
+                let instrument = *evidence.instrument();
                 let feedback_at = evidence.visible_at();
                 let previous_fill_count = self.simulator.fills().len();
                 let results = self
@@ -494,7 +493,7 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
         self.simulator
             .publish_visible_trading_state(
                 VisibleTradingStateEvidence::new(
-                    event.instrument().clone(),
+                    *event.instrument(),
                     event.match_time(),
                     observation.visible_at,
                     observation.trading.matching(),
@@ -508,8 +507,7 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
             .get(event.instrument())
             .ok_or(MultiBacktestError::Declaration)?;
         if let Some(mark) = final_mark(state, self.allow_midpoint_fallback) {
-            self.last_visible_marks
-                .insert(event.instrument().clone(), mark);
+            self.last_visible_marks.insert(*event.instrument(), mark);
         }
         let published_book = if matches!(
             event.payload(),
@@ -520,7 +518,7 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
             self.simulator
                 .publish_visible_book(
                     VisibleBookEvidence::new(
-                        event.instrument().clone(),
+                        *event.instrument(),
                         book,
                         event.match_time(),
                         observation.visible_at,
@@ -576,7 +574,7 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
                 .schedule(
                     observation.visible_at,
                     ControlPhase::FillAllocation,
-                    ScheduledBacktestControl::AllocateVisibleDepth(event.instrument().clone()),
+                    ScheduledBacktestControl::AllocateVisibleDepth(*event.instrument()),
                 )
                 .map_err(|_| MultiBacktestError::Sequence)?;
         }
@@ -710,7 +708,7 @@ impl<S: Strategy> ScheduledCoordinator<'_, S> {
             .position()
             != 0;
         if is_open {
-            self.open_positions.insert(instrument.clone());
+            self.open_positions.insert(*instrument);
         } else {
             self.open_positions.remove(instrument);
         }
@@ -969,7 +967,7 @@ mod tests {
         .unwrap();
         let event = |trade| {
             DomainEvent::new(
-                instrument.clone(),
+                instrument,
                 date,
                 SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
                 MatchTime::from_unix_microseconds(1),
@@ -1038,7 +1036,7 @@ mod tests {
                 return Ok(());
             }
             self.emitted = true;
-            self.pending_instrument = Some(context.event().instrument().clone());
+            self.pending_instrument = Some(*context.event().instrument());
             output.emit_timer(StrategyTimerRequest::new(
                 StrategyTimerId::new("entry-decision").unwrap(),
                 MatchTime::from_unix_microseconds(
@@ -1133,7 +1131,7 @@ mod tests {
                     activation,
                     Some(expiry),
                     OrderIntent::new(
-                        context.event().instrument().clone(),
+                        *context.event().instrument(),
                         OrderSide::Buy,
                         Quantity::new(1, QuantityUnit::TradingUnit).unwrap(),
                         OrderType::Market,
@@ -1189,7 +1187,7 @@ mod tests {
         .unwrap();
         let quote_event = |match_time, limit_flags| {
             DomainEvent::new(
-                instrument.clone(),
+                instrument,
                 date,
                 SourceFormatId::new("STOCK_REALTIME").unwrap(),
                 match_time,
@@ -1207,7 +1205,7 @@ mod tests {
             )
         };
         let pause_event = DomainEvent::new(
-            instrument.clone(),
+            instrument,
             date,
             SourceFormatId::new("STOCK_REALTIME").unwrap(),
             pause_time,
@@ -1227,10 +1225,10 @@ mod tests {
             ),
         );
         let core = ReplayCore::new_multi(
-            vec![MarketState::new(instrument.clone(), date)],
-            vec![(instrument.clone(), MarketStateReducer::twse_regular())],
+            vec![MarketState::new(instrument, date)],
+            vec![(instrument, MarketStateReducer::twse_regular())],
             vec![(
-                instrument.clone(),
+                instrument,
                 ReducerContext::new(
                     date,
                     SessionSegmentId::new("regular").unwrap(),
@@ -1244,7 +1242,7 @@ mod tests {
             [11; 32],
             vec![ReplayStreamBinding::new(
                 StableStreamDescriptorId::from_bytes([12; 32]),
-                instrument.clone(),
+                instrument,
                 date,
                 [13; 32],
                 [14; 32],
@@ -1258,8 +1256,7 @@ mod tests {
                 BinaryIdentity::new("test", [15; 32]).unwrap(),
             )
             .unwrap(),
-            declaration: StrategyDeclaration::new([instrument.clone()], [SessionKind::Regular])
-                .unwrap(),
+            declaration: StrategyDeclaration::new([instrument], [SessionKind::Regular]).unwrap(),
             emitted: false,
         };
         let segment = SessionSegment::new(
@@ -1271,7 +1268,7 @@ mod tests {
         )
         .unwrap();
         let simulator = ScheduledDepthSimulator::new([ScheduledInstrumentConfig::new(
-            instrument.clone(),
+            instrument,
             QuantityUnit::TradingUnit,
             ScheduledDepthModel::new(5, 1_000, Decimal::ZERO).unwrap(),
         )])
@@ -1287,7 +1284,7 @@ mod tests {
         let ledger = MultiLedger::new(
             Decimal::parse("1000000").unwrap(),
             [InstrumentLedgerConfig::new(
-                instrument.clone(),
+                instrument,
                 QuantityUnit::TradingUnit,
                 AccountingModel::EquityV1,
                 InstrumentEconomics {
@@ -1362,7 +1359,7 @@ mod tests {
         )
         .unwrap();
         let event = DomainEvent::new(
-            instrument.clone(),
+            instrument,
             date,
             SourceFormatId::new("I080").unwrap(),
             event_time,
@@ -1373,10 +1370,10 @@ mod tests {
             ),
         );
         let core = ReplayCore::new_multi(
-            vec![MarketState::new(instrument.clone(), date)],
-            vec![(instrument.clone(), MarketStateReducer::taifex_futures())],
+            vec![MarketState::new(instrument, date)],
+            vec![(instrument, MarketStateReducer::taifex_futures())],
             vec![(
-                instrument.clone(),
+                instrument,
                 ReducerContext::new(date, segment_id, SegmentBoundaryPolicy::Carry, 1),
             )],
         )
@@ -1385,7 +1382,7 @@ mod tests {
             [1; 32],
             vec![ReplayStreamBinding::new(
                 StableStreamDescriptorId::from_bytes([2; 32]),
-                instrument.clone(),
+                instrument,
                 date,
                 [3; 32],
                 [4; 32],
@@ -1399,8 +1396,7 @@ mod tests {
                 BinaryIdentity::new("test", [5; 32]).unwrap(),
             )
             .unwrap(),
-            declaration: StrategyDeclaration::new([instrument.clone()], [SessionKind::Regular])
-                .unwrap(),
+            declaration: StrategyDeclaration::new([instrument], [SessionKind::Regular]).unwrap(),
             emitted: false,
             pending_instrument: None,
             order_type: OrderType::Market,
@@ -1409,7 +1405,7 @@ mod tests {
             expiry_after_activation_micros: None,
         };
         let simulator = ScheduledDepthSimulator::new([ScheduledInstrumentConfig::new(
-            instrument.clone(),
+            instrument,
             QuantityUnit::Contract,
             ScheduledDepthModel::new(5, 1_000, Decimal::ZERO).unwrap(),
         )])
@@ -1425,7 +1421,7 @@ mod tests {
         let ledger = MultiLedger::new(
             Decimal::parse("1000000").unwrap(),
             [InstrumentLedgerConfig::new(
-                instrument.clone(),
+                instrument,
                 QuantityUnit::Contract,
                 AccountingModel::FuturesV1,
                 InstrumentEconomics {
@@ -1444,7 +1440,7 @@ mod tests {
             strategy,
             &plan,
             &mut Factory(vec![event]),
-            &MultiSessionSchedule::new([(instrument.clone(), vec![segment])]).unwrap(),
+            &MultiSessionSchedule::new([(instrument, vec![segment])]).unwrap(),
             200,
             simulator,
             ledger,
@@ -1510,7 +1506,7 @@ mod tests {
             )
             .unwrap();
             DomainEvent::new(
-                instrument.clone(),
+                instrument,
                 date,
                 SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
                 match_time,
@@ -1529,10 +1525,10 @@ mod tests {
         };
         let events = vec![make_event(first_time), make_event(second_time)];
         let core = ReplayCore::new_multi(
-            vec![MarketState::new(instrument.clone(), date)],
-            vec![(instrument.clone(), MarketStateReducer::twse_regular())],
+            vec![MarketState::new(instrument, date)],
+            vec![(instrument, MarketStateReducer::twse_regular())],
             vec![(
-                instrument.clone(),
+                instrument,
                 ReducerContext::new(date, segment_id, SegmentBoundaryPolicy::Carry, 1),
             )],
         )
@@ -1541,7 +1537,7 @@ mod tests {
             [1; 32],
             vec![ReplayStreamBinding::new(
                 StableStreamDescriptorId::from_bytes([2; 32]),
-                instrument.clone(),
+                instrument,
                 date,
                 [3; 32],
                 [4; 32],
@@ -1555,8 +1551,7 @@ mod tests {
                 BinaryIdentity::new("test", [6; 32]).unwrap(),
             )
             .unwrap(),
-            declaration: StrategyDeclaration::new([instrument.clone()], [SessionKind::Regular])
-                .unwrap(),
+            declaration: StrategyDeclaration::new([instrument], [SessionKind::Regular]).unwrap(),
             emitted: false,
             pending_instrument: None,
             order_type: OrderType::Limit {
@@ -1567,7 +1562,7 @@ mod tests {
             expiry_after_activation_micros: Some(500_000),
         };
         let simulator = ScheduledDepthSimulator::new([ScheduledInstrumentConfig::new(
-            instrument.clone(),
+            instrument,
             QuantityUnit::TradingUnit,
             ScheduledDepthModel::new(5, 1_000, Decimal::ZERO).unwrap(),
         )])
@@ -1583,7 +1578,7 @@ mod tests {
         let ledger = MultiLedger::new(
             Decimal::parse("1000000").unwrap(),
             [InstrumentLedgerConfig::new(
-                instrument.clone(),
+                instrument,
                 QuantityUnit::TradingUnit,
                 AccountingModel::EquityV1,
                 InstrumentEconomics {
@@ -1602,7 +1597,7 @@ mod tests {
             strategy,
             &plan,
             &mut Factory(events),
-            &MultiSessionSchedule::new([(instrument.clone(), vec![segment])]).unwrap(),
+            &MultiSessionSchedule::new([(instrument, vec![segment])]).unwrap(),
             200,
             simulator,
             ledger,
@@ -1685,7 +1680,7 @@ mod tests {
                 )
             };
             DomainEvent::new(
-                instrument.clone(),
+                instrument,
                 date,
                 SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
                 at,
@@ -1706,10 +1701,10 @@ mod tests {
             ),
         ];
         let core = ReplayCore::new_multi(
-            vec![MarketState::new(instrument.clone(), date)],
-            vec![(instrument.clone(), MarketStateReducer::tpex_regular())],
+            vec![MarketState::new(instrument, date)],
+            vec![(instrument, MarketStateReducer::tpex_regular())],
             vec![(
-                instrument.clone(),
+                instrument,
                 ReducerContext::new(date, segment_id, SegmentBoundaryPolicy::Carry, 1),
             )],
         )
@@ -1718,7 +1713,7 @@ mod tests {
             [1; 32],
             vec![ReplayStreamBinding::new(
                 StableStreamDescriptorId::from_bytes([2; 32]),
-                instrument.clone(),
+                instrument,
                 date,
                 [3; 32],
                 [4; 32],
@@ -1732,8 +1727,7 @@ mod tests {
                 BinaryIdentity::new("test", [6; 32]).unwrap(),
             )
             .unwrap(),
-            declaration: StrategyDeclaration::new([instrument.clone()], [SessionKind::Regular])
-                .unwrap(),
+            declaration: StrategyDeclaration::new([instrument], [SessionKind::Regular]).unwrap(),
             emitted: false,
             pending_instrument: None,
             order_type: OrderType::Limit {
@@ -1744,7 +1738,7 @@ mod tests {
             expiry_after_activation_micros: Some(1_000_000),
         };
         let simulator = ScheduledDepthSimulator::new([ScheduledInstrumentConfig::new(
-            instrument.clone(),
+            instrument,
             QuantityUnit::TradingUnit,
             ScheduledDepthModel::new(5, 1_000, Decimal::ZERO).unwrap(),
         )])
@@ -1760,7 +1754,7 @@ mod tests {
         let ledger = MultiLedger::new(
             Decimal::parse("1000000").unwrap(),
             [InstrumentLedgerConfig::new(
-                instrument.clone(),
+                instrument,
                 QuantityUnit::TradingUnit,
                 AccountingModel::EquityV1,
                 InstrumentEconomics {
@@ -1779,7 +1773,7 @@ mod tests {
             strategy,
             &plan,
             &mut Factory(events),
-            &MultiSessionSchedule::new([(instrument.clone(), vec![segment])]).unwrap(),
+            &MultiSessionSchedule::new([(instrument, vec![segment])]).unwrap(),
             200,
             simulator,
             ledger,

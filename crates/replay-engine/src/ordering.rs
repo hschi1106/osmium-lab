@@ -43,8 +43,8 @@ impl OrderingKey {
         Ok(Self {
             match_time: event.match_time(),
             market_rank: event.instrument().market().ordering_rank(),
-            symbol: event.instrument().symbol().clone(),
-            source_format: event.source_format().clone(),
+            symbol: *event.instrument().symbol(),
+            source_format: *event.source_format(),
             source_phase_rank: source_phase_rank(event)?,
             event_kind_rank: event.payload().discriminant(),
             source_sequence: event.source_sequence(),

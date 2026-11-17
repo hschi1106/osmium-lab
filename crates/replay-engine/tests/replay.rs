@@ -69,7 +69,7 @@ fn quote_for(
     sequence: Option<u64>,
 ) -> DomainEvent {
     DomainEvent::new(
-        instrument.clone(),
+        *instrument,
         trading_date,
         SourceFormatId::new(format).unwrap(),
         MatchTime::from_unix_microseconds(micros),
@@ -128,7 +128,7 @@ fn replay_state_views_iterate_and_lookup_without_materializing_a_slice() {
     assert_eq!(
         views
             .iter()
-            .map(|state| state.instrument().clone())
+            .map(|state| *state.instrument())
             .collect::<Vec<_>>(),
         vec![instrument()]
     );
@@ -278,7 +278,7 @@ fn multi_stream_replay_merges_bounded_heads_and_ignores_sentinel() {
     );
     let second_binding = ReplayStreamBinding::new(
         StableStreamDescriptorId::from_bytes([2; 32]),
-        second.clone(),
+        second,
         date(),
         [4; 32],
         [5; 32],
@@ -308,13 +308,13 @@ fn multi_stream_replay_merges_bounded_heads_and_ignores_sentinel() {
     let mut core = ReplayCore::new_multi(
         vec![
             MarketState::new(instrument(), date()),
-            MarketState::new(second.clone(), date()),
+            MarketState::new(second, date()),
         ],
         vec![
             (instrument(), MarketStateReducer::twse_regular()),
-            (second.clone(), MarketStateReducer::twse_regular()),
+            (second, MarketStateReducer::twse_regular()),
         ],
-        vec![(instrument(), context()), (second.clone(), context())],
+        vec![(instrument(), context()), (second, context())],
     )
     .unwrap();
     core.replay_frozen_multi(&plan, &mut factory).unwrap();
@@ -338,7 +338,7 @@ fn multi_stream_binding_order_does_not_change_checksum() {
     );
     let second_binding = ReplayStreamBinding::new(
         StableStreamDescriptorId::from_bytes([2; 32]),
-        second.clone(),
+        second,
         date(),
         [4; 32],
         [5; 32],
@@ -347,13 +347,13 @@ fn multi_stream_binding_order_does_not_change_checksum() {
         ReplayCore::new_multi(
             vec![
                 MarketState::new(instrument(), date()),
-                MarketState::new(second.clone(), date()),
+                MarketState::new(second, date()),
             ],
             vec![
                 (instrument(), MarketStateReducer::twse_regular()),
-                (second.clone(), MarketStateReducer::twse_regular()),
+                (second, MarketStateReducer::twse_regular()),
             ],
-            vec![(instrument(), context()), (second.clone(), context())],
+            vec![(instrument(), context()), (second, context())],
         )
         .unwrap()
     };

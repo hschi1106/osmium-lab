@@ -235,7 +235,7 @@ impl MarketStateReducer {
             previous_version: state.state_version(),
             next_state: next,
             receipt: TransitionReceipt {
-                instrument: state.instrument().clone(),
+                instrument: *state.instrument(),
                 previous_version: state.state_version(),
                 new_version,
                 event: event_ref,

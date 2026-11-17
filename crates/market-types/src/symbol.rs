@@ -1,24 +1,29 @@
 use std::{cmp::Ordering, error::Error, fmt, str::FromStr};
 
+use crate::inline_str::{InlineStr, InlineStrError};
+
 /// A non-empty, byte-exact canonical UTF-8 instrument symbol.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Symbol(Box<str>);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Symbol(InlineStr<{ Symbol::MAX_LEN }>);
 
 impl Symbol {
+    /// Maximum UTF-8 byte length; values are stored inline so the type is `Copy`.
+    pub const MAX_LEN: usize = 23;
+
     /// Constructs a symbol without trimming or otherwise normalizing its bytes.
-    pub fn new(value: impl Into<Box<str>>) -> Result<Self, SymbolError> {
-        let value = value.into();
-        if value.is_empty() {
-            Err(SymbolError::Empty)
-        } else {
-            Ok(Self(value))
-        }
+    pub fn new(value: impl AsRef<str>) -> Result<Self, SymbolError> {
+        InlineStr::new(value.as_ref())
+            .map(Self)
+            .map_err(|error| match error {
+                InlineStrError::Empty => SymbolError::Empty,
+                InlineStrError::TooLong => SymbolError::TooLong,
+            })
     }
 
     /// Returns the canonical symbol text.
     #[must_use]
     pub fn as_str(&self) -> &str {
-        &self.0
+        self.0.as_str()
     }
 
     /// Returns the canonical UTF-8 bytes used for identity and ordering.
@@ -80,12 +85,18 @@ impl TryFrom<String> for Symbol {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SymbolError {
     Empty,
+    TooLong,
 }
 
 impl fmt::Display for SymbolError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Empty => formatter.write_str("symbol must not be empty"),
+            Self::TooLong => write!(
+                formatter,
+                "symbol must be at most {} bytes",
+                Symbol::MAX_LEN
+            ),
         }
     }
 }

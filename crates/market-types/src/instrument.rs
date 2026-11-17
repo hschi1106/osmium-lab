@@ -3,7 +3,7 @@ use std::cmp::Ordering;
 use crate::{MarketId, Symbol};
 
 /// Stable instrument identity, independent of metadata and source display labels.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InstrumentId {
     market: MarketId,
     symbol: Symbol,

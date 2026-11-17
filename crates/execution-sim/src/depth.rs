@@ -162,7 +162,7 @@ pub fn execute_atomic_depth(
             return Ok(None);
         };
         staged
-            .entry(leg.instrument().clone())
+            .entry(*leg.instrument())
             .or_insert_with(|| book.clone());
     }
     let mut fills = Vec::with_capacity(legs.len());
@@ -581,14 +581,14 @@ mod tests {
             market_types::MarketId::Taifex,
             market_types::Symbol::new("PUT").unwrap(),
         );
-        let mut books = [future.clone(), call.clone(), put.clone()]
+        let mut books = [future, call, put]
             .into_iter()
             .map(|instrument| (instrument, ConsumableDepth::new(book())))
             .collect::<BTreeMap<_, _>>();
         let legs = [
-            AtomicDepthLeg::new(future.clone(), OrderSide::Sell),
+            AtomicDepthLeg::new(future, OrderSide::Sell),
             AtomicDepthLeg::new(call, OrderSide::Buy),
-            AtomicDepthLeg::new(put.clone(), OrderSide::Sell),
+            AtomicDepthLeg::new(put, OrderSide::Sell),
         ];
 
         let before = books.clone();

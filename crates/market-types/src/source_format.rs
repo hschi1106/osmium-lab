@@ -1,23 +1,28 @@
 use std::{cmp::Ordering, error::Error, fmt, str::FromStr};
 
+use crate::inline_str::{InlineStr, InlineStrError};
+
 /// A non-empty, byte-exact identifier from the versioned normalizer registry.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SourceFormatId(Box<str>);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SourceFormatId(InlineStr<{ SourceFormatId::MAX_LEN }>);
 
 impl SourceFormatId {
+    /// Maximum UTF-8 byte length; values are stored inline so the type is `Copy`.
+    pub const MAX_LEN: usize = 23;
+
     /// Constructs an identifier without trimming or normalizing its bytes.
-    pub fn new(value: impl Into<Box<str>>) -> Result<Self, SourceFormatIdError> {
-        let value = value.into();
-        if value.is_empty() {
-            Err(SourceFormatIdError::Empty)
-        } else {
-            Ok(Self(value))
-        }
+    pub fn new(value: impl AsRef<str>) -> Result<Self, SourceFormatIdError> {
+        InlineStr::new(value.as_ref())
+            .map(Self)
+            .map_err(|error| match error {
+                InlineStrError::Empty => SourceFormatIdError::Empty,
+                InlineStrError::TooLong => SourceFormatIdError::TooLong,
+            })
     }
 
     #[must_use]
     pub fn as_str(&self) -> &str {
-        &self.0
+        self.0.as_str()
     }
 
     #[must_use]
@@ -70,12 +75,18 @@ impl TryFrom<&str> for SourceFormatId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceFormatIdError {
     Empty,
+    TooLong,
 }
 
 impl fmt::Display for SourceFormatIdError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Empty => formatter.write_str("source format must not be empty"),
+            Self::TooLong => write!(
+                formatter,
+                "source format must be at most {} bytes",
+                SourceFormatId::MAX_LEN
+            ),
         }
     }
 }

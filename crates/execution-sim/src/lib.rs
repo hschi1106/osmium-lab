@@ -622,7 +622,7 @@ impl MultiSimulator {
         for (instrument, quantity_unit, model, price_policy) in configs {
             if simulators
                 .insert(
-                    instrument.clone(),
+                    instrument,
                     Simulator::new_with_price_policy(
                         [instrument],
                         quantity_unit,
@@ -831,9 +831,9 @@ mod tests {
             _ => MarketSignal::Continuous,
         }));
         DomainEvent::new(
-            template.instrument().clone(),
+            *template.instrument(),
             template.trading_date(),
-            template.source_format().clone(),
+            *template.source_format(),
             MatchTime::from_unix_microseconds(micros),
             Some(micros as u64),
             EventPayload::QuoteSnapshot(quote),
@@ -909,9 +909,9 @@ mod tests {
             panic!("fixture helper must create a quote snapshot")
         };
         let auction = DomainEvent::new(
-            actual.instrument().clone(),
+            *actual.instrument(),
             actual.trading_date(),
-            actual.source_format().clone(),
+            *actual.source_format(),
             actual.match_time(),
             None,
             EventPayload::IndicativeAuction(
@@ -934,7 +934,7 @@ mod tests {
     fn volatility_interruption_restricts_new_orders_and_cancels_pending_market_orders() {
         let normal_event = twse_event(1, 1, 0);
         let pause_event = twse_event(2, 2, 0x01);
-        let instrument = normal_event.instrument().clone();
+        let instrument = *normal_event.instrument();
         let other_instrument = InstrumentId::new(MarketId::Twse, Symbol::new("2317").unwrap());
         let date = normal_event.trading_date();
         let segment_id = SessionSegmentId::new("regular").unwrap();
@@ -947,13 +947,13 @@ mod tests {
         )
         .unwrap();
         let mut core = ReplayCore::new(
-            vec![MarketState::new(instrument.clone(), date)],
+            vec![MarketState::new(instrument, date)],
             MarketStateReducer::twse_regular(),
             ReducerContext::new(date, segment_id, SegmentBoundaryPolicy::Carry, 1),
         )
         .unwrap();
         let mut simulator = Simulator::new(
-            [instrument.clone(), other_instrument.clone()],
+            [instrument, other_instrument],
             QuantityUnit::TradingUnit,
             FillModel {
                 evidence: EvidenceMode::TopOfBook,
@@ -980,12 +980,7 @@ mod tests {
                 normal_commit.occurrence(),
                 &normal_context,
                 1,
-                OrderIntent::new(
-                    instrument.clone(),
-                    OrderSide::Buy,
-                    quantity,
-                    OrderType::Market,
-                ),
+                OrderIntent::new(instrument, OrderSide::Buy, quantity, OrderType::Market),
             )
             .unwrap();
         let OrderFeedback::Accepted { order_id } = accepted else {
@@ -1042,12 +1037,7 @@ mod tests {
                 pause_commit.occurrence(),
                 &pause_context,
                 3,
-                OrderIntent::new(
-                    instrument.clone(),
-                    OrderSide::Buy,
-                    quantity,
-                    OrderType::Market,
-                ),
+                OrderIntent::new(instrument, OrderSide::Buy, quantity, OrderType::Market),
             )
             .unwrap();
         assert_eq!(

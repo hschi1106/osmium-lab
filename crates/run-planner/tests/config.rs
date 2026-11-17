@@ -21,12 +21,12 @@ fn effective_config_applies_defaults_and_canonicalizes_sets() {
     let instrument = instrument("2330");
     let mut config = run_config(
         vec![date("2026-07-27"), date("2026-07-27")],
-        vec![instrument.clone(), instrument.clone()],
+        vec![instrument, instrument],
         "target/test-data",
     );
     config.session_kinds = vec![SessionKind::Regular, SessionKind::Regular];
     config.strategy = strategy_binding(
-        vec![instrument.clone(), instrument.clone()],
+        vec![instrument, instrument],
         vec![SessionKind::Regular, SessionKind::Regular],
     );
     config.instrument_economics = vec![economics(instrument)];
@@ -47,7 +47,7 @@ fn semantic_checksum_excludes_data_root() {
     let instrument = instrument("2330");
     let left = EffectiveRunConfig::resolve(run_config(
         vec![date("2026-07-27")],
-        vec![instrument.clone()],
+        vec![instrument],
         "target/left",
     ))
     .unwrap();
@@ -66,13 +66,10 @@ fn semantic_checksum_excludes_data_root() {
 fn effective_identity_distinguishes_future_outright_from_calendar_spread() {
     let date = date("2026-07-27");
     let instrument = InstrumentId::new(MarketId::Taifex, Symbol::new("TXF/202609-202610").unwrap());
-    let outright = EffectiveRunConfig::resolve(run_config(
-        vec![date],
-        vec![instrument.clone()],
-        "target/test-data",
-    ))
-    .unwrap();
-    let mut spread_config = run_config(vec![date], vec![instrument.clone()], "target/test-data");
+    let outright =
+        EffectiveRunConfig::resolve(run_config(vec![date], vec![instrument], "target/test-data"))
+            .unwrap();
+    let mut spread_config = run_config(vec![date], vec![instrument], "target/test-data");
     spread_config.instrument_contracts = vec![InstrumentContractConfig::new(
         instrument,
         InstrumentClass::Future,
@@ -96,14 +93,10 @@ fn option_reference_is_required_consistent_and_bound_into_effective_identity() {
             reference.currency(),
             reference.multiplier(),
         );
-        let mut config = run_config(
-            vec![trading_date],
-            vec![instrument.clone()],
-            "target/test-data",
-        );
+        let mut config = run_config(vec![trading_date], vec![instrument], "target/test-data");
         config.instrument_contracts = vec![
             InstrumentContractConfig::new(
-                instrument.clone(),
+                instrument,
                 InstrumentClass::Option,
                 None,
                 SessionProfileId::TaifexIndexOptions,
@@ -111,7 +104,7 @@ fn option_reference_is_required_consistent_and_bound_into_effective_identity() {
             .with_reference(reference),
         ];
         config.instrument_economics = vec![InstrumentEconomicsConfig::new(
-            instrument.clone(),
+            instrument,
             reference_economics.0,
             reference_economics.1,
             reference_economics.2,
@@ -254,7 +247,7 @@ fn option_reference_is_required_consistent_and_bound_into_effective_identity() {
         "verified option contract reference",
     ));
     mismatched.instrument_economics[0] = InstrumentEconomicsConfig::new(
-        instrument.clone(),
+        instrument,
         QuantityUnit::Contract,
         1,
         Currency::Twd,
@@ -274,13 +267,10 @@ fn option_reference_is_required_consistent_and_bound_into_effective_identity() {
         Decimal::parse("24000").unwrap()
     );
 
-    let mut missing_reference = run_config(
-        vec![trading_date],
-        vec![instrument.clone()],
-        "target/test-data",
-    );
+    let mut missing_reference =
+        run_config(vec![trading_date], vec![instrument], "target/test-data");
     missing_reference.instrument_contracts = vec![InstrumentContractConfig::new(
-        instrument.clone(),
+        instrument,
         InstrumentClass::Option,
         None,
         SessionProfileId::TaifexIndexOptions,
@@ -324,7 +314,7 @@ fn every_universe_instrument_requires_valid_economics() {
     let instrument = instrument("2330");
     let mut config = run_config(
         vec![date("2026-07-27")],
-        vec![instrument.clone()],
+        vec![instrument],
         "target/test-data",
     );
     config.instrument_economics.clear();
@@ -340,7 +330,7 @@ fn negative_slippage_is_rejected_before_planning() {
     let instrument = instrument("2330");
     let mut config = run_config(
         vec![date("2026-07-27")],
-        vec![instrument.clone()],
+        vec![instrument],
         "target/test-data",
     );
     let mut simulation = simulation();
@@ -369,7 +359,7 @@ fn latency_is_part_of_effective_identity() {
     let instrument = instrument("2330");
     let zero = EffectiveRunConfig::resolve(run_config(
         vec![date("2026-07-27")],
-        vec![instrument.clone()],
+        vec![instrument],
         "target/test-data",
     ))
     .unwrap();
@@ -411,13 +401,13 @@ fn scheduled_execution_is_explicit_validated_and_identity_bound() {
     let instrument = instrument("2330");
     let baseline = EffectiveRunConfig::resolve(run_config(
         vec![date("2026-07-27")],
-        vec![instrument.clone()],
+        vec![instrument],
         "target/test-data",
     ))
     .unwrap();
     let mut scheduled_config = run_config(
         vec![date("2026-07-27")],
-        vec![instrument.clone()],
+        vec![instrument],
         "target/test-data",
     );
     scheduled_config.simulation = scheduled_config
@@ -450,7 +440,7 @@ fn economics_outside_universe_is_rejected() {
     let selected = instrument("2330");
     let outside = instrument("2317");
     let mut config = run_config(vec![date("2026-07-27")], vec![selected], "target/test-data");
-    config.instrument_economics.push(economics(outside.clone()));
+    config.instrument_economics.push(economics(outside));
 
     assert_eq!(
         EffectiveRunConfig::resolve(config),
@@ -473,7 +463,7 @@ fn instrument_day_trade_tax_is_canonical_and_requires_every_configured_date() {
     );
     let charges = |eligible_dates: Vec<market_types::TradingDate>| {
         InstrumentChargeConfig::new(
-            instrument.clone(),
+            instrument,
             simulation().fee_model().clone(),
             ordinary.clone(),
             Some(DayTradeTaxConfig::new(
@@ -487,22 +477,22 @@ fn instrument_day_trade_tax_is_canonical_and_requires_every_configured_date() {
             )),
         )
     };
-    let mut missing = run_config(dates.clone(), vec![instrument.clone()], "target/test-data");
+    let mut missing = run_config(dates.clone(), vec![instrument], "target/test-data");
     missing.simulation = missing
         .simulation
         .with_instrument_charges([charges(vec![dates[0]])]);
     assert_eq!(
         EffectiveRunConfig::resolve(missing),
-        Err(ConfigError::MissingDayTradeEligibility(instrument.clone()))
+        Err(ConfigError::MissingDayTradeEligibility(instrument))
     );
 
     let baseline = EffectiveRunConfig::resolve(run_config(
         dates.clone(),
-        vec![instrument.clone()],
+        vec![instrument],
         "target/test-data",
     ))
     .unwrap();
-    let mut configured = run_config(dates.clone(), vec![instrument.clone()], "target/test-data");
+    let mut configured = run_config(dates.clone(), vec![instrument], "target/test-data");
     configured.simulation = configured
         .simulation
         .with_instrument_charges([charges(dates)]);

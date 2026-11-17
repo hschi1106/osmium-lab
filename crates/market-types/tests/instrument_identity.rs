@@ -49,7 +49,7 @@ fn instrument_identity_orders_by_market_then_symbol_bytes() {
     assert!(twse_0050 < twse_2330);
     assert!(twse_2330 < tpex_0050);
 
-    let mut instruments = [tpex_0050.clone(), twse_2330.clone(), twse_0050.clone()];
+    let mut instruments = [tpex_0050, twse_2330, twse_0050];
     instruments.sort();
     assert_eq!(instruments, [twse_0050, twse_2330, tpex_0050]);
 }

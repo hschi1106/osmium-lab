@@ -88,7 +88,7 @@ impl AppliedEventRef {
     pub fn from_event(event: &DomainEvent) -> Result<Self, market_types::CanonicalEncodingError> {
         Ok(Self {
             match_time: event.match_time(),
-            source_format: event.source_format().clone(),
+            source_format: *event.source_format(),
             source_phase: source_phase_for_event(event),
             event_kind: event.payload().kind(),
             source_sequence: event.source_sequence(),

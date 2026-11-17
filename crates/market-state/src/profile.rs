@@ -59,7 +59,7 @@ impl MarketStateProfile {
         if source_rules.is_empty() {
             return Err(ProfileError::EmptySourceRules);
         }
-        source_rules.sort_by(|left, right| left.source_format.cmp(&right.source_format));
+        source_rules.sort_by_key(|left| left.source_format);
         if source_rules
             .windows(2)
             .any(|pair| pair[0].source_format == pair[1].source_format)

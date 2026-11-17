@@ -1140,14 +1140,14 @@ impl MultiLedger {
                 || (config.day_trade_tax().is_some() && config.model() != AccountingModel::EquityV1)
             {
                 return Err(AccountingError::AccountingModelMismatch(
-                    config.instrument().clone(),
+                    *config.instrument(),
                 ));
             }
             validate_models(config.economics(), config.fee(), config.tax())?;
             if let Some(day_trade) = config.day_trade_tax() {
                 validate_models(config.economics(), config.fee(), day_trade.day_trade())?;
             }
-            let instrument = config.instrument().clone();
+            let instrument = *config.instrument();
             let entry = InstrumentLedger {
                 quantity_unit: config.quantity_unit(),
                 model: config.model(),
@@ -1161,7 +1161,7 @@ impl MultiLedger {
                 )
                 .with_optional_day_trade_tax(config.day_trade_tax().cloned()),
             };
-            if ledgers.insert(instrument.clone(), entry).is_some() {
+            if ledgers.insert(instrument, entry).is_some() {
                 return Err(AccountingError::DuplicateInstrument(instrument));
             }
         }
@@ -1211,7 +1211,7 @@ impl MultiLedger {
         let entry = self
             .ledgers
             .get_mut(instrument)
-            .ok_or_else(|| AccountingError::UnknownInstrument(instrument.clone()))?;
+            .ok_or(AccountingError::UnknownInstrument(*instrument))?;
         if fill.quantity().unit() != entry.quantity_unit {
             return Err(AccountingError::QuantityUnitMismatch {
                 expected: entry.quantity_unit,
@@ -1275,7 +1275,7 @@ impl MultiLedger {
             let mark = final_marks.get(instrument).copied().flatten();
             let summary = entry.ledger.performance(mark)?;
             if entry.ledger.position() != 0 && summary.unrealized_pnl.is_none() {
-                return Err(AccountingError::MissingFinalMark(instrument.clone()));
+                return Err(AccountingError::MissingFinalMark(*instrument));
             }
             realized_pnl = checked_add(realized_pnl, summary.realized_pnl)?;
             unrealized_pnl = checked_add(
@@ -1288,7 +1288,7 @@ impl MultiLedger {
                 .checked_add(summary.fill_count)
                 .ok_or(AccountingError::Overflow)?;
             instruments.push(InstrumentPerformance {
-                instrument: instrument.clone(),
+                instrument: *instrument,
                 quantity_unit: entry.quantity_unit,
                 accounting_model: entry.model,
                 economics: entry.ledger.economics().clone(),
@@ -1351,7 +1351,7 @@ impl MultiLedger {
         let entry = self
             .ledgers
             .get(instrument)
-            .ok_or_else(|| AccountingError::UnknownInstrument(instrument.clone()))?;
+            .ok_or(AccountingError::UnknownInstrument(*instrument))?;
         let position = entry.ledger.position();
         if !entry.price_policy.accepts(Price::new(mark)) {
             return Err(AccountingError::InvalidPriceForInstrument);
@@ -1364,7 +1364,7 @@ impl MultiLedger {
                 .ledger
                 .performance(Some(mark))?
                 .unrealized_pnl
-                .ok_or_else(|| AccountingError::MissingFinalMark(instrument.clone()));
+                .ok_or(AccountingError::MissingFinalMark(*instrument));
         }
         let marked_atoms = mark
             .atoms()
@@ -1906,7 +1906,7 @@ mod tests {
             "10000".parse().unwrap(),
             [
                 InstrumentLedgerConfig::new(
-                    stock.clone(),
+                    stock,
                     QuantityUnit::TradingUnit,
                     AccountingModel::EquityV1,
                     InstrumentEconomics {
@@ -1918,7 +1918,7 @@ mod tests {
                     zero,
                 ),
                 InstrumentLedgerConfig::new(
-                    spread.clone(),
+                    spread,
                     QuantityUnit::Contract,
                     AccountingModel::FuturesV1,
                     InstrumentEconomics {
@@ -1967,10 +1967,7 @@ mod tests {
                 fill_in(OrderSide::Buy, "0", 1, QuantityUnit::Contract),
             )
             .unwrap();
-        let marks = BTreeMap::from([
-            (stock, None),
-            (spread.clone(), Some(Decimal::parse("-2").unwrap())),
-        ]);
+        let marks = BTreeMap::from([(stock, None), (spread, Some(Decimal::parse("-2").unwrap()))]);
         let performance = ledger.performance(&marks).unwrap();
         assert_eq!(performance.realized_pnl(), Decimal::parse("400").unwrap());
         assert_eq!(
@@ -2044,7 +2041,7 @@ mod tests {
             "1000000".parse().unwrap(),
             [
                 InstrumentLedgerConfig::new(
-                    twse.clone(),
+                    twse,
                     QuantityUnit::TradingUnit,
                     AccountingModel::EquityV1,
                     InstrumentEconomics {
@@ -2056,7 +2053,7 @@ mod tests {
                     zero,
                 ),
                 InstrumentLedgerConfig::new(
-                    taifex.clone(),
+                    taifex,
                     QuantityUnit::Contract,
                     AccountingModel::FuturesV1,
                     InstrumentEconomics {
@@ -2097,7 +2094,7 @@ mod tests {
 
         assert_eq!(ledger.cash(), "1011000".parse().unwrap());
         ledger.reconcile().unwrap();
-        let marks = BTreeMap::from([(twse.clone(), None), (taifex.clone(), None)]);
+        let marks = BTreeMap::from([(twse, None), (taifex, None)]);
         let performance = ledger.performance(&marks).unwrap();
         assert_eq!(performance.final_cash(), ledger.cash());
         assert_eq!(performance.realized_pnl(), "11000".parse().unwrap());
@@ -2121,7 +2118,7 @@ mod tests {
         let mut ledger = MultiLedger::new(
             Decimal::ZERO,
             [InstrumentLedgerConfig::new(
-                instrument.clone(),
+                instrument,
                 QuantityUnit::Contract,
                 AccountingModel::FuturesV1,
                 InstrumentEconomics {
@@ -2140,7 +2137,7 @@ mod tests {
                 fill_in(OrderSide::Buy, "100", 1, QuantityUnit::Contract),
             )
             .unwrap();
-        let marks = BTreeMap::from([(instrument.clone(), None)]);
+        let marks = BTreeMap::from([(instrument, None)]);
         assert!(matches!(
             ledger.performance(&marks),
             Err(AccountingError::MissingFinalMark(actual)) if actual == instrument
@@ -2156,7 +2153,7 @@ mod tests {
             "1000000".parse().unwrap(),
             [
                 InstrumentLedgerConfig::new(
-                    stock.clone(),
+                    stock,
                     QuantityUnit::TradingUnit,
                     AccountingModel::EquityV1,
                     InstrumentEconomics {
@@ -2168,7 +2165,7 @@ mod tests {
                     zero,
                 ),
                 InstrumentLedgerConfig::new(
-                    futures.clone(),
+                    futures,
                     QuantityUnit::Contract,
                     AccountingModel::FuturesV1,
                     InstrumentEconomics {
@@ -2219,7 +2216,7 @@ mod tests {
         let mut ledger = MultiLedger::new(
             "1500000".parse().unwrap(),
             [InstrumentLedgerConfig::new(
-                instrument.clone(),
+                instrument,
                 QuantityUnit::TradingUnit,
                 AccountingModel::EquityV1,
                 InstrumentEconomics {

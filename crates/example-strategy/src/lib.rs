@@ -60,7 +60,7 @@ impl Strategy for PriceThresholdBuyOnce {
         if ask.price() > self.entry_price {
             return Ok(());
         }
-        let instrument = context.market_state().instrument().clone();
+        let instrument = *context.market_state().instrument();
         let quantity = Quantity::new(self.quantity, Self::quantity_unit(&instrument))
             .map_err(|error| StrategyExecutionError::new(error.to_string()))?;
         output.emit_order_intent(OrderIntent::new(
@@ -149,7 +149,7 @@ impl StrategyFactory for PriceThresholdBuyOnceFactory {
             .definition
             .identity()
             .map_err(|error| StrategyFactoryError::new(error.to_string()))?;
-        let declaration = StrategyDeclaration::new([instrument.clone()], sessions.iter().copied())
+        let declaration = StrategyDeclaration::new([*instrument], sessions.iter().copied())
             .map_err(|error| StrategyFactoryError::new(error.to_string()))?;
         Ok(Box::new(PriceThresholdBuyOnce {
             identity,
@@ -328,7 +328,7 @@ mod tests {
         )
         .unwrap();
         let mut core = ReplayCore::new(
-            vec![MarketState::new(twse.clone(), date)],
+            vec![MarketState::new(twse, date)],
             MarketStateReducer::twse_regular(),
             ReducerContext::new(date, segment_id, SegmentBoundaryPolicy::Carry, 1),
         )

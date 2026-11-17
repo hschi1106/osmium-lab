@@ -3,6 +3,7 @@ mod book;
 mod canonical;
 mod decimal;
 mod event;
+mod inline_str;
 mod instrument;
 mod instrument_class;
 mod market;

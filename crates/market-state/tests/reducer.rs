@@ -235,7 +235,7 @@ fn tpex_profile_accepts_tpex_annotations_and_replaces_the_book() {
         1,
     );
     let event = DomainEvent::new(
-        instrument.clone(),
+        instrument,
         date,
         SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
         MatchTime::parse("2026-07-27T09:00:00+08:00").unwrap(),
@@ -271,7 +271,7 @@ fn tpex_warrant_profile_accepts_tpex_warrant_quote_events() {
         1,
     );
     let event = DomainEvent::new(
-        instrument.clone(),
+        instrument,
         date,
         SourceFormatId::new("WARRANT_SNAPSHOT").unwrap(),
         MatchTime::parse("2026-07-27T09:00:00+08:00").unwrap(),
@@ -592,7 +592,7 @@ fn taifex_opening_indicative_is_timeline_without_trade_or_volume_state() {
     let instrument = InstrumentId::new(MarketId::Taifex, Symbol::new("TXFH6").unwrap());
     let trading_date = TradingDate::parse("2026-07-20").unwrap();
     let event = DomainEvent::new(
-        instrument.clone(),
+        instrument,
         trading_date,
         SourceFormatId::new("I022").unwrap(),
         MatchTime::parse("2026-07-20T08:40:00+08:00").unwrap(),
@@ -856,7 +856,7 @@ fn tpex_normal_matching_event_clears_prior_indicative_observation() {
     );
     let quote = |micros, status_flags, limit_flags| {
         DomainEvent::new(
-            instrument.clone(),
+            instrument,
             date(),
             SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
             MatchTime::from_unix_microseconds(micros),
@@ -876,12 +876,12 @@ fn tpex_normal_matching_event_clears_prior_indicative_observation() {
             ),
         )
     };
-    let mut state = MarketState::new(instrument.clone(), date());
+    let mut state = MarketState::new(instrument, date());
     reducer
         .apply(&mut state, &quote(1, 16, 0), &context)
         .unwrap();
     let trial = DomainEvent::new(
-        instrument.clone(),
+        instrument,
         date(),
         SourceFormatId::new("STOCK_SNAPSHOT").unwrap(),
         MatchTime::from_unix_microseconds(2),

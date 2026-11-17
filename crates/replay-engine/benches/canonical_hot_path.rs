@@ -135,7 +135,7 @@ impl EventStream for ReplaySlice<'_> {
 
 fn replay_core(instrument: &InstrumentId, date: TradingDate) -> ReplayCore {
     ReplayCore::new(
-        vec![MarketState::new(instrument.clone(), date)],
+        vec![MarketState::new(*instrument, date)],
         MarketStateReducer::twse_regular(),
         ReducerContext::new(
             date,
@@ -151,7 +151,7 @@ fn replay_measure(
     events: &[DomainEvent],
     repeat_pre_change_encoding: bool,
 ) -> (u128, [u8; 32], [u8; 32]) {
-    let instrument = events[0].instrument().clone();
+    let instrument = *events[0].instrument();
     let date = events[0].trading_date();
     let mut core = replay_core(&instrument, date);
     let mut stream = ReplaySlice {
@@ -184,9 +184,9 @@ fn fixed_replay_events(count: usize) -> Vec<DomainEvent> {
     (0..count)
         .map(|sequence| {
             DomainEvent::new(
-                template.instrument().clone(),
+                *template.instrument(),
                 template.trading_date(),
-                template.source_format().clone(),
+                *template.source_format(),
                 MatchTime::from_unix_microseconds(base + sequence as i64),
                 Some(sequence as u64),
                 template.payload().clone(),
