@@ -2,9 +2,8 @@
 
 Domain truth 以本目錄的 canonical docs 為準；code 與 tests 是 executable truth。
 
-> 架構正在改建為 marketdata-native（見 [ADR-0007](architecture/decisions/0007-marketdata-native.md)）。
-> 下列 architecture 文件在改建完成前可能仍描述舊的 provider／source-sync 流程；衝突時以
-> ADR-0007 為準。
+> 架構已改為 marketdata-native（見 [ADR-0007](architecture/decisions/0007-marketdata-native.md)）；
+> CLI 與 runner 串接仍在重建中。
 
 ## Core／architecture developer
 

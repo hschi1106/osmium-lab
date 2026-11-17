@@ -2,7 +2,7 @@
 name: osmium-engineering
 description: >
   Use for changing, reviewing, debugging, or testing Osmium code or
-  architecture, including domain, provider, replay, strategy APIs, execution,
+  architecture, including domain, marketdata adapter, replay, strategy APIs, execution,
   accounting, versions, and tests. Not for ordinary operation of an existing
   build.
 ---
@@ -61,13 +61,13 @@ artifact meaning      → manifest/artifact version?
 ordering              → ordering version?
 ```
 
-版本取自 current code／docs／CLI。正確 bump 可使 derived cache stale；除非使用者要求，不加 legacy
+版本取自 current code／docs。除非使用者要求，不加 legacy
 compatibility。
 
 ## Scope 與 workflow
 
 優先使用 concrete function／enum／struct。不要為 hypothetical future 新增 framework、trait forest、
-generic normalizer、compatibility layer 或 one-call-site wrapper。Abstraction 必須移除真實 duplicated
+generic adapter、compatibility layer 或 one-call-site wrapper。Abstraction 必須移除真實 duplicated
 semantics 或釐清 ownership。
 
 ```text

@@ -10,8 +10,8 @@ Osmium Lab 是 Rust 實作的 market replay 與 backtesting platform。唯一資
 資料表（`/srv/md/v1`，parquet）：osmium 直接讀取交易所逐筆成交與五檔揭示，依交易所序號
 deterministic replay，再串接編譯期 Rust strategy、成交模擬、帳務與 run artifacts。
 
-> 狀態：正在從舊的 provider／source-sync 架構改建為 marketdata-native 架構。CLI 尚未接回；
-> 目前可用的是 domain、replay、strategy、execution 與 runner crates 及其 tests。
+> 狀態：marketdata-native 改建中。`osmium-md` 已可讀取 F6／F17／F23 並回播至 MarketState；
+> CLI 與 runner 串接尚未接回，目前以 crates 及其 tests 使用。
 
 ## 設計原則
 

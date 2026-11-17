@@ -26,7 +26,7 @@ volatility direction 各自可為 `Known`、`NoObservation` 或 `Unknown`。同�
 
 每個 event 另可攜帶 `MarketSignal::{Continuous, AuctionCollecting, AuctionUncross, Closed}`。
 `AuctionCollecting` 與 `AuctionUncross` 共用同一份 `AuctionObservation`；signal 是市場語義，
-不把 provider status bits 暴露給 replay、strategy 或 simulation。
+不把來源欄位（phase、試撮、暫緩撮合旗標）暴露給 replay、strategy 或 simulation。
 
 同一 source record 的不可分割成交、book 與 annotations 形成單一 atomic event。auction event 是試算觀察，不是實際成交。
 
@@ -58,7 +58,6 @@ stream 必須符合相同 schema、ordering 與 canonical version；單一 strea
 
 planner 依 instrument profile、exchange trading date 與 strategy 選擇的 `SessionKind` 產生 segment。每個官方 session 另加入前後五分鐘 margin：
 
-- download window 以 `received_at` 查詢 source。
 - replay window 以 `match_time` 接受 event。
 - `WarmUp` 位於 open 前 margin。
 - `Active` 覆蓋官方 session。
@@ -175,18 +174,18 @@ reducer 支援 carry 與 reset boundary policy；目前 CLI runner 對每個 pla
 
 | 欄位 | production source | 缺少時的行為 | 是否進 run identity |
 | --- | --- | --- | --- |
-| intraday matching | 當前 `DomainEvent` 的 `MarketSignal`，再由 reducer 產生 `MarketPhase` | `NoObservation` 保留既有 state；初始或 `Unknown` 時 `TradingContext` 回傳 `MatchingState::Unknown`，不猜 `Continuous` | event/cache identity；不另存背景 |
-| disposal | `AuctionObservation` 的 neutral observation；provider 只使用有來源證據的屬性 | 沒有來源證據就不載入處置名單，也不改一般商品 fill/accounting 規則；synthetic neutral event 仍可測試 `disposal=true` | event/cache identity；不另存今日名單 |
+| intraday matching | 當前 `DomainEvent` 的 `MarketSignal`，再由 reducer 產生 `MarketPhase` | `NoObservation` 保留既有 state；初始或 `Unknown` 時 `TradingContext` 回傳 `MatchingState::Unknown`，不猜 `Continuous` | event identity；不另存背景 |
+| disposal | `AuctionObservation` 的 neutral observation；`osmium-md` 只使用有來源證據的屬性 | 沒有來源證據就不載入處置名單，也不改一般商品 fill/accounting 規則；synthetic neutral event 仍可測試 `disposal=true` | event identity；不另存今日名單 |
 | auction post-state | reducer 依已知 `AuctionPurpose` 與 `AuctionUncross` 推導 | opening、closing、periodic 各依固定 transition 處理；purpose 不明時保留 unknown，不以時間或背景補完 | reducer/event version |
 | order-entry policy | `TradingContext` 讀取 event signal、post-event state 與 session phase | signal/state 未知時回傳 `Unknown`，不放行 order | strategy/execution version |
 | execution fill policy | effective `simulation`、instrument economics 與已驗證 contract 設定 | config 缺失或矛盾時在 config/planner 階段拒絕 | effective config／execution plan checksum |
-| strategy-visible metadata | event、`MarketStateView`、`TradingContext` 與 session context | 只呈現已觀察或已驗證值；不查 provider API | event、strategy 與 run artifact identity |
+| strategy-visible metadata | event、`MarketStateView`、`TradingContext` 與 session context | 只呈現已觀察或已驗證值；不查外部 API | event、strategy 與 run artifact identity |
 
 production flow 是 YAML 經 `RunConfig`、effective values 與 frozen `ExecutionPlan` 的既有
-contract/session/economics 初始化，加上 provider normalizer 輸出的 neutral event，經由
+contract/session/economics 初始化，加上 `osmium-md` 輸出的 neutral event，經由
 `ReplayCore -> MarketState -> TradingContext -> execution` 完成。replay 與 backtest 直接使用
 `PlannedPartition` 已物化的 `SessionPlan` 與 contract；不在 runner path 重新從 YAML 推導。
-reserved 或無法解讀的 provider evidence 會映射為 `Unknown` 並保留 warning；profile、metadata DB、
+缺少的來源 evidence 映射為 `Unknown`，未觀察過的語義組合則拒絕；metadata DB、
 crawler 與 web lookup 不在 core path。這讓缺少 market background 的商品仍能回播無關事件，同時不把
 unknown 靜默降級成 false、`Continuous` 或可執行 order。
 
@@ -197,7 +196,7 @@ MarketState 保存 source-derived facts；`TradingContext` 保存目前 event �
 - new order entry 是否允許。
 - matching 是否可用，以及 `Continuous`／`CallAuction` 類型。
 - 目前 event 的 auction observation 與 new-order entry restriction。
-- provider-neutral policy version。
+- policy version。
 
 context 只使用 session phase、目前 event、更新後 `MarketStateView` 與 neutral market signal。
 本次 `AuctionUncross` 的 matching 仍是 `CallAuction`，不能用 uncross 後的 state 把本次
@@ -213,21 +212,20 @@ orders 與 feedback 的 canonical contract 見[執行與帳務模型](execution-
 
 ## 7. 版本 identity
 
-目前版本 identity（`event_schema` 亦由公開 CLI 報告）：
+目前主要版本 identity（以 code 中的常數為準）：
 
 ```text
-cli_contract=4
-config_schema=3
 run_manifest=4
 market_types=11
-event_schema=9
-canonical_event=9
-cache_format=3
+event_schema=10
+canonical_event=10
+ordering_rule=5
+state_reducer=7
 accounting=8
 ```
 
 run manifest v4 的 `versions` 保存 event／canonical event、MarketState／reducer、ordering、replay、strategy API 與 execution／fill model 的實際版本，讓撮合語意變更可追溯。
 
-其他直接影響 replay 的 identity 包含 normalizer mapping、ordering rule、session calendar/profile/window、replay plan、MarketState reducer 與 canonical checksum version。任何不相容內容都需拒絕；cache 可由 compatible verified source 重建。
+其他直接影響 replay 的 identity 包含 marketdata manifest identity、ordering rule、session calendar/profile/window、replay plan、MarketState reducer 與 canonical checksum version。任何不相容內容都需拒絕。
 
-marketdata 欄位的 mapping 見 [ADR-0007](decisions/0007-marketdata-native.md)。
+marketdata 欄位的 mapping 見 [marketdata 介面](../interfaces/marketdata.md)。
