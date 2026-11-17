@@ -2,6 +2,7 @@
 members = [
     "crates/market-state",
     "crates/market-types",
+    "crates/osmium-md",
     "crates/osmium-runner",
     "crates/execution-sim",
     "crates/replay-engine",

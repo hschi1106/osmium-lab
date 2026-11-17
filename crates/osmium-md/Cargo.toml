@@ -1,0 +1,19 @@
+[package]
+name = "osmium-md"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+arrow-array = "60"
+arrow-schema = "60"
+market-state = { path = "../market-state" }
+market-types = { path = "../market-types" }
+parquet = { version = "60", default-features = false, features = ["arrow", "zstd"] }
+replay-engine = { path = "../replay-engine" }
+
+[dev-dependencies]
+parquet = { version = "60", default-features = false, features = ["arrow"] }

@@ -5,7 +5,7 @@ repo_root="$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd)"
 cd "$repo_root"
 
 usage() {
-  echo "usage: $0 focused <market|replay|strategy|execution|runner|config> | full" >&2
+  echo "usage: $0 focused <market|md|replay|strategy|execution|runner|config> | full" >&2
   exit 2
 }
 
@@ -18,6 +18,9 @@ case "$mode" in
     case "$area" in
       market)
         cargo test --locked -p market-types -p market-state
+        ;;
+      md)
+        cargo test --locked -p osmium-md
         ;;
       replay)
         cargo test --locked -p replay-engine

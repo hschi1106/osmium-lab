@@ -12,8 +12,9 @@ Domain truth 以本目錄的 canonical docs 為準；code 與 tests 是 executab
 2. [產品需求](product-requirements.md)：scope 與 correctness firewall。
 3. [架構總覽](architecture/overview.md)：元件 ownership 與依賴方向。
 4. [回播模型](architecture/replay-model.md)：event、ordering、auction 與 MarketState。
-5. [執行與帳務模型](architecture/execution-model.md)：strategy、execution 與 reconciliation。
-6. [ADR-0006](architecture/decisions/0006-external-strategies-and-cash-charges.md)：外部 strategy 與 cash charge 邊界。
+5. [marketdata 介面](interfaces/marketdata.md)：`osmium-md` 讀取、驗證與 event mapping。
+6. [執行與帳務模型](architecture/execution-model.md)：strategy、execution 與 reconciliation。
+7. [ADR-0006](architecture/decisions/0006-external-strategies-and-cash-charges.md)：外部 strategy 與 cash charge 邊界。
 
 ## 驗證
 
