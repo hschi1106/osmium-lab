@@ -5,7 +5,20 @@ use market_types::{
 };
 use strategy_api::SessionKind;
 
-use crate::partition::SessionPlanIdentity;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SessionPlanIdentity([u8; 32]);
+
+impl SessionPlanIdentity {
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
 
 /// Version of the exchange-calendar rules used by the built-in profiles.
 pub const SESSION_CALENDAR_VERSION: u16 = 1;

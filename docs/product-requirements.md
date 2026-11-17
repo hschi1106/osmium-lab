@@ -340,7 +340,7 @@ matching。缺少 contract economics、currency、multiplier 或 class identity 
 | 模擬帳務 | market／limit、scheduled depth、latency、fee／tax、P&L 與 reconciliation tests |
 | 操作 | CLI contract、offline flow 與 release smoke tests |
 
-需求與程式入口的對照見 [追溯矩陣](traceability.yaml)，操作驗證見 [驗證文件](operations/validation.md)。
+操作驗證見 [驗證文件](operations/validation.md)。
 
 ## 12. 參考資料
 
@@ -349,4 +349,4 @@ matching。缺少 contract economics、currency、multiplier 或 class identity 
 - [TPEx 上櫃股票 IP 行情網路規格書](https://dsp.tpex.org.tw/storage/regular_system/%E4%B8%8A%E6%AB%83%E8%82%A1%E7%A5%A8IP%E8%A1%8C%E6%83%85%E7%B6%B2%E8%B7%AF%E8%A6%8F%E6%A0%BC%E6%9B%B8%28V.12.18_TCPIP%29.pdf)
 - [TAIFEX 逐筆行情資訊傳輸作業手冊](https://www.taifex.com.tw/cht/8/techDocsDetails?idx=67)
 
-介面行為以 [Teralion](interfaces/teralion.md)、[TWSE](interfaces/twse.md)、[TPEx](interfaces/tpex.md) 與 [TAIFEX](interfaces/taifex.md) 文件中由 fixture 與測試固定的範圍為準。
+資料來源與範圍以 [ADR-0007](architecture/decisions/0007-marketdata-native.md) 為準。

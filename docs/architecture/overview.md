@@ -135,4 +135,4 @@ context 或 run output。
 - concurrency 不得改變 warnings、event order、callbacks、allocation 或 accounting result；
 - run output 使用 staging + create-new publication，不覆寫既有 evidence。
 
-Artifact lifecycle 與 identities 見[資料流程](data-flow.md)。
+資料來源與 identity 見 [ADR-0007](decisions/0007-marketdata-native.md)。

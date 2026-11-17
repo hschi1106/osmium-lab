@@ -9,7 +9,7 @@ use run_planner::{
     InstrumentContractConfig, InstrumentEconomicsConfig, MarkingPolicyConfig, OutputPolicy,
     PositionAccountingConfig, QuantityAllocationConfig, QuantityEvidence, ReplayDataPolicy,
     RoundingPolicy, RunConfig, SessionProfileId, SimulationConfig, SlippageModelConfig,
-    SourcePolicy, StrategyBinding,
+    StrategyBinding,
 };
 use strategy_api::{
     BinaryIdentity, CanonicalParamsChecksum, SessionKind, StrategyDeclaration, StrategyIdentity,
@@ -102,15 +102,12 @@ pub fn run_config(
         .collect();
     RunConfig {
         config_version: 2,
-        source: run_planner::SourceId::new("synthetic-source").unwrap(),
         trading_dates: dates,
         universe: universe.clone(),
         instrument_contracts,
         session_kinds: vec![SessionKind::Regular],
         strategy: strategy_binding(universe.clone(), vec![SessionKind::Regular]),
-        data_root: PathBuf::from(data_root),
-        source_policy: None,
-        cache_policy: None,
+        md_root: PathBuf::from(data_root),
         replay_data_policy: None,
         simulation: simulation(),
         instrument_economics: universe.into_iter().map(economics).collect(),
@@ -120,7 +117,6 @@ pub fn run_config(
 
 #[allow(dead_code)]
 pub fn degraded(mut config: RunConfig) -> RunConfig {
-    config.source_policy = Some(SourcePolicy::ExplicitDegraded);
     config.replay_data_policy = Some(ReplayDataPolicy::ExplicitDegraded);
     config
 }

@@ -11,8 +11,8 @@ permissions:
   contents: read
 
 jobs:
-  quality-and-release-acceptance:
-    name: Quality and acceptance tooling
+  quality:
+    name: Rust quality gates
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
@@ -25,64 +25,6 @@ jobs:
 
       - name: Run Rust quality gates
         run: |
-          cargo fmt --check
+          cargo fmt --all --check
           cargo test --workspace --locked
           cargo clippy --workspace --all-targets --locked -- -D warnings
-
-      - name: Run release and acceptance checks
-        run: |
-          tools/release/verify_license.sh
-          python3 tools/acceptance/generate_synthetic_fixtures.py
-          git diff --exit-code -- fixtures
-          tools/acceptance/verify_compact_fixtures.sh
-          tools/acceptance/verify_fixture_bundle.sh \
-            --bundle . \
-            --manifest fixtures/smoke/manifest.yaml
-          env CARGO_TARGET_DIR=target cargo build --release --locked \
-            -p osmium-cli --bin osmium
-          env CARGO_TARGET_DIR=target cargo build --release --locked \
-            --manifest-path tools/acceptance/osmium_fixture_data/Cargo.toml
-          target/release/osmium_fixture_data \
-            --config examples/smoke.yaml \
-            --fixtures fixtures/smoke/teralion \
-            --data-root target/smoke-data
-          env -u TERALION_API_KEY target/release/osmium \
-            data verify --config examples/smoke.yaml
-          env -u TERALION_API_KEY target/release/osmium \
-            cache prepare --config examples/smoke.yaml
-          env -u TERALION_API_KEY target/release/osmium \
-            replay --config examples/smoke.yaml
-          env -u TERALION_API_KEY target/release/osmium \
-            backtest --config examples/smoke.yaml --output target/smoke-run
-          env -u TERALION_API_KEY target/release/osmium \
-            inspect --run target/smoke-run
-          env -u TERALION_API_KEY target/release/osmium \
-            backtest --config examples/smoke-example-strategy.yaml \
-            --output target/custom-strategy-smoke-run
-          env -u TERALION_API_KEY target/release/osmium \
-            inspect --run target/custom-strategy-smoke-run
-          test "$(sed -n 's/^orders: //p' target/custom-strategy-smoke-run/run-summary.yaml)" = 1
-          test "$(sed -n 's/^fills: //p' target/custom-strategy-smoke-run/run-summary.yaml)" = 1
-          grep -q '"id": "example.price-threshold-buy-once"' \
-            target/custom-strategy-smoke-run/strategy.json
-
-      - name: Build and smoke-test release archive
-        run: |
-          tools/release/package.sh --output target/osmium-release.tar.gz
-          tools/release/smoke_clean_machine.sh \
-            --archive target/osmium-release.tar.gz \
-            --checksum target/osmium-release.tar.gz.sha256
-          SOURCE_DATE_EPOCH=0 tools/release/verify_reproducibility.sh \
-            --output target/release-repro-ci
-
-      - name: Upload acceptance evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-ci-${{ github.sha }}
-          path: |
-            target/osmium-release.tar.gz
-            target/osmium-release.tar.gz.sha256
-            target/release-repro-ci
-          if-no-files-found: error
-          retention-days: 30

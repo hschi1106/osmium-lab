@@ -11,32 +11,14 @@ use market_types::{
 };
 use strategy_api::{CanonicalParamsChecksum, SessionKind, StrategyDeclaration, StrategyIdentity};
 
-use crate::{
-    SourceId,
-    canonical::{
-        append_decimal, append_instrument, append_len, append_session, append_strategy_identity,
-        append_text,
-    },
+use crate::canonical::{
+    append_decimal, append_instrument, append_len, append_session, append_strategy_identity,
+    append_text,
 };
 
 pub const CONFIG_SCHEMA_VERSION: u16 = 2;
 pub const EFFECTIVE_CONFIG_VERSION: u16 = 7;
-pub const SOURCE_POLICY_VERSION: u16 = 1;
-pub const CACHE_POLICY_VERSION: u16 = 1;
 pub const REPLAY_DATA_POLICY_VERSION: u16 = 1;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum SourcePolicy {
-    Strict = 1,
-    ExplicitDegraded = 2,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum CachePolicy {
-    ReuseOrRebuild = 1,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -816,15 +798,12 @@ impl StrategyBinding {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunConfig {
     pub config_version: u16,
-    pub source: SourceId,
     pub trading_dates: Vec<TradingDate>,
     pub universe: Vec<InstrumentId>,
     pub instrument_contracts: Vec<InstrumentContractConfig>,
     pub session_kinds: Vec<SessionKind>,
     pub strategy: StrategyBinding,
-    pub data_root: PathBuf,
-    pub source_policy: Option<SourcePolicy>,
-    pub cache_policy: Option<CachePolicy>,
+    pub md_root: PathBuf,
     pub replay_data_policy: Option<ReplayDataPolicy>,
     pub simulation: SimulationConfig,
     pub instrument_economics: Vec<InstrumentEconomicsConfig>,
@@ -848,15 +827,12 @@ impl EffectiveConfigChecksum {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectiveRunConfig {
-    source: SourceId,
     trading_dates: Box<[TradingDate]>,
     universe: Box<[InstrumentId]>,
     instrument_contracts: Box<[InstrumentContractConfig]>,
     session_kinds: Box<[SessionKind]>,
     strategy: StrategyBinding,
-    data_root: PathBuf,
-    source_policy: SourcePolicy,
-    cache_policy: CachePolicy,
+    md_root: PathBuf,
     replay_data_policy: ReplayDataPolicy,
     simulation: SimulationConfig,
     instrument_economics: Box<[InstrumentEconomicsConfig]>,
@@ -872,7 +848,7 @@ impl EffectiveRunConfig {
                 actual: config.config_version,
             });
         }
-        if config.data_root.as_os_str().is_empty() {
+        if config.md_root.as_os_str().is_empty() {
             return Err(ConfigError::EmptyDataRoot);
         }
 
@@ -888,16 +864,9 @@ impl EffectiveRunConfig {
             return Err(ConfigError::StrategySessionsMismatch);
         }
 
-        let source_policy = config.source_policy.unwrap_or(SourcePolicy::Strict);
-        let cache_policy = config.cache_policy.unwrap_or(CachePolicy::ReuseOrRebuild);
         let replay_data_policy = config
             .replay_data_policy
             .unwrap_or(ReplayDataPolicy::Strict);
-        if matches!(source_policy, SourcePolicy::ExplicitDegraded)
-            != matches!(replay_data_policy, ReplayDataPolicy::ExplicitDegraded)
-        {
-            return Err(ConfigError::DegradedPolicyMismatch);
-        }
         let output_policy = config.output_policy.unwrap_or(OutputPolicy::CreateNew);
 
         validate_simulation(&config.simulation)?;
@@ -906,15 +875,12 @@ impl EffectiveRunConfig {
         validate_reference_economics(&instrument_contracts, &instrument_economics)?;
 
         let mut effective = Self {
-            source: config.source,
             trading_dates,
             universe,
             instrument_contracts,
             session_kinds,
             strategy: config.strategy,
-            data_root: config.data_root,
-            source_policy,
-            cache_policy,
+            md_root: config.md_root,
             replay_data_policy,
             simulation: config.simulation,
             instrument_economics,
@@ -926,11 +892,6 @@ impl EffectiveRunConfig {
         effective.checksum = EffectiveConfigChecksum(*blake3::hash(&canonical).as_bytes());
         effective.canonical_semantics = canonical.into_boxed_slice();
         Ok(effective)
-    }
-
-    #[must_use]
-    pub const fn source(&self) -> SourceId {
-        self.source
     }
 
     #[must_use]
@@ -966,18 +927,8 @@ impl EffectiveRunConfig {
     }
 
     #[must_use]
-    pub fn data_root(&self) -> &Path {
-        &self.data_root
-    }
-
-    #[must_use]
-    pub const fn source_policy(&self) -> SourcePolicy {
-        self.source_policy
-    }
-
-    #[must_use]
-    pub const fn cache_policy(&self) -> CachePolicy {
-        self.cache_policy
+    pub fn md_root(&self) -> &Path {
+        &self.md_root
     }
 
     #[must_use]
@@ -1015,11 +966,7 @@ impl EffectiveRunConfig {
         output.extend_from_slice(b"OSECFG01");
         output.extend_from_slice(&self.canonical_version().to_be_bytes());
         output.extend_from_slice(&CONFIG_SCHEMA_VERSION.to_be_bytes());
-        output.extend_from_slice(&SOURCE_POLICY_VERSION.to_be_bytes());
-        output.extend_from_slice(&CACHE_POLICY_VERSION.to_be_bytes());
         output.extend_from_slice(&REPLAY_DATA_POLICY_VERSION.to_be_bytes());
-        append_len(self.source.as_bytes().len(), &mut output)?;
-        output.extend_from_slice(self.source.as_bytes());
 
         append_len(self.trading_dates.len(), &mut output)?;
         for date in &self.trading_dates {
@@ -1042,8 +989,6 @@ impl EffectiveRunConfig {
             self.strategy.params_checksum(),
             &mut output,
         )?;
-        output.push(self.source_policy as u8);
-        output.push(self.cache_policy as u8);
         output.push(self.replay_data_policy as u8);
         append_simulation(&self.simulation, true, &mut output)?;
         append_len(self.instrument_economics.len(), &mut output)?;
@@ -1441,7 +1386,6 @@ pub enum ConfigError {
     EmptyDataRoot,
     StrategyUniverseMismatch,
     StrategySessionsMismatch,
-    DegradedPolicyMismatch,
     InvalidLatency,
     NegativeSlippage,
     InvalidFee,
@@ -1474,16 +1418,13 @@ impl fmt::Display for ConfigError {
                 write!(formatter, "invalid contract profile for {instrument:?}")
             }
             Self::EmptySessions => formatter.write_str("run config requires a session kind"),
-            Self::EmptyDataRoot => formatter.write_str("data_root must not be empty"),
+            Self::EmptyDataRoot => formatter.write_str("md_root must not be empty"),
             Self::StrategyUniverseMismatch => {
                 formatter.write_str("strategy universe differs from run config universe")
             }
             Self::StrategySessionsMismatch => {
                 formatter.write_str("strategy sessions differ from run config sessions")
             }
-            Self::DegradedPolicyMismatch => formatter.write_str(
-                "source and replay degraded policies must be enabled or disabled together",
-            ),
             Self::InvalidLatency => formatter.write_str(
                 "latency must fit in the replay time range when represented as milliseconds",
             ),

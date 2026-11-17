@@ -2,12 +2,8 @@
 
 | 詞彙 | 定義 |
 | --- | --- |
-| source partition | 以 source、market、trading date、symbol 與 session plan 識別的來源資料單位。 |
-| verified source | 已通過 query、cursor、payload、manifest 與 checksum 驗證的 immutable source revision。 |
-| replay cache | 由 verified source 正規化而成、可刪除並重建的 domain event artifact。 |
-| `received_at` | Teralion 擷取時間；只用於 archive query 與來源診斷。 |
 | `match_time` | 交易所事件時間；唯一 replay clock 與事件第一排序鍵。 |
-| domain event | 與 Teralion wire format 分離、通過驗證且具版本的市場事件。 |
+| domain event | 與來源格式分離、通過驗證且具版本的市場事件。 |
 | `MarketSignal` | provider-neutral 的 `Continuous`、`AuctionCollecting`、`AuctionUncross` 或 `Closed` 市場語義；raw provider flags 只在 boundary 解碼。 |
 | `AuctionObservation` | 一輪 call auction 的 partial evidence；purpose、delayed、disposal 與 volatility direction 各自保留 `Known`、`NoObservation` 或 `Unknown`。 |
 | `MarketState` | 由已排序事件歸納的商品狀態，並由 reducer 唯一持有 `MarketSignal` 與 `MarketPhase`。 |

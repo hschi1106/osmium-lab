@@ -15,8 +15,7 @@ invariants 與 workflow。
 ## Ownership 與文件
 
 ```text
-provider      → wire → DomainEvent
-data-sync     → source/cache lifecycle
+marketdata    → parquet → DomainEvent（改建中，見 ADR-0007）
 planner       → validated, frozen execution facts
 replay        → ordering/playback
 market-state  → cross-event state
@@ -31,10 +30,7 @@ CLI           → composition/user contract
 
 - market／event／reducer／auction → `docs/architecture/replay-model.md`
 - execution／accounting／strategy → `docs/architecture/execution-model.md`
-- provider／source／cache → `docs/architecture/data-flow.md` + `docs/interfaces/**`
-- config／planner → `docs/config-reference.md`
-- CLI → `docs/operations/cli.md`
-- versions／evidence → `docs/traceability.yaml`
+- marketdata／source／architecture 改建 → `docs/architecture/decisions/0007-marketdata-native.md`
 
 ## High-risk invariants
 
@@ -45,7 +41,7 @@ Known(v)      → update
 Unknown       → invalidate
 ```
 
-不得猜測 unknown evidence。Provider wire 與 domain semantics 必須分離。Auction event matching 不等於
+不得猜測 unknown evidence。來源欄位與 domain semantics 必須分離。Auction event matching 不等於
 post-event state；修改 auction／reducer 前必讀 `replay-model.md`。Known Periodic uncross result 保留
 round evidence；下一 round 以 `delayed=false` 開始，直到 explicit delay trigger。維持
 `match_time` 唯一 replay clock、complete snapshot replacement、no queue reconstruction、post-event
@@ -79,8 +75,7 @@ locate owner → read contract → inspect code/tests → smallest coherent chan
 → regression → identity check → focused/full validation
 ```
 
-只有 contract 改變才更新 canonical docs。普通 config／sync／replay／backtest／inspect 問題改用
-`osmium-operator`。
+只有 contract 改變才更新 canonical docs。
 
 ## Validation
 

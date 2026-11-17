@@ -7,10 +7,10 @@ use market_types::{
     Symbol,
 };
 use run_planner::{
-    CachePolicy, ConfigError, Currency, DayTradeMatchingConfig, DayTradeTaxConfig,
-    EFFECTIVE_CONFIG_VERSION, EffectiveRunConfig, InstrumentChargeConfig, InstrumentContractConfig,
+    ConfigError, Currency, DayTradeMatchingConfig, DayTradeTaxConfig, EFFECTIVE_CONFIG_VERSION,
+    EffectiveRunConfig, InstrumentChargeConfig, InstrumentContractConfig,
     InstrumentEconomicsConfig, InstrumentReferenceConfig, LatencyConfig, ReplayDataPolicy,
-    ScheduledExecutionConfig, SessionProfileId, SlippageModelConfig, SourcePolicy,
+    ScheduledExecutionConfig, SessionProfileId, SlippageModelConfig,
 };
 use strategy_api::SessionKind;
 
@@ -36,10 +36,8 @@ fn effective_config_applies_defaults_and_canonicalizes_sets() {
     assert_eq!(effective.trading_dates(), [date("2026-07-27")]);
     assert_eq!(effective.universe().len(), 1);
     assert_eq!(effective.session_kinds(), [SessionKind::Regular]);
-    assert_eq!(effective.source_policy(), SourcePolicy::Strict);
-    assert_eq!(effective.cache_policy(), CachePolicy::ReuseOrRebuild);
     assert_eq!(effective.replay_data_policy(), ReplayDataPolicy::Strict);
-    assert_eq!(effective.data_root(), Path::new("target/test-data"));
+    assert_eq!(effective.md_root(), Path::new("target/test-data"));
     assert!(effective.canonical_semantics().starts_with(b"OSECFG01"));
     assert_eq!(effective.canonical_version(), EFFECTIVE_CONFIG_VERSION);
 }

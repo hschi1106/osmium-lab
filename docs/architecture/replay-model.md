@@ -220,4 +220,4 @@ run manifest v4 的 `versions` 保存 event／canonical event、MarketState／re
 
 其他直接影響 replay 的 identity 包含 normalizer mapping、ordering rule、session calendar/profile/window、replay plan、MarketState reducer 與 canonical checksum version。任何不相容內容都需拒絕；cache 可由 compatible verified source 重建。
 
-來源格式的具體 mapping 見[Teralion 介面](../interfaces/teralion.md)及其市場文件連結。
+marketdata 欄位的 mapping 見 [ADR-0007](decisions/0007-marketdata-native.md)。

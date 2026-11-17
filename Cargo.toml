@@ -3,10 +3,6 @@ members = [
     "crates/market-state",
     "crates/market-types",
     "crates/osmium-runner",
-    "crates/osmium-config",
-    "crates/providers/teralion",
-    "crates/osmium-cli",
-    "crates/data-sync",
     "crates/execution-sim",
     "crates/replay-engine",
     "crates/run-planner",
@@ -18,7 +14,7 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "AGPL-3.0-only"
+publish = false
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

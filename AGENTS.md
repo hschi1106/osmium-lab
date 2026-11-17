@@ -1,12 +1,10 @@
 # Agent Instructions
 
-`osmium-lab` 是 Rust market replay 與 backtesting platform。Domain truth 以 canonical docs 為準；不確定時從 [`docs/README.md`](docs/README.md) 導航。Code 與 tests 是 executable truth。若需求與 canonical contract 衝突，修改前先指出。
+`osmium-lab` 是 Rust market replay 與 backtesting platform，唯一資料源是 marketdata（`/srv/md/v1`）。Domain truth 以 canonical docs 為準；不確定時從 [`docs/README.md`](docs/README.md) 導航。Code 與 tests 是 executable truth。若需求與 canonical contract 衝突，修改前先指出。
 
 ## Skills
 
 - 修改、review、debug、test 或設計 implementation／architecture：使用 `osmium-engineering`。
-- 操作既有 build 的 config、data、cache、replay、backtest 或 artifacts：使用 `osmium-operator`。
-- 操作問題若需要 Rust、architecture 或 domain semantic change，轉交 `osmium-engineering`。
 
 ## Repository rules
 
