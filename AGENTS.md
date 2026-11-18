@@ -5,6 +5,7 @@
 ## Skills
 
 - 修改、review、debug、test 或設計 implementation／architecture：使用 `osmium-engineering`。
+- 使用系統跑回測（寫策略、寫設定、執行、分析與診斷結果）：使用 `osmium-backtest`。
 
 ## Repository rules
 
