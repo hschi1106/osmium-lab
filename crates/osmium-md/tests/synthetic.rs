@@ -8,8 +8,8 @@ use arrow_array::{
 };
 use osmium_md::{DayInstruments, DayManifest, FeedDay, MdError, MdRoot, MissingLotSize, Table};
 use osmium_types::{
-    Book, Currency, Date, DelayDirection, Feed, InstrumentType, Level, Message, MessageBody, Phase,
-    Price, Shares, Symbol, Venue,
+    Book, Currency, Date, DayTradeFlag, DelayDirection, Feed, InstrumentType, Level, Message,
+    MessageBody, Phase, Price, Shares, Symbol, Venue,
 };
 use parquet::{arrow::ArrowWriter, file::metadata::KeyValue, file::properties::WriterProperties};
 
@@ -96,6 +96,8 @@ struct InstrumentRow {
     interval: Option<i32>,
     currency: &'static str,
     derived: bool,
+    day_trade: Option<&'static str>,
+    non_10_par: Option<bool>,
 }
 
 fn instrument(symbol: &'static str, lot: Option<i32>) -> InstrumentRow {
@@ -109,6 +111,8 @@ fn instrument(symbol: &'static str, lot: Option<i32>) -> InstrumentRow {
         interval: Some(0),
         currency: "TWD",
         derived: false,
+        day_trade: Some("A"),
+        non_10_par: Some(false),
     }
 }
 
@@ -284,6 +288,16 @@ fn instrument_columns(rows: &[InstrumentRow]) -> Columns {
             "derived",
             Arc::new(BooleanArray::from_iter(
                 rows.iter().map(|row| Some(row.derived)),
+            )),
+        ),
+        (
+            "f1_daytrade_flag",
+            Arc::new(StringArray::from_iter(rows.iter().map(|row| row.day_trade))),
+        ),
+        (
+            "f1_non10_par",
+            Arc::new(BooleanArray::from_iter(
+                rows.iter().map(|row| row.non_10_par),
             )),
         ),
     ]
@@ -766,6 +780,8 @@ fn instruments_keep_what_the_source_provides() {
             kind: "ETF",
             lot: Some(100),
             currency: "USD",
+            day_trade: Some("B"),
+            non_10_par: Some(true),
             ..instrument("00636K", Some(100))
         },
         InstrumentRow {
@@ -785,6 +801,9 @@ fn instruments_keep_what_the_source_provides() {
             limit_down: Some(0.0),
             interval: None,
             derived: true,
+            // A derived day has none of the F1 fields.
+            day_trade: None,
+            non_10_par: None,
             ..instrument("A00102", None)
         },
     ];
@@ -802,6 +821,8 @@ fn instruments_keep_what_the_source_provides() {
     assert_eq!(etf.shares_per_lot, Some(100));
     assert_eq!(etf.match_interval_s, Some(0));
     assert!(!etf.derived);
+    assert_eq!(etf.day_trade, Some(DayTradeFlag::BuyFirst));
+    assert_eq!(etf.non_10_par, Some(true));
 
     let warrant = instruments.get(symbol("030001")).unwrap();
     assert_eq!(warrant.instrument_type, InstrumentType::WarrantCall);
@@ -810,6 +831,8 @@ fn instruments_keep_what_the_source_provides() {
     assert_eq!(warrant.limit_up, Some(price("9999.95")));
     assert_eq!(warrant.limit_down, Some(price("0.01")));
     assert_eq!(warrant.match_interval_s, Some(300));
+    assert_eq!(warrant.day_trade, Some(DayTradeFlag::Both));
+    assert_eq!(warrant.non_10_par, Some(false));
 
     let bond = instruments.get(symbol("A00102")).unwrap();
     assert_eq!(bond.instrument_type, InstrumentType::Other);
@@ -824,6 +847,7 @@ fn instruments_keep_what_the_source_provides() {
     );
     assert_eq!(bond.match_interval_s, None);
     assert!(bond.derived);
+    assert_eq!((bond.day_trade, bond.non_10_par), (None, None));
 }
 
 #[test]
@@ -844,6 +868,13 @@ fn instruments_with_undefined_values_are_rejected() {
             },
         ),
         ("lot", instrument("A", Some(0))),
+        (
+            "day-trade",
+            InstrumentRow {
+                day_trade: Some("C"),
+                ..instrument("A", Some(1_000))
+            },
+        ),
         ("symbol", instrument("TOO-LONG!", Some(1_000))),
     ] {
         let mut fixture = Fixture::new(vec![], vec![]);

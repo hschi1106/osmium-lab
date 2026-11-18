@@ -24,6 +24,8 @@ pub(crate) enum ColumnType {
     Int32,
     Int64,
     Float64,
+    /// `date32[day]`.
+    Date32,
     /// `timestamp[us, UTC]`.
     TimestampMicrosUtc,
 }
@@ -37,7 +39,8 @@ impl ColumnType {
             | (Self::Int16, DataType::Int16)
             | (Self::Int32, DataType::Int32)
             | (Self::Int64, DataType::Int64)
-            | (Self::Float64, DataType::Float64) => true,
+            | (Self::Float64, DataType::Float64)
+            | (Self::Date32, DataType::Date32) => true,
             (Self::TimestampMicrosUtc, DataType::Timestamp(TimeUnit::Microsecond, Some(zone))) => {
                 zone.as_ref() == "UTC"
             }
@@ -114,6 +117,36 @@ impl ParquetFile {
                 sorted_symbols
                     .get(first)
                     .is_some_and(|symbol| symbol.as_bytes() <= max)
+            })
+            .collect()
+    }
+
+    /// Row groups whose `trade_date` statistics may contain `epoch_days`.
+    ///
+    /// The yearly tables are sorted by `(trade_date, symbol)`.
+    pub(crate) fn row_groups_for_date(&self, epoch_days: i32) -> Vec<usize> {
+        let metadata = self.builder.metadata();
+        let column = metadata
+            .file_metadata()
+            .schema_descr()
+            .columns()
+            .iter()
+            .position(|column| column.name() == "trade_date");
+        let days = |bytes: &[u8]| <[u8; 4]>::try_from(bytes).ok().map(i32::from_le_bytes);
+        (0..metadata.num_row_groups())
+            .filter(|&index| {
+                let Some(stats) =
+                    column.and_then(|column| metadata.row_group(index).column(column).statistics())
+                else {
+                    return true;
+                };
+                let (Some(min), Some(max)) = (
+                    stats.min_bytes_opt().and_then(days),
+                    stats.max_bytes_opt().and_then(days),
+                ) else {
+                    return true;
+                };
+                min <= epoch_days && epoch_days <= max
             })
             .collect()
     }

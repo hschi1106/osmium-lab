@@ -8,9 +8,14 @@ mod instruments;
 mod layout;
 mod manifest;
 mod parquet_io;
+mod reference;
 
 pub use error::MdError;
 pub use feed_day::{FeedDay, FeedDayIdentity, Messages, MissingLotSize};
 pub use instruments::DayInstruments;
 pub use layout::{DEFAULT_MD_ROOT, MdRoot, Table};
 pub use manifest::{DayManifest, ManifestEntry, SCHEMA_VERSION};
+pub use reference::{
+    CalendarDay, CorporateActions, CreditQuotas, DailyQuotes, MarketEvents, ReferenceFile,
+    TradingCalendar,
+};

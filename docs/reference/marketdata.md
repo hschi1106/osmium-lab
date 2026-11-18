@@ -13,6 +13,8 @@ osmium 依賴 marketdata schema 版本 `1`（`osmium_md::SCHEMA_VERSION`）：
 
 - manifest 列的 `schema_version` 必須是 `"1"`。
 - 檔案 footer 的 `md.schema_version`、`md.git_commit` 必須與 manifest 列相同。
+- 參考表（第 9 節）沒有 manifest 列，只檢查檔案 footer：`md.schema_version` 必須是 `"1"`，
+  `md.git_commit` 必須存在。
 - osmium 讀取的每一個欄位，在讀任何一列之前先檢查名稱與 Arrow 型別；缺欄或型別不同即
   `MdError::Schema`。沒有讀取的欄位不檢查，因為版本 1 之內表可以加欄。
 
@@ -20,7 +22,12 @@ osmium 依賴 marketdata schema 版本 `1`（`osmium_md::SCHEMA_VERSION`）：
 | --- | --- |
 | `books` | `symbol` string、`exch_ts` timestamp[µs, UTC]、`seq` int64、`phase` string、`has_trade` bool、`n_bid`／`n_ask` int8、`bid_px_1..5`／`ask_px_1..5` float64、`bid_qty_1..5`／`ask_qty_1..5` int64、`bid_mkt_qty`／`ask_mkt_qty` int64、`is_indicative` bool、`indicative_px` float64、`indicative_qty` int64、`delay_open`／`delay_close` bool、`delay_state` int8 |
 | `trades` | `symbol` string、`exch_ts` timestamp[µs, UTC]、`seq` int64、`sub_seq` int16、`price` float64、`qty` int64、`cum_qty` int64、`phase` string |
-| `instruments` | `symbol` string、`instrument_type` string、`shares_per_lot` int32、`ref_price`／`limit_up`／`limit_down` float64、`match_interval_s` int32、`currency` string、`derived` bool |
+| `instruments` | `symbol` string、`instrument_type` string、`shares_per_lot` int32、`ref_price`／`limit_up`／`limit_down` float64、`match_interval_s` int32、`currency` string、`derived` bool、`f1_daytrade_flag` string、`f1_non10_par` bool |
+| `qc/calendar` | `trade_date` date32、`twse_open`／`tpex_open` bool |
+| `corp_actions` | `symbol` string、`ex_date` date32、`action` string、`before_price`／`ref_price`／`cash_dividend`／`stock_dividend`／`value` float64 |
+| `events` | `symbol` string、`event` string、`start_date`／`end_date` date32 |
+| `daily` | `trade_date` date32、`symbol` string、`ref_price`／`limit_down`／`close`／`close_bid_px`／`close_ask_px` float64 |
+| `daily_ext` | `trade_date` date32、`symbol` string、`margin_limit`／`short_limit` int64 |
 | `manifest` | `job`、`table`、`part`、`path`、`schema_version`、`git_commit`、`code_hash`、`inputs_hash` string；`rows`、`seq_gaps`、`seq_dup` int64；`partial` bool |
 
 marketdata 改成不相容的版本（`/srv/md/v2`）時，osmium 必須跟著修改並更新本頁。
@@ -36,7 +43,7 @@ marketdata 改成不相容的版本（`/srv/md/v2`）時，osmium 必須跟著�
 | `TwseF23` | `TWSE_F23` | TWSE | 盤中零股（`OddLot`） | 股 | 4 |
 | `TpexF23` | `TPEX_F23` | TPEx | 盤中零股 | 股 | 5 |
 
-TAIFEX、`sinopac_ticks`、`bars_1m`、`daily` 不讀取。
+TAIFEX、`sinopac_ticks`、`bars_1m`、`fundamentals` 不讀取。`daily` 等參考表只供帳務使用（第 9 節），不產生訊息。
 
 ## 3. 讀取與一致性
 
@@ -158,10 +165,42 @@ FeedDay::load(root, &manifest, feed, &instruments, selection, missing_lot_size)
 | `match_interval_s` | `match_interval_s` | 撮合循環秒數，0 是逐筆交易；null → `None` |
 | `currency` | `currency` | `TWD` → `Twd`，其他 → `Foreign` |
 | `derived` | `derived` | 這一列不是交易所播送的資料，而是由盤後資料推導 |
+| `day_trade` | `f1_daytrade_flag` | `A` → `Both`（可先買後賣、先賣後買），`B` → `BuyFirst`，null → `None`；其他值是錯誤 |
+| `non_10_par` | `f1_non10_par` | 面額不是 10 元；null → `None` |
 
 交易規則用到的商品分類與升降單位由 `osmium-matching` 決定，見[撮合規格](matching.md)。
 
-## 9. 資料範圍與已知缺口
+## 9. 參考表
+
+帳務（[帳務規格](accounting.md)）需要的盤後與公司行動資料。這些表不分日目錄、沒有 manifest 列，
+`ReferenceFile`（路徑、列數、`md.git_commit`）供 run 的輸出記錄。價格與每股金額在來源是 float64，
+讀取時轉成整數，**不是精確往返即 `Inconsistent`**，不會捨入。
+
+| 讀取 | 檔案 | 內容與規則 |
+| --- | --- | --- |
+| `TradingCalendar::load(root)` | `qc/calendar.parquet` | 每個日曆日一列，依日期遞增（否則錯誤）。`trading_days(venue)` 是該市場開市的日子 |
+| `CorporateActions::load(root, from)` | `corp_actions.parquet` | `ex_date ≥ from` 的列；更早的列不轉換，所以舊資料無法表示時不影響 run。`action` 必須是 `dividend`、`rights`、`split`、`par_change`、`reverse_split`、`reduction_loss`、`reduction_cash`。`before_price`、`ref_price` 必填（1e-4 元）；`cash_dividend`、`stock_dividend`、`value` 是 1e-10 元（`PerShare`），範圍 0 至 100,000；`value` 不是正數時讀成 `None`（認購權的理論價值可以是負的） |
+| `MarketEvents::load(root, from)` | `events.parquet` | `event` 必須是 `disposition`、`halt`、`short_suspended`、`daytrade_suspended`。保留 `end_date ≥ from` 的列，以及 `end_date` 為 null、`start_date` 在 `from` 之前 366 天以內的列。`end_date < start_date` 是錯誤 |
+| `DailyQuotes::load(root, date)` | `daily/{YYYY}.parquet` | 一個交易日的官方盤後價格。以 `trade_date` 的 row-group statistics 剪枝（一個交易日一個 row group）。價格 null 或 0 → `None`。同一天的 `symbol` 必須嚴格遞增 |
+| `CreditQuotas::load(root, date)` | `daily_ext/{YYYY}.parquet` | 一個交易日的融資、融券限額（股）；負數是錯誤 |
+
+實測（2026-11，`/srv/md/v1`）：
+
+- `qc/calendar`：1,250 列，2022-01-03 → 2026-10-16，1,160 個交易日；每一列 `twse_open` 都等於
+  `tpex_open`。日曆沒有未來的日子，最後幾個交易日的交割日必須由使用者補上
+  （[帳務規格](accounting.md) 7.1）。
+- `corp_actions`（2022-01-03 起 11,900 列）全部可以精確轉換。`dividend` 11,247 列、`rights` 437、
+  `reduction_loss` 107、`reduction_cash` 77、`par_change` 21、`reverse_split` 6、`split` 5。
+- `dividend` 有 324 列沒有 `cash_dividend` 也沒有 `stock_dividend`，只有 `value`：來源
+  `TaiwanStockDividend` 沒有對應的公告（ETF、REIT、特別股、TDR 為主）。其中 16 列的
+  `ref_price` 等於 `before_price`（同一天普通股現金增資、特別股本身沒有除權息）。
+- 只有現金股利的列，`value` 與 `cash_dividend` 相差超過 1e-6 的有 23 列：21 列是 1e-6 的捨入差，
+  2 列是 `00774C`（2022-04-22、2022-10-21），股利金額與價格不是同一種幣別。
+- 減資的列沒有減資比例與退還金額；`par_change` 有 1 列不是整數倍（6548，2.5 倍）。
+- `events`：自 2022-01-03 起生效的列 45,290；`short_suspended` 有 1,211 列 `end_date` 為 null。
+- `daily`、`daily_ext` 全部可以精確轉換。
+
+## 10. 資料範圍與已知缺口
 
 實測於 2026-11（資料到 2026-10-16）。
 
@@ -184,13 +223,13 @@ FeedDay::load(root, &manifest, feed, &instruments, selection, missing_lot_size)
 
 `TWSE_F6` 在 2022-01-03 → 2024-03-29：`delay_open`／`delay_close` 是 null，另有第 6 節的兩種形狀。
 
-## 10. 目前的限制
+## 11. 目前的限制
 
 - 一個 feed 一天解碼後整個留在記憶體，每則訊息約 140 bytes：`TWSE_F6` 一天約 1–5 GB，
   `TWSE_F17` 一天（約 7,400 萬則）約 10 GB。串流讀取與衍生快取排在效能階段。
 - 指定 `selection` 時，為了計算 `observed_time`，會另外讀一次整個 feed 的 `seq` 與 `exch_ts`。
 
-## 11. 檢視與比對
+## 12. 檢視與比對
 
 ```sh
 cargo run --release -p osmium-md --example dump -- /srv/md/v1 2026-10-08 TWSE_F6 2330

@@ -55,6 +55,15 @@ pub enum Currency {
     Foreign,
 }
 
+/// The marketdata `f1_daytrade_flag`: which same-day round trips the exchange allows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DayTradeFlag {
+    /// `A`: buy then sell, and sell then buy.
+    Both,
+    /// `B`: buy then sell only.
+    BuyFirst,
+}
+
 /// One row of the marketdata `instruments` table: an instrument on one trading date.
 ///
 /// A `None` field is one the source did not provide for that date; nothing is inferred.
@@ -74,6 +83,11 @@ pub struct Instrument {
     /// The row does not come from the exchange's instrument broadcast: part of it was
     /// derived from daily quotes, and `currency` is a default rather than a fact.
     pub derived: bool,
+    /// `None` when the instrument may not be day traded, or when the row is derived
+    /// and the flag is not known.
+    pub day_trade: Option<DayTradeFlag>,
+    /// Whether the par value is not 10 yuan; `None` when the row is derived.
+    pub non_10_par: Option<bool>,
 }
 
 #[cfg(test)]

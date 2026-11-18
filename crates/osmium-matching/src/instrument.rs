@@ -203,6 +203,8 @@ mod tests {
             match_interval_s: Some(0),
             currency: Currency::Twd,
             derived: false,
+            day_trade: None,
+            non_10_par: Some(false),
         }
     }
 
