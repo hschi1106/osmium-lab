@@ -21,9 +21,17 @@ Repository 不 commit 交易所真實資料；需要真實 marketdata 的驗證�
 
 ```sh
 OSMIUM_MD_ROOT=/srv/md/v1 cargo test --locked -p osmium-md --release -- --ignored --nocapture
+OSMIUM_MD_ROOT=/srv/md/v1 cargo test --locked -p osmium-replay --release -- --ignored --nocapture
 ```
 
 `OSMIUM_MD_ROOT` 未設定時使用 `/srv/md/v1`。這些測試只讀取資料，不寫入 marketdata 目錄。
+
+| Crate | 檢查的內容 |
+| --- | --- |
+| `osmium-md` | 每個 feed 的訊息種類、列數對帳、`observed_time`、指定商品與整個 feed 讀到相同的訊息 |
+| `osmium-replay` | 四個 feed 合併後的全序與時間線；每本 book 恰有一列開盤與一列收盤撮合列、撮合方式的推論與 `match_interval_s` 相同、每一則訊息的 `phase` 與 [`osmium-book` 的模式](../reference/matching.md)一致 |
+
+`osmium-replay` 的測試同時載入數個 feed 的一整天，約需 6 GB 記憶體。
 
 ### 與獨立實作逐位元組比對
 

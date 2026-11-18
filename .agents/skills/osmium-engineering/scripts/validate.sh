@@ -26,7 +26,7 @@ case "$mode" in
         cargo test --locked -p osmium-types -p osmium-book
         ;;
       replay)
-        cargo test --locked -p replay-engine
+        cargo test --locked -p osmium-types -p osmium-replay -p replay-engine
         ;;
       strategy)
         cargo test --locked -p strategy-api

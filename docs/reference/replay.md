@@ -3,7 +3,8 @@
 `osmium-replay` 與 `osmium-runner` 如何把 marketdata 的訊息、模擬委託與策略排成一條決定性的時間線。
 設計決策見 [ADR-0008](../design/decisions/0008-full-market-matching-simulation.md) 第 5 點。
 
-狀態：規格已定案，實作進行中（見[架構的遷移狀態](../design/architecture.md#遷移狀態)）。
+狀態：第 2、3 節由 `osmium-replay` 實作（`MergedFeeds`、`Timeline`）；第 4 節以後屬於
+`osmium-runner`，尚未實作（見[架構的遷移狀態](../design/architecture.md#遷移狀態)）。
 
 ## 1. 訊息
 

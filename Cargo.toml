@@ -4,6 +4,7 @@ members = [
     "crates/market-types",
     "crates/osmium-book",
     "crates/osmium-md",
+    "crates/osmium-replay",
     "crates/osmium-types",
     "crates/osmium-runner",
     "crates/execution-sim",

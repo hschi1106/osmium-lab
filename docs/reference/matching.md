@@ -82,6 +82,17 @@
 - `Collecting(*)` 的行為完全相同（第 7 節），括號內只是原因。
 - 分盤 book 的暫緩列不改變模式（本來就在收單）。
 - 資料在收盤撮合列之前結束時，當天結束即視為 `Closed`。
+- 模式與訊息的 `phase` 一致：每一則訊息處理之前，它所屬 book 的模式是 `Collecting(Open)` 時
+  `phase` 是 `OPEN_AUCTION`，`Continuous` 時是 `CONTINUOUS`，`Collecting(Volatility)` 時是
+  `PERIODIC_AUCTION`，`Collecting(Close)` 時是 `CLOSE_AUCTION`，`Collecting(Periodic)` 時是
+  `PERIODIC_AUCTION` 或 `CLOSE_AUCTION`，`Closed` 之後沒有訊息。只有兩種例外，都不影響模式：
+  - 2024-03-29 以前的 `TWSE_F6`，延後開盤的 book 在 09:00 之後、開盤撮合列之前的試撮列標成
+    `PERIODIC_AUCTION`。
+  - 時鐘是整個 feed 的 `observed_time`，所以一本 book 最後幾列 `CONTINUOUS`（`exch_ts` 早於
+    13:25:00）可能排在別本 book 13:25:00 的訊息之後，這時模式已經是 `Collecting(Close)`。
+
+  以上以及第 4.1 節的推論（在有 `match_interval_s` 的日子與它完全相同）由
+  `osmium-replay` 的真實資料測試逐列檢查。
 
 ### 4.3 收單時間
 

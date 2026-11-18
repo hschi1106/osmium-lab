@@ -21,6 +21,19 @@ impl Timestamp {
         self.0
     }
 
+    /// This instant moved forward by `micros` microseconds (backward when negative).
+    ///
+    /// # Panics
+    ///
+    /// Panics on overflow.
+    #[must_use]
+    pub const fn plus_micros(self, micros: i64) -> Self {
+        match self.0.checked_add(micros) {
+            Some(moved) => Self(moved),
+            None => panic!("timestamp overflow"),
+        }
+    }
+
     /// The calendar date in Taiwan at this instant.
     ///
     /// # Panics

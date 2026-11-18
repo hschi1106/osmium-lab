@@ -534,6 +534,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "osmium-replay"
+version = "0.1.0"
+dependencies = [
+ "osmium-book",
+ "osmium-md",
+ "osmium-types",
+]
+
+[[package]]
 name = "osmium-runner"
 version = "0.1.0"
 dependencies = [
