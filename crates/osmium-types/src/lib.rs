@@ -3,6 +3,7 @@
 //! Prices, quantities and times are integers; nothing here uses binary floating point.
 //! The types carry no trading rules: those live in the crates that own them.
 
+mod account;
 mod instrument;
 mod market;
 mod message;
@@ -14,6 +15,7 @@ mod shares;
 mod symbol;
 mod time;
 
+pub use account::Position;
 pub use instrument::{Currency, DayTradeFlag, Instrument, InstrumentType};
 pub use market::{Board, Feed, Venue};
 pub use message::{

@@ -27,7 +27,6 @@ pub use facts::{
     DayFacts, DayTrade, PreviousDay, SecurityClass, SecurityFacts, short_margin_ratio,
 };
 pub use journal::{Entry, Item, Realized, RealizedKind};
-pub use ledger::{
-    DayClose, DayOpen, Diagnostic, ForcedOrder, ForcedReason, Ledger, Maintenance, Position,
-};
+pub use ledger::{DayClose, DayOpen, Diagnostic, ForcedOrder, ForcedReason, Ledger, Maintenance};
+pub use osmium_types::Position;
 pub use position::{CashLot, Holding, LotId, MarginLot, OwedLot, ShortLot};

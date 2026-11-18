@@ -248,6 +248,19 @@ pub enum Request {
     Reprice,
 }
 
+impl Request {
+    /// A stable name for output files.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::New => "New",
+            Self::Cancel => "Cancel",
+            Self::Reduce => "Reduce",
+            Self::Reprice => "Reprice",
+        }
+    }
+}
+
 /// Why the exchange cancelled a quantity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CancelReason {

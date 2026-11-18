@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use osmium_types::{
     Board, DailyQuote, Date, Money, NewOrder, OrderEvent, OrderEventKind, OrderId, OrderPrice,
-    Price, RejectReason, Shares, Side, Symbol, TimeInForce, TradeKind,
+    Position, Price, RejectReason, Shares, Side, Symbol, TimeInForce, TradeKind,
 };
 
 use crate::{
@@ -98,16 +98,6 @@ pub struct DayClose {
     /// A margin call is outstanding.
     pub call: bool,
     pub diagnostics: Vec<Diagnostic>,
-}
-
-/// Share counts of one instrument as they stand during the day.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Position {
-    /// Cash shares, including today's fills; negative while shares sold first are not
-    /// bought back.
-    pub cash: i64,
-    pub margin: i64,
-    pub short: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
