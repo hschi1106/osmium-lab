@@ -28,3 +28,4 @@ jobs:
           cargo fmt --all --check
           cargo test --workspace --locked
           cargo clippy --workspace --all-targets --locked -- -D warnings
+          RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked

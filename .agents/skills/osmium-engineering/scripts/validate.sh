@@ -5,7 +5,7 @@ repo_root="$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd)"
 cd "$repo_root"
 
 usage() {
-  echo "usage: $0 focused <market|md|book|replay|matching|ledger|strategy|execution|runner|config> | full" >&2
+  echo "usage: $0 focused <types|md|book|replay|matching|ledger|strategy|runner|cli|examples> | full" >&2
   exit 2
 }
 
@@ -16,8 +16,8 @@ case "$mode" in
     area="${2:-}"
     [[ $# -eq 2 ]] || usage
     case "$area" in
-      market)
-        cargo test --locked -p market-types -p market-state
+      types)
+        cargo test --locked -p osmium-types
         ;;
       md)
         cargo test --locked -p osmium-types -p osmium-md
@@ -26,7 +26,7 @@ case "$mode" in
         cargo test --locked -p osmium-types -p osmium-book
         ;;
       replay)
-        cargo test --locked -p osmium-types -p osmium-replay -p replay-engine
+        cargo test --locked -p osmium-types -p osmium-replay
         ;;
       matching)
         cargo test --locked -p osmium-types -p osmium-book -p osmium-matching
@@ -35,16 +35,16 @@ case "$mode" in
         cargo test --locked -p osmium-types -p osmium-ledger
         ;;
       strategy)
-        cargo test --locked -p strategy-api
-        ;;
-      execution)
-        cargo test --locked -p execution-sim
+        cargo test --locked -p osmium-strategy -p osmium-examples
         ;;
       runner)
-        cargo test --locked -p osmium-runner
+        cargo test --locked -p osmium-fixture -p osmium-runner -p osmium-examples
         ;;
-      config)
-        cargo test --locked -p run-planner
+      cli)
+        cargo test --locked -p osmium-cli
+        ;;
+      examples)
+        cargo test --locked -p osmium-examples
         ;;
       *)
         usage
@@ -56,6 +56,7 @@ case "$mode" in
     cargo fmt --all --check
     cargo test --workspace --locked
     cargo clippy --workspace --all-targets --locked -- -D warnings
+    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
     ;;
   *)
     usage
