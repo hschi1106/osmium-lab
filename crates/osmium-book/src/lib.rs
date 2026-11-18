@@ -4,8 +4,10 @@
 //! A book is one instrument on one board. Its state is what the exchange has disclosed
 //! so far: nothing here looks ahead, and nothing here knows about simulated orders.
 
+mod map;
 mod method;
 mod state;
 
+pub use map::{BookHasher, BookMap};
 pub use method::{Method, MethodEvidence};
 pub use state::{BookId, BookState, Collecting, Indicative, Mode, is_auction_result};

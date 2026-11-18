@@ -1,13 +1,13 @@
 use std::collections::{BTreeMap, HashMap};
 
-use osmium_book::{BookId, BookState};
+use osmium_book::{BookId, BookMap, BookState};
 use osmium_types::{Board, Instrument, Message, Money, Position, Symbol};
 
 /// The market as the strategy has seen it: the books built from the messages that have
 /// reached the strategy, and today's instruments.
 #[derive(Debug, Default)]
 pub struct Market {
-    books: HashMap<BookId, BookState>,
+    books: BookMap<BookState>,
     /// The keys of `books`, sorted.
     order: Vec<BookId>,
     instruments: HashMap<Symbol, Instrument>,

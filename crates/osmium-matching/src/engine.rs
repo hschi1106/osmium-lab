@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use osmium_book::{BookId, BookState, Collecting, Method, Mode};
+use osmium_book::{BookId, BookMap, BookState, Collecting, Method, Mode};
 use osmium_types::{
     Board, Date, Message, NewOrder, OrderChange, OrderEvent, OrderEventKind, OrderId, OrderPrice,
     Price, RejectReason, Request, TimeInForce, Timestamp,
@@ -47,8 +47,8 @@ struct Watched {
 pub struct Engine {
     date: Date,
     marginal: AuctionMarginal,
-    books: HashMap<BookId, Matcher>,
-    watched: HashMap<BookId, Watched>,
+    books: BookMap<Matcher>,
+    watched: BookMap<Watched>,
     /// Every order ever accepted or refused as new, and the book it was sent to.
     orders: HashMap<OrderId, Option<BookId>>,
     next_ordinal: u64,
@@ -61,8 +61,8 @@ impl Engine {
         Self {
             date,
             marginal,
-            books: HashMap::new(),
-            watched: HashMap::new(),
+            books: BookMap::default(),
+            watched: BookMap::default(),
             orders: HashMap::new(),
             next_ordinal: 0,
             diagnostics: Diagnostics::default(),
