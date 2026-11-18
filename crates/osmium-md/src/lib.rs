@@ -10,6 +10,10 @@ mod manifest;
 mod parquet_io;
 mod reference;
 
+/// The version of the decoding of marketdata into messages
+/// (`docs/reference/marketdata.md`). It changes when the same files decode differently.
+pub const DECODER_VERSION: u32 = 1;
+
 pub use error::MdError;
 pub use feed_day::{FeedDay, FeedDayIdentity, Messages, MissingLotSize};
 pub use instruments::DayInstruments;

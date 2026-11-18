@@ -5,5 +5,8 @@
 mod merge;
 mod timeline;
 
+/// The version of the event order (`docs/reference/replay.md` sections 2 and 3).
+pub const ORDERING_VERSION: u32 = 1;
+
 pub use merge::{MergedFeeds, MessageOrder};
 pub use timeline::{Event, ScheduledClass, Timeline};

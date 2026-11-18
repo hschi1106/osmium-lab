@@ -10,6 +10,10 @@ mod engine;
 mod instrument;
 mod matcher;
 
+/// The version of the matching rules (`docs/reference/matching.md`). It changes when
+/// the same orders against the same messages give different order events.
+pub const RULES_VERSION: u32 = 1;
+
 pub use band::{PriceBand, Reference};
 pub use engine::{AuctionMarginal, Diagnostics, Engine};
 pub use instrument::{BookSpec, InstrumentClass, PriceLimits};
