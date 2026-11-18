@@ -295,23 +295,24 @@ impl Ledger {
                 short: holding.short_shares(),
             });
         if let Some(activity) = self.day.as_ref().and_then(|day| day.activity.get(&symbol)) {
-            let filled = |kind: TradeKind| -> i64 {
+            let orders = &self.day.as_ref().expect("checked above").orders;
+            let filled = |of: &dyn Fn(&DayOrder) -> bool| -> i64 {
                 activity
                     .fills
                     .iter()
-                    .filter(|fill| {
-                        self.day.as_ref().expect("checked above").orders[&fill.order]
-                            .order
-                            .kind
-                            == kind
-                    })
+                    .filter(|fill| of(&orders[&fill.order]))
                     .map(|fill| fill.shares)
                     .sum()
             };
+            // Shares bought back for a forced cover are not inventory to sell today,
+            // so the activity does not count them as bought.
             position.cash +=
-                activity.cash_bought + activity.odd_bought - activity.cash_sold - activity.odd_sold;
-            position.margin += activity.margin_bought - filled(TradeKind::MarginSell);
-            position.short += activity.short_sold - filled(TradeKind::ShortCover);
+                activity.cash_bought + activity.odd_bought - activity.cash_sold - activity.odd_sold
+                    + filled(&|order| order.purpose == Purpose::CoverOwed);
+            position.margin +=
+                activity.margin_bought - filled(&|order| order.order.kind == TradeKind::MarginSell);
+            position.short +=
+                activity.short_sold - filled(&|order| order.order.kind == TradeKind::ShortCover);
         }
         position
     }

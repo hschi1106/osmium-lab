@@ -572,7 +572,11 @@ fn a_sell_first_left_open_ends_the_run_or_is_bought_back() {
     );
     let id = OrderId(900);
     account.ledger.check_forced(id, 0).unwrap();
+    assert_eq!(account.ledger.position(tsmc()).cash, -1_000);
     account.fill(id, "103", 1_000);
+    // The position shows the cover at once, although what was bought back cannot be
+    // sold today.
+    assert_eq!(account.ledger.position(tsmc()).cash, 0);
     let close = account.end("103");
     let [realized] = close.realized[..] else {
         panic!("one cover");
