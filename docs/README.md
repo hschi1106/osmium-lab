@@ -4,8 +4,11 @@
 
 ## 使用者：使用手冊（`guide/`）
 
-撰寫中：安裝、跑第一個回測、寫策略、執行與設定、讀結果、疑難排解。在完成之前，指令見
-`osmium help`，設定與輸出見下方的規格。
+- [安裝與第一個回測](guide/getting-started.md)：編譯、設定檔、`check` 與 `run`、看懂輸出。
+- [寫策略](guide/writing-a-strategy.md)：一個完整的例子，從 trait 到自己的執行檔。
+- [執行](guide/running.md)：指令、選 feed 與商品、延遲、帳戶與費用、公司行動、時間與記憶體。
+- [讀結果](guide/results.md)：每個輸出檔怎麼讀、成交依據、驗算、比較兩個 run、結果的限制。
+- [疑難排解](guide/troubleshooting.md)：錯誤訊息的原因與做法。
 
 ## 精確規格（`reference/`）
 
@@ -37,4 +40,4 @@
 
 - [`AGENTS.md`](../AGENTS.md)：repository 規則。
 - `.agents/skills/osmium-engineering`：修改程式。
-- `.agents/skills/osmium-backtest`：使用系統跑回測（撰寫中）。
+- `.agents/skills/osmium-backtest`：使用系統跑回測。

@@ -11,8 +11,8 @@ osmium 直接讀取交易所的逐筆成交與五檔揭示，依交易所序號�
 撮合（逐筆交易與集合競價），並以整數元記帳（費稅、T+2 交割、當沖、融資融券、公司行動）。
 
 > 狀態：全市場撮合模擬（[ADR-0008](docs/design/decisions/0008-full-market-matching-simulation.md)）
-> 的各層都已實作，可以用 `osmium run` 跑回測；使用手冊與效能最佳化尚未完成，見
-> [架構的實作狀態](docs/design/architecture.md#實作狀態)。期貨與選擇權尚未支援。
+> 的各層都已實作，見[架構的實作狀態](docs/design/architecture.md#實作狀態)。期貨與選擇權尚未
+> 支援。
 
 ## 快速開始
 
@@ -23,8 +23,8 @@ cargo build --release
 ./target/release/osmium run run.toml --out ~/osmium-runs/run-1
 ```
 
-`run.toml` 的最小內容見[設定規格](docs/reference/config.md#2-最小設定)；輸出檔案見
-[輸出規格](docs/reference/artifacts.md)。
+完整的步驟見[安裝與第一個回測](docs/guide/getting-started.md)；自己的策略見
+[寫策略](docs/guide/writing-a-strategy.md)。
 
 ## 設計原則
 
@@ -40,7 +40,8 @@ cargo build --release
 
 ## 文件
 
-從[文件地圖](docs/README.md)開始。
+從[文件地圖](docs/README.md)開始：使用手冊（`docs/guide/`）、規格（`docs/reference/`）、設計
+（`docs/design/`）。Agent 的流程在 `AGENTS.md` 與 `.agents/skills/`。
 
 ## 開發
 

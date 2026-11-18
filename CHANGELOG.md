@@ -41,3 +41,6 @@
 - 新增 `osmium-examples`：範例策略 `buy_and_hold`、`open_to_close`、`passive_quote`。
 - 新增 `osmium-fixture`（只供測試）：寫出合成的 marketdata 樹。
 - 結果依賴的版本與更新規則見[版本](docs/reference/versions.md)。
+- 新增使用手冊（`docs/guide/`）：安裝與第一個回測、寫策略、執行、讀結果、疑難排解；以及完整的
+  自訂策略範例程式 `crates/osmium-cli/examples/breakout.rs`。
+- 新增 agent skill `osmium-backtest`：使用系統跑回測的流程。
