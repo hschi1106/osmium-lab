@@ -5,6 +5,7 @@ members = [
     "crates/osmium-matching",
     "crates/osmium-md",
     "crates/osmium-replay",
+    "crates/osmium-strategy",
     "crates/osmium-types",
 ]
 resolver = "2"
