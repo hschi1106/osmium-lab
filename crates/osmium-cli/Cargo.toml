@@ -8,6 +8,11 @@ edition.workspace = true
 name = "osmium"
 path = "src/main.rs"
 
+# The walk-through of docs/guide/writing-a-strategy.md; its test runs with the workspace.
+[[example]]
+name = "breakout"
+test = true
+
 [dependencies]
 osmium-examples = { path = "../osmium-examples" }
 osmium-ledger = { path = "../osmium-ledger" }
@@ -18,6 +23,7 @@ osmium-runner = { path = "../osmium-runner" }
 osmium-strategy = { path = "../osmium-strategy" }
 
 [dev-dependencies]
+osmium-book = { path = "../osmium-book" }
 osmium-fixture = { path = "../osmium-fixture" }
 osmium-types = { path = "../osmium-types" }
 

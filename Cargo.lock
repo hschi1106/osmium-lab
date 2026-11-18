@@ -484,6 +484,7 @@ dependencies = [
 name = "osmium-cli"
 version = "0.1.0"
 dependencies = [
+ "osmium-book",
  "osmium-examples",
  "osmium-fixture",
  "osmium-ledger",
