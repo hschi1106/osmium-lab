@@ -53,6 +53,11 @@ const DAYS: [&str; 6] = [
 
 /// Two days of tick data (15th and 16th) and the reference tables of a week.
 fn tree(name: &str) -> Tree {
+    tree_with_lot(name, Some(1_000))
+}
+
+/// [`tree`] with the lot size marketdata states for the instrument, if any.
+fn tree_with_lot(name: &str, lot: Option<i32>) -> Tree {
     let tree = Tree::new(name);
     tree.calendar(&[
         (DAYS[0], true),
@@ -72,7 +77,7 @@ fn tree(name: &str) -> Tree {
         let (opening, opening_trade) = open(day, seq);
         tree.day(
             day,
-            &[instrument(SYMBOL, Some(1_000))],
+            &[instrument(SYMBOL, lot)],
             &[],
             &[FeedRows {
                 feed: Feed::TwseF6,
@@ -462,6 +467,65 @@ fn a_day_without_its_feed_stops_the_run_unless_skipped() {
     assert_eq!(days.len(), 2);
     // An unfinished run has no `run.json`.
     assert!(!output.0.join("run.json").exists());
+}
+
+/// Records the lot size the strategy is shown at each day start.
+#[derive(Default)]
+struct LotSizes(Vec<Option<u32>>);
+
+impl Strategy for LotSizes {
+    fn on_day_start(&mut self, ctx: &mut Context<'_>) {
+        let instrument = ctx.market().instrument(symbol());
+        self.0
+            .push(instrument.and_then(|instrument| instrument.shares_per_lot));
+    }
+}
+
+#[test]
+fn a_missing_lot_size_stops_the_run_unless_one_is_assumed() {
+    let tree = tree_with_lot("lot", None);
+    let (text, config) = config(&tree, "");
+    let output = OutputDir::new("lot-missing");
+    let result = run(RunRequest {
+        config: &config,
+        config_text: &text,
+        strategy: &mut LotSizes::default(),
+        strategy_version: "test",
+        output: &output.0,
+        progress: &mut |_| {},
+    });
+    assert!(
+        matches!(
+            result,
+            Err(RunError::Md(osmium_md::MdError::MissingLotSize { .. }))
+        ),
+        "{result:?}"
+    );
+
+    let text = text.replace(
+        "missing_days = \"skip\"\n",
+        "missing_days = \"skip\"\nassume_lot_size = 1000\n",
+    );
+    let config = RunConfig::parse(&text).unwrap();
+    let output = OutputDir::new("lot-assumed");
+    let mut strategy = LotSizes::default();
+    run(RunRequest {
+        config: &config,
+        config_text: &text,
+        strategy: &mut strategy,
+        strategy_version: "test",
+        output: &output.0,
+        progress: &mut |_| {},
+    })
+    .unwrap();
+    // The strategy is shown the unit its orders are checked against. The days from
+    // the 19th have no instruments at all.
+    assert_eq!(strategy.0, [Some(1_000), Some(1_000), None, None, None]);
+    let diagnostics = output.read("diagnostics.csv");
+    assert!(
+        diagnostics.contains("2026-10-15,lot_size_assumed,,1 instruments\n"),
+        "{diagnostics}"
+    );
 }
 
 #[test]

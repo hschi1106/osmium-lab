@@ -22,7 +22,9 @@ pub(crate) struct BookSetup {
 
 /// The market data of one trading day.
 pub(crate) struct DayData {
-    /// The instruments of both markets.
+    /// The instruments of both markets. A lot size marketdata does not have is the
+    /// one the run assumes (`data.assume_lot_size`), so the strategy and the ledger
+    /// see the unit the orders are checked against.
     pub(crate) instruments: Vec<Instrument>,
     pub(crate) feeds: Vec<FeedDay>,
     pub(crate) books: Vec<BookSetup>,
@@ -60,12 +62,20 @@ pub(crate) fn load_day(root: &MdRoot, config: &RunConfig, date: Date) -> Result<
         Err(error) => return Err(error.into()),
     };
 
+    let assumed = match config.missing_lot_size {
+        osmium_md::MissingLotSize::Assume(lot) => Some(lot),
+        osmium_md::MissingLotSize::Reject => None,
+    };
     let mut by_venue: Vec<(Venue, DayInstruments)> = Vec::new();
     for venue in Venue::ALL {
         match DayInstruments::load(root, &manifest, venue) {
             Ok(instruments) => {
                 data.files.push(instruments.manifest_entry().clone());
-                data.instruments.extend_from_slice(instruments.records());
+                data.instruments
+                    .extend(instruments.records().iter().map(|&instrument| Instrument {
+                        shares_per_lot: instrument.shares_per_lot.or(assumed),
+                        ..instrument
+                    }));
                 by_venue.push((venue, instruments));
             }
             // A market without instruments has no feed either; a configured feed of

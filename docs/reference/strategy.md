@@ -102,6 +102,8 @@
 - 五檔是交易所揭示的五檔，不含策略自己的模擬委託。
 - 沒有被回放的商品（不在 `data.symbols` 或不在所選 feed）沒有 book；對它送出的委託被拒絕。
 - `instrument` 的欄位可能缺值（`Option`）；缺值的原因見 [marketdata](marketdata.md)。
+- `instrument.shares_per_lot` 是 run 採用的交易單位，也就是整股委託數量必須整除的單位：marketdata
+  沒有這個值而設定了 `data.assume_lot_size` 時，是設定的值。
 
 ## 5. 帳戶視圖
 
