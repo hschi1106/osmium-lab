@@ -11,8 +11,8 @@ Osmium Lab 是 Rust 實作的 market replay 與 backtesting platform。唯一資
 deterministic replay，再串接編譯期 Rust strategy、成交模擬、帳務與 run artifacts。
 
 > 狀態：全市場撮合模擬改建中（[ADR-0008](docs/design/decisions/0008-full-market-matching-simulation.md)）。
-> 行情解碼（`osmium-md`）、跨 feed 回放時間線（`osmium-replay`）與 book 交易模式（`osmium-book`）
-> 已完成；撮合、帳務、策略介面與 CLI 尚未完成，進度見
+> 行情解碼（`osmium-md`）、跨 feed 回放時間線（`osmium-replay`）、book 交易模式（`osmium-book`）
+> 與撮合（`osmium-matching`）已完成；帳務、策略介面與 CLI 尚未完成，進度見
 > [架構的遷移狀態](docs/design/architecture.md#遷移狀態)。
 
 ## 設計原則

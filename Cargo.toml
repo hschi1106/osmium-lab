@@ -3,6 +3,7 @@ members = [
     "crates/market-state",
     "crates/market-types",
     "crates/osmium-book",
+    "crates/osmium-matching",
     "crates/osmium-md",
     "crates/osmium-replay",
     "crates/osmium-types",

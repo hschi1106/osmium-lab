@@ -16,6 +16,10 @@
 - 新增 `osmium-replay`：依 `observed_time`、feed rank、`seq` 合併多個 feed（`MergedFeeds`），以及把
   行情、委託到達、回報、行情送達策略、計時器排成單一時間線的 `Timeline`
   （[回放規格](docs/reference/replay.md)第 2、3 節）。
+- 新增 `osmium-matching`：模擬委託對真實行情撮合。交易所端的委託檢查、逐筆交易（到達時吃五檔、
+  排隊估計、被動成交、交叉成交）、集合競價（開盤、收盤、分盤、盤中零股、暫緩撮合結束）、瞬間
+  價格穩定措施的 ±3.5 % 範圍、改單與刪單（[撮合規格](docs/reference/matching.md)第 5–8 節）。
+  委託與委託事件的型別（`NewOrder`、`OrderEvent`、`Fill`、`RejectReason` 等）在 `osmium-types`。
 - 新增 `osmium-book`：每本 book 的撮合方式（逐筆／分盤，含 `match_interval_s` 缺值時的推論）、
   交易模式、目前五檔、最近成交、試撮與暫緩撮合狀態（[撮合規格](docs/reference/matching.md)第 4 節）。
 - 新增 `osmium-types`：整數的 `Price`（1e-4 元）、`Shares`、`Symbol`、`Timestamp`／`Date`、

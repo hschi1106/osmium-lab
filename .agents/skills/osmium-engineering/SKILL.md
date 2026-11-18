@@ -18,6 +18,8 @@ invariants 與 workflow。
 marketdata    → parquet → Message（osmium-md；型別在 osmium-types，見 ADR-0008）
 osmium-replay → 跨 feed 全序、事件時間線（docs/reference/replay.md）
 osmium-book   → 撮合方式、交易模式、目前五檔（docs/reference/matching.md 第 4 節）
+osmium-matching → 委託檢查、撮合、排隊估計、價格穩定範圍（docs/reference/matching.md 第 5–8 節；
+                  委託與委託事件的型別在 osmium-types）
 planner       → validated, frozen execution facts
 replay        → ordering/playback
 market-state  → cross-event state
