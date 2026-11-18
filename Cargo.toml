@@ -1,19 +1,11 @@
 [workspace]
 members = [
-    "crates/market-state",
-    "crates/market-types",
     "crates/osmium-book",
     "crates/osmium-ledger",
     "crates/osmium-matching",
     "crates/osmium-md",
     "crates/osmium-replay",
     "crates/osmium-types",
-    "crates/osmium-runner",
-    "crates/execution-sim",
-    "crates/replay-engine",
-    "crates/run-planner",
-    "crates/strategy-api",
-    "crates/example-strategy",
 ]
 resolver = "2"
 
