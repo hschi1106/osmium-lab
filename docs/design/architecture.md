@@ -28,7 +28,7 @@ osmium-runner：串接以上各層、run 設定與輸出；osmium-cli：指令�
 
 | Crate | 擁有 | 不擁有 |
 | --- | --- | --- |
-| `osmium-types` | 價格、數量、金額、時間、商品、board 的型別與換算 | 任何規則 |
+| `osmium-types` | 價格、數量、金額、時間、商品、board、行情訊息的型別與換算 | 任何規則 |
 | `osmium-md` | marketdata layout、schema 檢查、manifest identity、訊息解碼、衍生快取 | 排序以外的語義 |
 | `osmium-replay` | 跨 feed 全序、replay clock | 狀態、撮合 |
 | `osmium-book` | 五檔、交易階段、試撮與暫緩撮合狀態 | 模擬委託 |
@@ -50,8 +50,8 @@ osmium-runner：串接以上各層、run 設定與輸出；osmium-cli：指令�
 
 | 目標 crate | 狀態 | 取代的舊 crate |
 | --- | --- | --- |
-| `osmium-types` | 未開始 | `market-types` |
-| `osmium-md` | 已有讀取與驗證，訊息模型待改 | — |
+| `osmium-types` | 進行中：價格、股數、代號、時間、feed、行情訊息、商品基本資料；金額等隨使用的 crate 加入 | `market-types` |
+| `osmium-md` | 讀取、驗證、訊息解碼完成；串流讀取與衍生快取未開始 | — |
 | `osmium-replay` | 未開始 | `replay-engine` |
 | `osmium-book` | 未開始 | `market-state` |
 | `osmium-strategy` | 未開始 | `strategy-api` |

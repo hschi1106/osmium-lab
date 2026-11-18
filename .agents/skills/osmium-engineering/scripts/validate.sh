@@ -20,7 +20,7 @@ case "$mode" in
         cargo test --locked -p market-types -p market-state
         ;;
       md)
-        cargo test --locked -p osmium-md
+        cargo test --locked -p osmium-types -p osmium-md
         ;;
       replay)
         cargo test --locked -p replay-engine

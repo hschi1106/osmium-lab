@@ -15,7 +15,7 @@ invariants 與 workflow。
 ## Ownership 與文件
 
 ```text
-marketdata    → parquet → DomainEvent（改建中，見 ADR-0007）
+marketdata    → parquet → Message（osmium-md；型別在 osmium-types，見 ADR-0008）
 planner       → validated, frozen execution facts
 replay        → ordering/playback
 market-state  → cross-event state

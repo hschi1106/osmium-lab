@@ -4,13 +4,50 @@ use std::{
 };
 
 use arrow_array::{
-    Array, ArrowPrimitiveType, BooleanArray, PrimitiveArray, RecordBatch, cast::AsArray,
+    Array, ArrowPrimitiveType, BooleanArray, PrimitiveArray, RecordBatch, StringArray,
+    cast::AsArray,
 };
+use arrow_schema::{DataType, TimeUnit};
 use parquet::arrow::{ProjectionMask, arrow_reader::ParquetRecordBatchReaderBuilder};
 
 use crate::MdError;
 
 const BATCH_SIZE: usize = 64 * 1024;
+
+/// The Arrow type marketdata schema version 1 gives a column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ColumnType {
+    String,
+    Bool,
+    Int8,
+    Int16,
+    Int32,
+    Int64,
+    Float64,
+    /// `timestamp[us, UTC]`.
+    TimestampMicrosUtc,
+}
+
+impl ColumnType {
+    fn matches(self, actual: &DataType) -> bool {
+        match (self, actual) {
+            (Self::String, DataType::Utf8)
+            | (Self::Bool, DataType::Boolean)
+            | (Self::Int8, DataType::Int8)
+            | (Self::Int16, DataType::Int16)
+            | (Self::Int32, DataType::Int32)
+            | (Self::Int64, DataType::Int64)
+            | (Self::Float64, DataType::Float64) => true,
+            (Self::TimestampMicrosUtc, DataType::Timestamp(TimeUnit::Microsecond, Some(zone))) => {
+                zone.as_ref() == "UTC"
+            }
+            _ => false,
+        }
+    }
+}
+
+/// A column osmium reads and the type it must have.
+pub(crate) type Column = (&'static str, ColumnType);
 
 /// One opened marketdata parquet file with its footer already parsed.
 pub(crate) struct ParquetFile {
@@ -82,14 +119,35 @@ impl ParquetFile {
     }
 
     /// Streams record batches of `columns` from `row_groups` (all when `None`).
+    ///
+    /// Fails before reading any row when a column is missing or has another type.
+    /// Columns osmium does not read are not checked: schema version 1 may gain columns.
     pub(crate) fn read(
         self,
-        columns: &[&str],
+        columns: &[Column],
         row_groups: Option<Vec<usize>>,
         mut visit: impl FnMut(&Path, &RecordBatch) -> Result<(), MdError>,
     ) -> Result<(), MdError> {
         let Self { path, builder } = self;
-        let mask = ProjectionMask::columns(builder.parquet_schema(), columns.iter().copied());
+        for (name, expected) in columns {
+            match builder.schema().field_with_name(name) {
+                Ok(field) if expected.matches(field.data_type()) => {}
+                Ok(field) => {
+                    return Err(MdError::schema(
+                        &path,
+                        format!(
+                            "column {name} is {}, expected {expected:?}",
+                            field.data_type()
+                        ),
+                    ));
+                }
+                Err(_) => return Err(MdError::schema(&path, format!("column {name} is missing"))),
+            }
+        }
+        let mask = ProjectionMask::columns(
+            builder.parquet_schema(),
+            columns.iter().map(|(name, _)| *name),
+        );
         let mut builder = builder.with_projection(mask).with_batch_size(BATCH_SIZE);
         if let Some(row_groups) = row_groups {
             if row_groups.is_empty() {
@@ -108,6 +166,9 @@ impl ParquetFile {
     }
 }
 
+// The accessors below are called for columns `ParquetFile::read` has already checked,
+// so a failure means the reader returned a batch that disagrees with the file schema.
+
 pub(crate) fn primitive<'a, T: ArrowPrimitiveType>(
     path: &Path,
     batch: &'a RecordBatch,
@@ -116,12 +177,7 @@ pub(crate) fn primitive<'a, T: ArrowPrimitiveType>(
     batch
         .column_by_name(name)
         .and_then(|column| column.as_primitive_opt::<T>())
-        .ok_or_else(|| {
-            MdError::inconsistent(
-                path,
-                format!("column {name} missing or not {}", T::DATA_TYPE),
-            )
-        })
+        .ok_or_else(|| MdError::schema(path, format!("column {name} is not {}", T::DATA_TYPE)))
 }
 
 pub(crate) fn boolean<'a>(
@@ -132,46 +188,18 @@ pub(crate) fn boolean<'a>(
     batch
         .column_by_name(name)
         .and_then(|column| column.as_boolean_opt())
-        .ok_or_else(|| MdError::inconsistent(path, format!("column {name} missing or not bool")))
-}
-
-/// A UTF-8 column in any of Arrow's string layouts.
-pub(crate) enum Strings<'a> {
-    Small(&'a arrow_array::StringArray),
-    Large(&'a arrow_array::LargeStringArray),
-    View(&'a arrow_array::StringViewArray),
-}
-
-impl Strings<'_> {
-    pub(crate) fn get(&self, index: usize) -> Option<&str> {
-        match self {
-            Self::Small(array) => array.is_valid(index).then(|| array.value(index)),
-            Self::Large(array) => array.is_valid(index).then(|| array.value(index)),
-            Self::View(array) => array.is_valid(index).then(|| array.value(index)),
-        }
-    }
+        .ok_or_else(|| MdError::schema(path, format!("column {name} is not bool")))
 }
 
 pub(crate) fn strings<'a>(
     path: &Path,
     batch: &'a RecordBatch,
     name: &str,
-) -> Result<Strings<'a>, MdError> {
-    let column = batch
+) -> Result<&'a StringArray, MdError> {
+    batch
         .column_by_name(name)
-        .ok_or_else(|| MdError::inconsistent(path, format!("column {name} missing")))?;
-    if let Some(array) = column.as_string_opt::<i32>() {
-        Ok(Strings::Small(array))
-    } else if let Some(array) = column.as_string_opt::<i64>() {
-        Ok(Strings::Large(array))
-    } else if let Some(array) = column.as_string_view_opt() {
-        Ok(Strings::View(array))
-    } else {
-        Err(MdError::inconsistent(
-            path,
-            format!("column {name} is not a string"),
-        ))
-    }
+        .and_then(|column| column.as_string_opt::<i32>())
+        .ok_or_else(|| MdError::schema(path, format!("column {name} is not string")))
 }
 
 pub(crate) fn optional<T: ArrowPrimitiveType>(
@@ -185,14 +213,48 @@ pub(crate) fn optional_bool(array: &BooleanArray, index: usize) -> Option<bool> 
     array.is_valid(index).then(|| array.value(index))
 }
 
-/// A required (non-null) string cell.
-pub(crate) fn required_str<'a>(
-    path: &Path,
-    column: &'a Strings<'_>,
-    name: &str,
-    index: usize,
-) -> Result<&'a str, MdError> {
-    column
-        .get(index)
-        .ok_or_else(|| MdError::inconsistent(path, format!("column {name} has a null")))
+pub(crate) fn optional_str(array: &StringArray, index: usize) -> Option<&str> {
+    array.is_valid(index).then(|| array.value(index))
+}
+
+/// A cell of a column the schema declares non-null.
+pub(crate) fn required<T>(path: &Path, value: Option<T>, name: &str) -> Result<T, MdError> {
+    value.ok_or_else(|| MdError::inconsistent(path, format!("column {name} has a null")))
+}
+
+/// Converts a marketdata float64 price to exact units of 1e-4 元.
+///
+/// marketdata stores the nearest double to each decimal price, so the conversion is
+/// accepted only when it round-trips exactly and the price is positive.
+pub(crate) fn price_units(value: f64) -> Option<u32> {
+    if !value.is_finite() || value <= 0.0 || value > 400_000.0 {
+        return None;
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let units = (value * 10_000.0).round() as u32;
+    #[allow(clippy::float_cmp)]
+    let exact = f64::from(units) / 10_000.0 == value;
+    (exact && units > 0).then_some(units)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::price_units;
+
+    #[test]
+    fn prices_convert_only_when_exact_and_positive() {
+        assert_eq!(price_units(198.45), Some(1_984_500));
+        assert_eq!(price_units(0.01), Some(100));
+        assert_eq!(price_units(10.12), Some(101_200));
+        assert_eq!(price_units(1_085.0), Some(10_850_000));
+        assert_eq!(price_units(9_999.95), Some(99_999_500));
+        assert_eq!(price_units(22_995.0), Some(229_950_000));
+        assert_eq!(price_units(0.000_05), None);
+        assert_eq!(price_units(1.234_56), None);
+        assert_eq!(price_units(0.0), None);
+        assert_eq!(price_units(-1.0), None);
+        assert_eq!(price_units(f64::NAN), None);
+        assert_eq!(price_units(f64::INFINITY), None);
+        assert_eq!(price_units(400_000.01), None);
+    }
 }

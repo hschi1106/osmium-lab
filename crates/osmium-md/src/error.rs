@@ -1,8 +1,8 @@
 use std::{error::Error, fmt, path::PathBuf};
 
-use market_types::{Symbol, TradingDate};
+use osmium_types::{Date, Feed, Symbol};
 
-/// Errors from reading or mapping marketdata. Every variant names the file or row involved.
+/// Errors from reading marketdata. Every variant names the file, day or row involved.
 #[derive(Debug)]
 pub enum MdError {
     Io {
@@ -15,36 +15,43 @@ pub enum MdError {
     },
     /// No manifest exists for the day: marketdata has no data for it.
     MissingManifest {
-        date: TradingDate,
+        date: Date,
     },
     /// The day's manifest has no row for this table part: the data does not exist.
     MissingManifestEntry {
-        date: TradingDate,
+        date: Date,
         table: &'static str,
         part: String,
     },
-    /// A file's contents disagree with its manifest row or with the expected schema.
+    /// The file is not marketdata schema version 1, or a column osmium reads is missing
+    /// or has a different type.
+    Schema {
+        path: PathBuf,
+        reason: String,
+    },
+    /// A file's contents disagree with its manifest row or with the documented layout.
     Inconsistent {
         path: PathBuf,
         reason: String,
     },
     /// The manifest changed while files were being read (a marketdata update raced the read).
     ManifestChanged {
-        date: TradingDate,
+        date: Date,
         table: &'static str,
         part: String,
     },
-    /// A price is not the nearest double to a 1e-4 decimal, or is not positive.
-    NonCanonicalPrice {
-        path: PathBuf,
-        seq: u64,
-        value: f64,
-    },
-    /// A row violates a mapping invariant.
+    /// A row holds a value or a combination of fields the specification does not define.
     InvalidRow {
-        symbol: Symbol,
+        path: PathBuf,
+        symbol: String,
         seq: u64,
-        reason: &'static str,
+        reason: String,
+    },
+    /// A regular-board symbol has no `shares_per_lot`, so its lots cannot become shares.
+    MissingLotSize {
+        date: Date,
+        feed: Feed,
+        symbol: Symbol,
     },
 }
 
@@ -53,6 +60,13 @@ impl MdError {
         Self::Parquet {
             path: path.to_path_buf(),
             message: error.to_string(),
+        }
+    }
+
+    pub(crate) fn schema(path: &std::path::Path, reason: impl Into<String>) -> Self {
+        Self::Schema {
+            path: path.to_path_buf(),
+            reason: reason.into(),
         }
     }
 
@@ -77,6 +91,9 @@ impl fmt::Display for MdError {
             Self::MissingManifestEntry { date, table, part } => {
                 write!(formatter, "marketdata has no {table}/{part} for {date}")
             }
+            Self::Schema { path, reason } => {
+                write!(formatter, "{}: schema: {reason}", path.display())
+            }
             Self::Inconsistent { path, reason } => {
                 write!(formatter, "{}: {reason}", path.display())
             }
@@ -84,16 +101,20 @@ impl fmt::Display for MdError {
                 formatter,
                 "marketdata manifest for {table}/{part} on {date} changed during the read"
             ),
-            Self::NonCanonicalPrice { path, seq, value } => write!(
-                formatter,
-                "{}: seq {seq}: price {value} is not an exact positive 1e-4 decimal",
-                path.display()
-            ),
             Self::InvalidRow {
+                path,
                 symbol,
                 seq,
                 reason,
-            } => write!(formatter, "{symbol} seq {seq}: {reason}"),
+            } => write!(
+                formatter,
+                "{}: symbol {symbol} seq {seq}: {reason}",
+                path.display()
+            ),
+            Self::MissingLotSize { date, feed, symbol } => write!(
+                formatter,
+                "{feed} {symbol} on {date}: instruments has no shares_per_lot"
+            ),
         }
     }
 }

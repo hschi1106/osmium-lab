@@ -522,10 +522,8 @@ version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
- "market-state",
- "market-types",
+ "osmium-types",
  "parquet",
- "replay-engine",
 ]
 
 [[package]]

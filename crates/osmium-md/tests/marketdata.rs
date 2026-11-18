@@ -1,132 +1,213 @@
-//! Real-data checks. They need a readable marketdata tree and are ignored by default:
-//! `OSMIUM_MD_ROOT=/srv/md/v1 cargo test -p osmium-md --release -- --ignored`.
+//! Reads of a real marketdata tree. Ignored by default because they need the data:
+//!
+//! ```text
+//! OSMIUM_MD_ROOT=/srv/md/v1 cargo test --release --locked -p osmium-md --test marketdata -- --ignored --nocapture
+//! ```
 
 use std::time::Instant;
 
-use market_state::{
-    MarketState, MarketStateReducer, ReducerContext, SegmentBoundaryPolicy, SessionSegmentId,
+use osmium_md::{
+    DEFAULT_MD_ROOT, DayInstruments, DayManifest, FeedDay, MdError, MdRoot, MissingLotSize,
 };
-use market_types::{EventPayload, MarketSignal, Observation, Symbol, TradingDate};
-use osmium_md::{DEFAULT_MD_ROOT, Feed, FeedDay, MdRoot};
-use replay_engine::{EventStream, ReplayCore, order_events};
+use osmium_types::{Date, Feed, Message, MessageBody, Symbol};
 
 fn root() -> MdRoot {
     MdRoot::new(std::env::var("OSMIUM_MD_ROOT").unwrap_or_else(|_| DEFAULT_MD_ROOT.to_owned()))
 }
 
-fn replay_day(date: &str, feed: Feed, symbols: &[&str]) {
-    let date = TradingDate::parse(date).unwrap();
-    let symbols: Vec<Symbol> = symbols.iter().map(|s| Symbol::new(s).unwrap()).collect();
-    let started = Instant::now();
-    let mut day = FeedDay::load(&root(), date, feed, &symbols).unwrap();
-    let loaded = started.elapsed();
-
-    let mut events = Vec::new();
-    let mut kinds = std::collections::BTreeMap::<String, usize>::new();
-    for symbol in &symbols {
-        let mut stream = day.take_stream(symbol).unwrap();
-        let mut previous_seq = 0;
-        while let Some(event) = stream.next_event().unwrap() {
-            let seq = event.source_sequence().unwrap();
-            assert!(seq > previous_seq);
-            previous_seq = seq;
-            assert!(event.observed_time() >= event.match_time());
-            let signal = match event.payload().market_signal() {
-                Observation::Set(MarketSignal::Continuous) => "continuous",
-                Observation::Set(MarketSignal::AuctionCollecting(_)) => "collecting",
-                Observation::Set(MarketSignal::AuctionUncross(_)) => "uncross",
-                _ => "other",
-            };
-            let kind = match event.payload() {
-                EventPayload::QuoteSnapshot(_) => "quote",
-                EventPayload::BookSnapshot(_) => "book",
-                EventPayload::TradeBatch(_) => "trade",
-                EventPayload::IndicativeAuction(_) => "indicative",
-                EventPayload::MarketStatus(_) => "status",
-            };
-            *kinds.entry(format!("{kind}/{signal}")).or_default() += 1;
-            events.push(event);
-        }
-    }
-
-    let ordered = order_events(events).unwrap();
-    let mut core = ReplayCore::new(
-        symbols
+fn load(
+    date: &str,
+    feed: Feed,
+    selection: Option<&[&str]>,
+    missing_lot_size: MissingLotSize,
+) -> Result<FeedDay, MdError> {
+    let root = root();
+    let date: Date = date.parse().unwrap();
+    let manifest = DayManifest::load(&root, date)?;
+    let instruments = DayInstruments::load(&root, &manifest, feed.venue())?;
+    let selection: Option<Vec<Symbol>> = selection.map(|codes| {
+        codes
             .iter()
-            .map(|symbol| {
-                MarketState::new(
-                    market_types::InstrumentId::new(feed.market(), *symbol),
-                    date,
-                )
-            })
-            .collect(),
-        MarketStateReducer::new(feed.state_profile()),
-        ReducerContext::new(
-            date,
-            SessionSegmentId::new("regular").unwrap(),
-            SegmentBoundaryPolicy::Carry,
-            1,
-        ),
+            .map(|code| Symbol::new(code).unwrap())
+            .collect()
+    });
+    FeedDay::load(
+        &root,
+        &manifest,
+        feed,
+        &instruments,
+        selection.as_deref(),
+        missing_lot_size,
+    )
+}
+
+/// Message counts by kind.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Composition {
+    /// Book changes without a trade.
+    book: usize,
+    /// Trades that disclose the book after them.
+    fill: usize,
+    intermediate: usize,
+    indicative: usize,
+    delay: usize,
+}
+
+/// Checks what the messages of every feed day must satisfy and counts them.
+fn check_messages(day: &FeedDay) -> Composition {
+    let mut composition = Composition::default();
+    let mut previous: Option<Message> = None;
+    for message in day.messages() {
+        assert_eq!(message.feed, day.feed());
+        assert_eq!(message.exch_ts.taipei_date(), day.date(), "{message:?}");
+        assert!(message.observed_time >= message.exch_ts, "{message:?}");
+        if let Some(previous) = previous {
+            assert!(message.seq > previous.seq, "{message:?}");
+            assert!(
+                message.observed_time >= previous.observed_time,
+                "{message:?}"
+            );
+        }
+        match message.body {
+            MessageBody::Disclosure { trade: None, .. } => composition.book += 1,
+            MessageBody::Disclosure { trade: Some(_), .. } => composition.fill += 1,
+            MessageBody::IntermediateTrade(_) => composition.intermediate += 1,
+            MessageBody::Indicative { .. } => composition.indicative += 1,
+            MessageBody::Delay(_) => composition.delay += 1,
+        }
+        previous = Some(message);
+    }
+    composition
+}
+
+/// [`check_messages`] for a day read without a selection, whose messages must also account
+/// for every row of the files.
+fn check(day: &FeedDay) -> Composition {
+    let composition = check_messages(day);
+    let identity = day.identity();
+    let rows = |rows: i64| usize::try_from(rows).unwrap();
+    // Every trades row is one fill. Every message has a books row, except an intermediate
+    // fill on days whose source marks them, which is in trades alone.
+    assert_eq!(
+        composition.fill + composition.intermediate,
+        rows(identity.trades.rows)
+    );
+    let in_books = composition.book + composition.fill + composition.indicative + composition.delay;
+    assert!(
+        rows(identity.books.rows) == in_books
+            || rows(identity.books.rows) == in_books + composition.intermediate,
+        "{composition:?} against {} books rows",
+        identity.books.rows
+    );
+    composition
+}
+
+#[test]
+#[ignore = "needs a marketdata tree"]
+fn feed_days_decode_into_the_documented_message_kinds() {
+    // An exchange-instruments day for every stock feed but the largest, and a day converted
+    // from the source that marks neither intermediate fills nor market-order levels.
+    for (date, feed) in [
+        ("2026-10-08", Feed::TwseF6),
+        ("2026-10-08", Feed::TpexF6),
+        ("2026-10-08", Feed::TpexF17),
+        ("2026-10-08", Feed::TwseF23),
+        ("2026-10-08", Feed::TpexF23),
+        ("2022-06-15", Feed::TwseF6),
+    ] {
+        let started = Instant::now();
+        let day = load(date, feed, None, MissingLotSize::Assume(1_000)).unwrap();
+        let loaded = started.elapsed();
+        let composition = check(&day);
+        println!(
+            "{date} {}: {} messages, {} symbols, {} assumed lot sizes, {composition:?}, \
+             loaded in {loaded:.1?}, checked in {:.1?}",
+            feed.part(),
+            day.len(),
+            day.symbols().count(),
+            day.assumed_lot_sizes().count(),
+            started.elapsed().saturating_sub(loaded),
+        );
+        assert!(composition.fill > 0 && composition.indicative > 0);
+    }
+}
+
+#[test]
+#[ignore = "needs a marketdata tree"]
+fn the_composition_of_a_known_day_is_stable() {
+    // Counted independently from the parquet files with polars.
+    let day = load("2026-10-08", Feed::TwseF6, None, MissingLotSize::Reject).unwrap();
+    assert_eq!(day.len(), 15_442_565);
+    assert_eq!(day.assumed_lot_sizes().count(), 0);
+    let composition = check(&day);
+    assert_eq!(composition.intermediate, 16_943);
+    assert_eq!(composition.fill, 1_225_819);
+
+    // Before 2024-04 the source writes intermediate fills to `books`.
+    let older = load(
+        "2022-06-15",
+        Feed::TwseF6,
+        None,
+        MissingLotSize::Assume(1_000),
     )
     .unwrap();
-    let count = ordered.len();
-    core.replay(ordered).unwrap();
-    eprintln!(
-        "{date} {feed} {} symbols: {count} events, load {loaded:?}, total {:?}; {kinds:?}",
-        symbols.len(),
-        started.elapsed()
-    );
+    assert_eq!(older.len(), 6_948_054);
+    let composition = check(&older);
+    assert_eq!(composition.intermediate, 10_510);
+    assert_eq!(composition.delay, 30);
 }
 
 #[test]
-#[ignore = "needs a marketdata tree (OSMIUM_MD_ROOT, default /srv/md/v1)"]
-fn twse_f6_replays_through_the_reducer() {
-    replay_day("2026-10-15", Feed::TwseF6, &["2330", "006203", "2317"]);
+#[ignore = "needs a marketdata tree"]
+fn a_selection_reads_the_same_messages_as_the_whole_feed() {
+    let codes = ["0050", "00636K", "2330"];
+    let whole = load("2026-10-08", Feed::TwseF6, None, MissingLotSize::Reject).unwrap();
+    let selected = load(
+        "2026-10-08",
+        Feed::TwseF6,
+        Some(&codes),
+        MissingLotSize::Reject,
+    )
+    .unwrap();
+    let wanted: Vec<Symbol> = codes
+        .iter()
+        .map(|code| Symbol::new(code).unwrap())
+        .collect();
+    let expected: Vec<Message> = whole
+        .messages()
+        .filter(|message| wanted.contains(&message.symbol))
+        .collect();
+    assert!(!expected.is_empty());
+    assert!(selected.messages().eq(expected));
+    assert_eq!(selected.symbols().collect::<Vec<_>>(), wanted);
 }
 
 #[test]
-#[ignore = "needs a marketdata tree (OSMIUM_MD_ROOT, default /srv/md/v1)"]
-fn odd_lot_and_warrant_feeds_replay_through_the_reducer() {
-    replay_day("2026-10-15", Feed::TwseF23, &["2330", "00402A"]);
-    replay_day("2026-10-15", Feed::TpexF6, &["6488", "8069"]);
-    replay_day("2026-10-15", Feed::TwseF17, &["066186", "063344"]);
-}
-
-/// Maps and replays a spread of symbols for every F6／F23 feed present on each date.
-///
-/// Dates come from `OSMIUM_MD_SWEEP_DATES` (comma-separated); every `OSMIUM_MD_SWEEP_STRIDE`-th
-/// instrument (default 25) is selected.
-#[test]
-#[ignore = "needs a marketdata tree (OSMIUM_MD_ROOT, default /srv/md/v1)"]
-fn sweep_dates_map_and_replay() {
-    let dates = std::env::var("OSMIUM_MD_SWEEP_DATES").unwrap_or_else(|_| {
-        "2022-03-15,2023-06-14,2024-05-20,2025-04-07,2025-11-12,2026-10-15".to_owned()
-    });
-    let stride: usize = std::env::var("OSMIUM_MD_SWEEP_STRIDE")
-        .ok()
-        .map_or(25, |value| value.parse().unwrap());
-    for date in dates.split(',') {
-        let trading_date = TradingDate::parse(date).unwrap();
-        let manifest = osmium_md::DayManifest::load(&root(), trading_date).unwrap();
-        // Warrants are absent from `instruments` on many dates, so sampling it would select
-        // no F17 symbols; F17 is covered by the fixed-symbol test above.
-        for feed in [Feed::TwseF6, Feed::TpexF6, Feed::TwseF23, Feed::TpexF23] {
-            if manifest
-                .entry(osmium_md::Table::Books, feed.part())
-                .is_err()
-            {
-                eprintln!("{date} {feed}: absent");
-                continue;
-            }
-            let instruments =
-                osmium_md::Instruments::load(&root(), trading_date, feed, &manifest).unwrap();
-            let symbols: Vec<String> = instruments
-                .iter()
-                .step_by(stride)
-                .map(|record| record.symbol.as_str().to_owned())
-                .collect();
-            let symbols: Vec<&str> = symbols.iter().map(String::as_str).collect();
-            replay_day(date, feed, &symbols);
+#[ignore = "needs a marketdata tree"]
+fn a_day_without_exchange_instruments_needs_a_lot_size_assumption() {
+    let symbol = Symbol::new("2330").unwrap();
+    match load(
+        "2022-06-15",
+        Feed::TwseF6,
+        Some(&["2330"]),
+        MissingLotSize::Reject,
+    ) {
+        Err(MdError::MissingLotSize {
+            feed,
+            symbol: missing,
+            ..
+        }) => {
+            assert_eq!((feed, missing), (Feed::TwseF6, symbol));
         }
+        other => panic!("{other:?}"),
     }
+    let assumed = load(
+        "2022-06-15",
+        Feed::TwseF6,
+        Some(&["2330"]),
+        MissingLotSize::Assume(1_000),
+    )
+    .unwrap();
+    assert_eq!(assumed.assumed_lot_sizes().collect::<Vec<_>>(), [symbol]);
+    assert!(check_messages(&assumed).fill > 0);
 }

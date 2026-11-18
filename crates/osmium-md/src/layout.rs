@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use market_types::TradingDate;
+use osmium_types::Date;
 
 /// Default marketdata root on the vault host.
 pub const DEFAULT_MD_ROOT: &str = "/srv/md/v1";
@@ -41,18 +41,18 @@ impl MdRoot {
 
     /// Path relative to the root, as recorded in the manifest `path` column.
     #[must_use]
-    pub fn relative_file(table: Table, date: TradingDate, part: &str) -> String {
+    pub fn relative_file(table: Table, date: Date, part: &str) -> String {
         let day = date.to_string();
         format!("{}/{}/{day}/{part}.parquet", table.as_str(), &day[..4])
     }
 
     #[must_use]
-    pub fn file(&self, table: Table, date: TradingDate, part: &str) -> PathBuf {
+    pub fn file(&self, table: Table, date: Date, part: &str) -> PathBuf {
         self.0.join(Self::relative_file(table, date, part))
     }
 
     #[must_use]
-    pub fn manifest_dir(&self, date: TradingDate) -> PathBuf {
+    pub fn manifest_dir(&self, date: Date) -> PathBuf {
         let day = date.to_string();
         self.0.join("manifest").join(&day[..4]).join(day)
     }
@@ -67,12 +67,12 @@ impl Default for MdRoot {
 #[cfg(test)]
 mod tests {
     use super::{MdRoot, Table};
-    use market_types::TradingDate;
+    use osmium_types::Date;
 
     #[test]
     fn paths_follow_the_marketdata_layout() {
         let root = MdRoot::new("/srv/md/v1");
-        let date = TradingDate::parse("2026-10-15").unwrap();
+        let date: Date = "2026-10-15".parse().unwrap();
         assert_eq!(
             root.file(Table::Books, date, "TWSE_F6"),
             std::path::Path::new("/srv/md/v1/books/2026/2026-10-15/TWSE_F6.parquet")
