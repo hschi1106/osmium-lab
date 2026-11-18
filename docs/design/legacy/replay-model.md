@@ -228,4 +228,4 @@ run manifest v4 的 `versions` 保存 event／canonical event、MarketState／re
 
 其他直接影響 replay 的 identity 包含 marketdata manifest identity、ordering rule、session calendar/profile/window、replay plan、MarketState reducer 與 canonical checksum version。任何不相容內容都需拒絕。
 
-marketdata 欄位的 mapping 見 [marketdata 介面](../interfaces/marketdata.md)。
+marketdata 欄位的 mapping 見 [marketdata 介面](../../reference/marketdata.md)。

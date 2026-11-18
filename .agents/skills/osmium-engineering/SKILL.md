@@ -28,9 +28,9 @@ CLI           → composition/user contract
 先定位 semantic owner；不要把 policy 移到 caller。只讀 owner 相關文件，不確定時從
 `docs/README.md` 導航：
 
-- market／event／reducer／auction → `docs/architecture/replay-model.md`
-- execution／accounting／strategy → `docs/architecture/execution-model.md`
-- marketdata／source／architecture 改建 → `docs/architecture/decisions/0007-marketdata-native.md`
+- 目標架構與遷移狀態 → `docs/design/architecture.md`、`docs/design/decisions/0008-full-market-matching-simulation.md`
+- marketdata 讀取與 mapping → `docs/reference/marketdata.md`
+- 舊 crate（遷移期間）→ `docs/design/legacy/`
 
 ## High-risk invariants
 
@@ -42,7 +42,7 @@ Unknown       → invalidate
 ```
 
 不得猜測 unknown evidence。來源欄位與 domain semantics 必須分離。Auction event matching 不等於
-post-event state；修改 auction／reducer 前必讀 `replay-model.md`。Known Periodic uncross result 保留
+post-event state；修改舊 auction／reducer 前必讀 `docs/design/legacy/replay-model.md`。Known Periodic uncross result 保留
 round evidence；下一 round 以 `delayed=false` 開始，直到 explicit delay trigger。維持
 `match_time` 唯一 replay clock、complete snapshot replacement、no queue reconstruction、post-event
 read-only strategy state 與 explicit-universe selective streams。
@@ -84,4 +84,4 @@ locate owner → read contract → inspect code/tests → smallest coherent chan
 ./.agents/skills/osmium-engineering/scripts/validate.sh full
 ```
 
-其他 gate 見 `docs/operations/validation.md`；只宣稱實際成功的 command。
+其他 gate 見 `docs/development/validation.md`；只宣稱實際成功的 command。

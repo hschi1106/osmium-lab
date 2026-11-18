@@ -17,7 +17,7 @@ simulation 與通用驗收契約不得依賴 marketdata 的欄位或檔案格式
 
 ## 2. 支援範圍
 
-資料可回播至 MarketState 的範圍（見 [marketdata 介面](interfaces/marketdata.md)）：
+資料可回播至 MarketState 的範圍（見 [marketdata 介面](../../reference/marketdata.md)）：
 
 - TWSE／TPEx 一般 board 股票與 ETF（Format 6）。
 - TWSE／TPEx 權證（Format 17）。
@@ -227,7 +227,7 @@ marketdata identity、mapping、event schema、ordering、strategy output、fill
 
 本矩陣是目前產品宣稱的邊界。`production owner` 是實際擁有該行為的 crate 或
 composition-root；`evidence` 是可直接定位的 regression test 或 implementation。標示 `ignored`
-的 test 需要 `/srv/md/v1`，執行方式見[驗證文件](operations/validation.md)。任何一列都不表示
+的 test 需要 `/srv/md/v1`，執行方式見[驗證文件](../../development/validation.md)。任何一列都不表示
 交易所完整撮合、逐筆委託、queue position 或 hidden liquidity 已被重建。
 
 ### 10.1 Source 與 replay
@@ -343,7 +343,7 @@ real-data tests 對 `/srv/md/v1` 執行。
 | 策略 | read-only compile tests、no-look-ahead、callback transaction 與 registry tests |
 | 模擬帳務 | market／limit、scheduled depth、latency、fee／tax、P&L 與 reconciliation tests |
 
-操作驗證見 [驗證文件](operations/validation.md)。
+操作驗證見 [驗證文件](../../development/validation.md)。
 
 ## 12. 參考資料
 
@@ -351,4 +351,4 @@ real-data tests 對 `/srv/md/v1` 執行。
 - [TPEx 上櫃股票 IP 行情網路規格書](https://dsp.tpex.org.tw/storage/regular_system/%E4%B8%8A%E6%AB%83%E8%82%A1%E7%A5%A8IP%E8%A1%8C%E6%83%85%E7%B6%B2%E8%B7%AF%E8%A6%8F%E6%A0%BC%E6%9B%B8%28V.12.18_TCPIP%29.pdf)
 - [TAIFEX 逐筆行情資訊傳輸作業手冊](https://www.taifex.com.tw/cht/8/techDocsDetails?idx=67)
 
-資料來源與範圍以 [ADR-0007](architecture/decisions/0007-marketdata-native.md) 為準。
+資料來源與範圍以 [ADR-0007](../decisions/0007-marketdata-native.md) 為準。

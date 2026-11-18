@@ -2,7 +2,7 @@
 
 `osmium-md` 是 osmium 唯一的資料來源 adapter：直接讀取 marketdata（預設 `/srv/md/v1`）的 parquet，
 不建立第二份 cache，也不寫入 marketdata 目錄。設計決策見
-[ADR-0007](../architecture/decisions/0007-marketdata-native.md)。
+[ADR-0007](../design/decisions/0007-marketdata-native.md)。
 
 ## 1. 支援範圍
 

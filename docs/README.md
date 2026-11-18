@@ -1,20 +1,32 @@
 # Osmium Lab 文件地圖
 
-Domain truth 以本目錄的 canonical docs 為準；code 與 tests 是 executable truth。
+每個事實只寫在一處；其他文件用連結指過去。Code 與 tests 是 executable truth。
 
-> 架構已改為 marketdata-native（見 [ADR-0007](architecture/decisions/0007-marketdata-native.md)）；
-> CLI 與 runner 串接仍在重建中。
+## 使用者：使用手冊（`guide/`）
 
-## Core／architecture developer
+撰寫中，隨 CLI 完成補齊：安裝、跑第一個回測、寫策略、執行與設定、讀結果、疑難排解。
 
-1. [ADR-0007：marketdata-native 架構](architecture/decisions/0007-marketdata-native.md)
-2. [產品需求](product-requirements.md)：scope 與 correctness firewall。
-3. [架構總覽](architecture/overview.md)：元件 ownership 與依賴方向。
-4. [回播模型](architecture/replay-model.md)：event、ordering、auction 與 MarketState。
-5. [marketdata 介面](interfaces/marketdata.md)：`osmium-md` 讀取、驗證與 event mapping。
-6. [執行與帳務模型](architecture/execution-model.md)：strategy、execution 與 reconciliation。
-7. [ADR-0006](architecture/decisions/0006-external-strategies-and-cash-charges.md)：外部 strategy 與 cash charge 邊界。
+## 精確規格（`reference/`）
 
-## 驗證
+- [marketdata](reference/marketdata.md)：依賴的 schema 版本、讀取與一致性檢查、訊息 mapping。
 
-[驗證](operations/validation.md)。共通詞彙見[詞彙表](glossary.md)。
+撰寫中：回放與排序、撮合規則、帳務與費稅、設定、輸出、版本。
+
+## 設計（`design/`）
+
+- [架構](design/architecture.md)：資料流、ownership、不變條件、遷移狀態。
+- 決策紀錄：
+  [ADR-0008 全市場撮合模擬](design/decisions/0008-full-market-matching-simulation.md)、
+  [ADR-0007 marketdata-native](design/decisions/0007-marketdata-native.md)、
+  [ADR-0006 外部策略與 cash charge](design/decisions/0006-external-strategies-and-cash-charges.md)。
+- [legacy/](design/legacy/)：舊 crate 的文件，隨舊 crate 刪除。
+
+## 開發（`development/`）
+
+- [驗證](development/validation.md)：quality gates 與真實資料測試。
+
+## Agent
+
+- [`AGENTS.md`](../AGENTS.md)：repository 規則。
+- `.agents/skills/osmium-engineering`：修改程式。
+- `.agents/skills/osmium-backtest`：使用系統跑回測（隨 CLI 完成）。

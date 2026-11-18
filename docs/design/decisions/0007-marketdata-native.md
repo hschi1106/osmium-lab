@@ -2,7 +2,7 @@
 
 ## 狀態
 
-Accepted（2026-11-17）
+Accepted（2026-11-17）；第 2、8、9 點由 [ADR-0008](0008-full-market-matching-simulation.md) 取代
 
 ## 背景
 

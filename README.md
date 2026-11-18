@@ -32,4 +32,4 @@ deterministic replay，再串接編譯期 Rust strategy、成交模擬、帳務�
 cargo test --workspace
 ```
 
-完整 gate 見[驗證](docs/operations/validation.md)。
+完整 gate 見[驗證](docs/development/validation.md)。
