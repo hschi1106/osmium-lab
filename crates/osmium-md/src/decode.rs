@@ -2,8 +2,13 @@
 //!
 //! Records keep the file's native quantity unit; [`crate::FeedDay`] converts to shares
 //! when it builds a message.
+//!
+//! A file is decoded one row group at a time, each on its own thread. What a row group
+//! cannot decide alone — the order of its rows relative to its neighbours', and whether
+//! its last row is an intermediate fill — is left to [`crate::FeedDay`], which puts the
+//! row groups together in file order.
 
-use std::{collections::HashMap, path::Path};
+use std::path::Path;
 
 use arrow_array::{
     BooleanArray, PrimitiveArray, RecordBatch, StringArray,
@@ -13,10 +18,13 @@ use osmium_types::{BOOK_DEPTH, DelayDirection, Phase, Symbol};
 
 use crate::{
     MdError,
+    order::pack_seq,
+    parallel,
     parquet_io::{
         Column, ColumnType, ParquetFile, boolean, optional, optional_bool, optional_str,
         price_units, primitive, required, strings,
     },
+    stream::{Frame, encode},
 };
 
 /// One book side: prices in units of 1e-4 元, quantities in the feed's native unit.
@@ -30,7 +38,7 @@ pub(crate) struct CompactSide {
 }
 
 impl CompactSide {
-    const EMPTY: Self = Self {
+    pub(crate) const EMPTY: Self = Self {
         price: [0; BOOK_DEPTH],
         qty: [0; BOOK_DEPTH],
         market_qty: 0,
@@ -60,13 +68,10 @@ impl BookKind {
     }
 }
 
-/// One `books` row.
+/// One `books` row, without its `symbol` and `seq`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BookRow {
-    pub(crate) seq: u64,
     pub(crate) exch_ts: i64,
-    /// Index into the [`SymbolTable`].
-    pub(crate) symbol: u32,
     pub(crate) phase: Phase,
     pub(crate) kind: BookKind,
     pub(crate) bid: CompactSide,
@@ -83,6 +88,8 @@ pub(crate) struct BookRow {
 pub(crate) struct TradeRow {
     pub(crate) seq: u64,
     pub(crate) exch_ts: i64,
+    /// Index of the symbol: among the chunk's runs when a chunk is read, among the feed
+    /// day's symbols once [`crate::FeedDay`] has put the chunks together.
     pub(crate) symbol: u32,
     pub(crate) phase: Phase,
     pub(crate) price: u32,
@@ -100,58 +107,83 @@ pub(crate) struct SymbolEntry {
     pub(crate) assumed: bool,
 }
 
-/// The symbols seen while decoding, in order of first appearance.
-#[derive(Debug, Default)]
-pub(crate) struct SymbolTable {
-    pub(crate) entries: Vec<SymbolEntry>,
-    index: HashMap<Symbol, u32>,
-}
-
-impl SymbolTable {
-    fn intern(
-        &mut self,
-        symbol: Symbol,
-        resolve: &dyn Fn(Symbol) -> Result<(u32, bool), MdError>,
-    ) -> Result<u32, MdError> {
-        if let Some(index) = self.index.get(&symbol) {
-            return Ok(*index);
-        }
-        let (shares_per_unit, assumed) = resolve(symbol)?;
-        let index = u32::try_from(self.entries.len()).expect("fewer than 2^32 symbols");
-        self.entries.push(SymbolEntry {
-            symbol,
-            shares_per_unit,
-            assumed,
-        });
-        self.index.insert(symbol, index);
-        Ok(index)
-    }
-}
-
 /// What a decode needs besides the file.
 pub(crate) struct DecodeContext<'a> {
     /// Sorted, unique symbols to keep; `None` keeps every symbol.
     pub(crate) selection: Option<&'a [Symbol]>,
     /// Shares per native unit of a symbol, and whether that value is an assumption.
-    pub(crate) resolve: &'a dyn Fn(Symbol) -> Result<(u32, bool), MdError>,
+    pub(crate) resolve: &'a (dyn Fn(Symbol) -> Result<(u32, bool), MdError> + Sync),
 }
 
 impl DecodeContext<'_> {
-    fn row_groups(&self, file: &ParquetFile) -> Option<Vec<usize>> {
-        self.selection.map(|symbols| {
-            let codes: Vec<&str> = symbols.iter().map(Symbol::as_str).collect();
-            file.row_groups_for_symbols(&codes)
+    /// The row groups of `file` that may hold selected symbols, in file order.
+    pub(crate) fn row_groups(&self, file: &ParquetFile) -> Vec<usize> {
+        match self.selection {
+            None => (0..file.num_row_groups()).collect(),
+            Some(symbols) => {
+                let codes: Vec<&str> = symbols.iter().map(Symbol::as_str).collect();
+                file.row_groups_for_symbols(&codes)
+            }
+        }
+    }
+}
+
+/// The kept rows of one symbol in a chunk; they are consecutive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Run {
+    pub(crate) entry: SymbolEntry,
+    pub(crate) rows: usize,
+}
+
+/// The `(symbol, seq)` of the first and of the last row of a chunk, kept or not. The
+/// rows between them are in order; whether the chunk follows the one before it is for
+/// the caller to check with [`Edge::follows`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Edge {
+    pub(crate) first: Option<(Symbol, u64)>,
+    pub(crate) last: Option<(Symbol, u64)>,
+}
+
+impl Edge {
+    /// Checks that a chunk starting at `first` may follow a row `previous`.
+    pub(crate) fn follows(
+        path: &Path,
+        previous: (Symbol, u64),
+        first: (Symbol, u64),
+    ) -> Result<(), MdError> {
+        let reason = if previous.0 > first.0 {
+            "rows are not sorted by symbol"
+        } else if previous.0 == first.0 && previous.1 >= first.1 {
+            "rows of one symbol are not in strictly increasing seq order"
+        } else {
+            return Ok(());
+        };
+        Err(MdError::InvalidRow {
+            path: path.to_path_buf(),
+            symbol: first.0.to_string(),
+            seq: first.1,
+            reason: reason.to_owned(),
         })
     }
 }
 
-/// Walks the `symbol` column of a file sorted by `(symbol, seq)`.
+/// What entering a row found.
+enum Entered {
+    /// The row's symbol is not selected.
+    Skip,
+    /// The row continues the current run.
+    Same,
+    /// The row starts the run of a selected symbol.
+    New(SymbolEntry),
+}
+
+/// Walks the `symbol` column of a chunk of a file sorted by `(symbol, seq)`.
 struct SymbolRuns {
     code: String,
     symbol: Option<Symbol>,
-    /// Table index of the current symbol when it is selected.
-    selected: Option<u32>,
+    selected: bool,
     last_seq: Option<u64>,
+    first: Option<(Symbol, u64)>,
 }
 
 impl SymbolRuns {
@@ -159,42 +191,56 @@ impl SymbolRuns {
         Self {
             code: String::new(),
             symbol: None,
-            selected: None,
+            selected: false,
             last_seq: None,
+            first: None,
         }
     }
 
-    /// Advances to a row; returns its symbol's table index when the symbol is selected.
+    fn edge(&self) -> Edge {
+        Edge {
+            first: self.first,
+            last: self.symbol.zip(self.last_seq),
+        }
+    }
+
+    /// Advances to a row.
     fn enter(
         &mut self,
         path: &Path,
         code: &str,
         seq: u64,
         context: &DecodeContext<'_>,
-        table: &mut SymbolTable,
-    ) -> Result<Option<u32>, MdError> {
+    ) -> Result<Entered, MdError> {
         let invalid = |reason: String| MdError::InvalidRow {
             path: path.to_path_buf(),
             symbol: code.to_owned(),
             seq,
             reason,
         };
+        let mut entered = Entered::Same;
         if self.symbol.is_none() || self.code != code {
             let symbol = Symbol::new(code).map_err(|error| invalid(error.to_string()))?;
+            if self.first.is_none() {
+                self.first = Some((symbol, seq));
+            }
             if self.symbol.is_some_and(|previous| previous >= symbol) {
                 return Err(invalid("rows are not sorted by symbol".to_owned()));
             }
             code.clone_into(&mut self.code);
             self.symbol = Some(symbol);
             self.last_seq = None;
-            let wanted = context
+            self.selected = context
                 .selection
                 .is_none_or(|symbols| symbols.binary_search(&symbol).is_ok());
-            self.selected = if wanted {
-                Some(table.intern(symbol, context.resolve)?)
-            } else {
-                None
-            };
+            if self.selected {
+                let (shares_per_unit, assumed) = (context.resolve)(symbol)?;
+                entered = Entered::New(SymbolEntry {
+                    symbol,
+                    shares_per_unit,
+                    assumed,
+                });
+            }
         }
         if self.last_seq.is_some_and(|last| last >= seq) {
             return Err(invalid(
@@ -202,7 +248,11 @@ impl SymbolRuns {
             ));
         }
         self.last_seq = Some(seq);
-        Ok(self.selected)
+        Ok(if self.selected {
+            entered
+        } else {
+            Entered::Skip
+        })
     }
 }
 
@@ -459,9 +509,7 @@ impl<'a> BookColumns<'a> {
         let delay_open = optional_bool(self.delay_open, row);
         let delay_close = optional_bool(self.delay_close, row);
         let mut decoded = BookRow {
-            seq: 0,
             exch_ts: 0,
-            symbol: 0,
             phase,
             kind: BookKind::Indicative,
             bid: CompactSide::EMPTY,
@@ -522,45 +570,51 @@ impl<'a> BookColumns<'a> {
     }
 }
 
-/// Reads the selected symbols' rows of a `books` file, in file order.
-pub(crate) fn read_books(
-    file: ParquetFile,
-    context: &DecodeContext<'_>,
-    table: &mut SymbolTable,
-) -> Result<Vec<BookRow>, MdError> {
-    let row_groups = context.row_groups(&file);
-    let mut rows = Vec::new();
-    let mut runs = SymbolRuns::new();
-    file.read(BOOK_COLUMNS, row_groups, |path, batch| {
-        let columns = BookColumns::new(path, batch)?;
-        for row in 0..batch.num_rows() {
-            let code = required(path, optional_str(columns.symbol, row), "symbol")?;
-            let seq = sequence(path, optional(columns.seq, row))?;
-            let Some(symbol) = runs.enter(path, code, seq, context, table)? else {
-                continue;
-            };
-            let decoded = columns
-                .body(path, row)?
-                .map_err(|reason| MdError::InvalidRow {
-                    path: path.to_path_buf(),
-                    symbol: code.to_owned(),
-                    seq,
-                    reason,
-                })?;
-            rows.push(BookRow {
-                seq,
-                exch_ts: required(path, optional(columns.exch_ts, row), "exch_ts")?,
-                symbol,
-                ..decoded
-            });
-        }
-        Ok(())
-    })?;
-    mark_intermediate_fills(&mut rows);
-    Ok(rows)
+pub(crate) const fn book_columns() -> &'static [Column] {
+    BOOK_COLUMNS
 }
 
-/// Marks the fills of a sweep still in progress that `books` records with an empty book.
+pub(crate) const fn trade_columns() -> &'static [Column] {
+    TRADE_COLUMNS
+}
+
+/// A kept `books` row that a `trades` row must share the seq of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Joined {
+    /// Index of the symbol, as in [`TradeRow::symbol`].
+    pub(crate) symbol: u32,
+    pub(crate) seq: u64,
+    pub(crate) exch_ts: i64,
+    pub(crate) phase: Phase,
+}
+
+/// The kept rows of one row group of a `books` file.
+#[derive(Debug, Default)]
+pub(crate) struct BookChunk {
+    /// The symbols with kept rows, in file order.
+    pub(crate) runs: Vec<Run>,
+    /// The bytes each run has in `bytes`.
+    pub(crate) run_bytes: Vec<usize>,
+    /// Every kept row but the last, encoded by [`crate::stream`], run after run. The
+    /// first row of every run is written from [`Frame::START`].
+    pub(crate) bytes: Vec<u8>,
+    /// The seq of every kept row and whether it has a trade, in file order, as
+    /// [`crate::order::pack_seq`] writes them.
+    pub(crate) seqs: Vec<u8>,
+    /// The kept rows with `has_trade`, in file order.
+    pub(crate) joined: Vec<Joined>,
+    /// `exch_ts` and kind of the first kept row.
+    pub(crate) head: Option<(i64, BookKind)>,
+    /// The last kept row. Whether it is an intermediate fill depends on the row after
+    /// it, which is in another chunk.
+    pub(crate) tail: Option<BookRow>,
+    pub(crate) edge: Edge,
+    /// Why decoding stopped early. The fields above describe the rows before it.
+    pub(crate) error: Option<MdError>,
+}
+
+/// Whether `row` is a fill of a sweep still in progress that `books` records with an
+/// empty book, given the row after it: a row of the same symbol when `same_symbol`.
 ///
 /// One order that trades at several prices produces one message per price, all with the
 /// same `exch_ts`; only the last discloses the book. marketdata keeps the earlier ones out
@@ -571,34 +625,120 @@ pub(crate) fn read_books(
 /// The symbol's next message tells them apart. A sweep continues with another fill, or with
 /// a delay row when it stops at the price-stabilisation band, at the same `exch_ts`; nothing
 /// can trade against a book that is empty.
-fn mark_intermediate_fills(rows: &mut [BookRow]) {
-    for index in 1..rows.len() {
-        let next = rows[index];
-        let row = &mut rows[index - 1];
-        let continues = next.symbol == row.symbol
-            && next.exch_ts == row.exch_ts
-            && (next.kind.has_trade() || matches!(next.kind, BookKind::Delay(_)));
-        if continues
-            && row.kind == (BookKind::Disclosure { has_trade: true })
-            && row.phase == Phase::Continuous
-            && row.bid == CompactSide::EMPTY
-            && row.ask == CompactSide::EMPTY
-        {
-            row.kind = BookKind::IntermediateTrade;
-        }
-    }
+pub(crate) fn is_intermediate_fill(
+    row: &BookRow,
+    same_symbol: bool,
+    next_exch_ts: i64,
+    next_kind: BookKind,
+) -> bool {
+    same_symbol
+        && next_exch_ts == row.exch_ts
+        && (next_kind.has_trade() || matches!(next_kind, BookKind::Delay(_)))
+        && row.kind == (BookKind::Disclosure { has_trade: true })
+        && row.phase == Phase::Continuous
+        && row.bid == CompactSide::EMPTY
+        && row.ask == CompactSide::EMPTY
 }
 
-/// Reads the selected symbols' rows of a `trades` file, in file order.
-pub(crate) fn read_trades(
-    file: ParquetFile,
+/// Reads the selected symbols' rows of one row group of a `books` file.
+pub(crate) fn read_book_chunk(
+    file: &ParquetFile,
+    row_group: usize,
     context: &DecodeContext<'_>,
-    table: &mut SymbolTable,
-) -> Result<Vec<TradeRow>, MdError> {
-    let row_groups = context.row_groups(&file);
-    let mut rows = Vec::new();
+) -> BookChunk {
+    let mut chunk = BookChunk::default();
     let mut runs = SymbolRuns::new();
-    file.read(TRADE_COLUMNS, row_groups, |path, batch| {
+    let mut frame = Frame::START;
+    // The row before the current one, waiting for it to tell whether it is intermediate.
+    let mut pending: Option<BookRow> = None;
+    let mut starts_run = true;
+    // The seq of the kept row before the current one in its run.
+    let mut previous_seq = 0;
+    let result = file.read(BOOK_COLUMNS, Some(vec![row_group]), |path, batch| {
+        let columns = BookColumns::new(path, batch)?;
+        for row in 0..batch.num_rows() {
+            let code = required(path, optional_str(columns.symbol, row), "symbol")?;
+            let seq = sequence(path, optional(columns.seq, row))?;
+            let new_run = match runs.enter(path, code, seq, context)? {
+                Entered::Skip => continue,
+                Entered::Same => None,
+                Entered::New(entry) => Some(entry),
+            };
+            let decoded = columns
+                .body(path, row)?
+                .map_err(|reason| MdError::InvalidRow {
+                    path: path.to_path_buf(),
+                    symbol: code.to_owned(),
+                    seq,
+                    reason,
+                })?;
+            let decoded = BookRow {
+                exch_ts: required(path, optional(columns.exch_ts, row), "exch_ts")?,
+                ..decoded
+            };
+            if let Some(mut previous) = pending.take() {
+                if is_intermediate_fill(&previous, new_run.is_none(), decoded.exch_ts, decoded.kind)
+                {
+                    previous.kind = BookKind::IntermediateTrade;
+                }
+                let before = chunk.bytes.len();
+                encode(&mut chunk.bytes, &mut frame, starts_run, &previous);
+                starts_run = false;
+                *chunk.run_bytes.last_mut().expect("the row has a run") +=
+                    chunk.bytes.len() - before;
+            }
+            if let Some(entry) = new_run {
+                chunk.runs.push(Run { entry, rows: 0 });
+                chunk.run_bytes.push(0);
+                starts_run = true;
+                previous_seq = 0;
+            }
+            let has_trade = decoded.kind.has_trade();
+            if has_trade {
+                chunk.joined.push(Joined {
+                    symbol: u32::try_from(chunk.runs.len() - 1).expect("fewer than 2^32 runs"),
+                    seq,
+                    exch_ts: decoded.exch_ts,
+                    phase: decoded.phase,
+                });
+            }
+            if chunk.head.is_none() {
+                chunk.head = Some((decoded.exch_ts, decoded.kind));
+            }
+            pack_seq(&mut chunk.seqs, previous_seq, seq, has_trade);
+            previous_seq = seq;
+            chunk.runs.last_mut().expect("the row has a run").rows += 1;
+            pending = Some(decoded);
+        }
+        Ok(())
+    });
+    chunk.tail = pending;
+    chunk.edge = runs.edge();
+    chunk.error = result.err();
+    chunk
+}
+
+/// The kept rows of one row group of a `trades` file.
+#[derive(Debug, Default)]
+pub(crate) struct TradeChunk {
+    /// The symbols with kept rows, in file order.
+    pub(crate) runs: Vec<Run>,
+    /// The kept rows in file order; `symbol` is an index into `runs`.
+    pub(crate) rows: Vec<TradeRow>,
+    pub(crate) edge: Edge,
+    /// Why decoding stopped early.
+    pub(crate) error: Option<MdError>,
+}
+
+/// Reads the selected symbols' rows of one row group of a `trades` file.
+pub(crate) fn read_trade_chunk(
+    file: &ParquetFile,
+    row_group: usize,
+    context: &DecodeContext<'_>,
+) -> TradeChunk {
+    let mut chunk = TradeChunk::default();
+    let mut runs = SymbolRuns::new();
+    let result = file.read(TRADE_COLUMNS, Some(vec![row_group]), |path, batch| {
         let symbols = strings(path, batch, "symbol")?;
         let exch_ts = primitive::<TimestampMicrosecondType>(path, batch, "exch_ts")?;
         let seqs = primitive::<Int64Type>(path, batch, "seq")?;
@@ -610,9 +750,12 @@ pub(crate) fn read_trades(
         for row in 0..batch.num_rows() {
             let code = required(path, optional_str(symbols, row), "symbol")?;
             let seq = sequence(path, optional(seqs, row))?;
-            let Some(symbol) = runs.enter(path, code, seq, context, table)? else {
-                continue;
-            };
+            match runs.enter(path, code, seq, context)? {
+                Entered::Skip => continue,
+                Entered::Same => {}
+                Entered::New(entry) => chunk.runs.push(Run { entry, rows: 0 }),
+            }
+            let symbol = u32::try_from(chunk.runs.len() - 1).expect("fewer than 2^32 runs");
             let sub_seq = required(path, optional(sub_seq, row), "sub_seq")?;
             let trade_price = required(path, optional(prices, row), "price")?;
             let trade_qty = required(path, optional(qty, row), "qty")?;
@@ -645,14 +788,17 @@ pub(crate) fn read_trades(
                 seq,
                 reason,
             })?;
-            rows.push(TradeRow {
+            chunk.rows.push(TradeRow {
                 exch_ts: required(path, optional(exch_ts, row), "exch_ts")?,
                 ..decoded
             });
+            chunk.runs.last_mut().expect("the row has a run").rows += 1;
         }
         Ok(())
-    })?;
-    Ok(rows)
+    });
+    chunk.edge = runs.edge();
+    chunk.error = result.err();
+    chunk
 }
 
 /// Observed time of each `selected` seq over the whole feed.
@@ -662,34 +808,74 @@ pub(crate) fn read_trades(
 /// does not depend on which symbols are read. `selected` must be sorted and unique;
 /// the result is aligned with it.
 pub(crate) fn observed_times(
-    files: impl IntoIterator<Item = ParquetFile>,
+    threads: usize,
+    files: [&ParquetFile; 2],
     selected: &[u64],
 ) -> Result<Vec<i64>, MdError> {
     const COLUMNS: &[Column] = &[
         ("seq", ColumnType::Int64),
         ("exch_ts", ColumnType::TimestampMicrosUtc),
     ];
-    let mut bucket_max = vec![i64::MIN; selected.len()];
+    /// What one thread has seen: the largest `exch_ts` that becomes visible at each
+    /// selected seq, and the first piece that failed.
+    struct Seen {
+        bucket_max: Vec<i64>,
+        error: Option<(usize, MdError)>,
+    }
     let Some(&last) = selected.last() else {
-        return Ok(bucket_max);
+        return Ok(Vec::new());
     };
-    for file in files {
-        file.read(COLUMNS, None, |path, batch| {
-            let seq = primitive::<Int64Type>(path, batch, "seq")?;
-            let exch_ts = primitive::<TimestampMicrosecondType>(path, batch, "exch_ts")?;
-            for row in 0..batch.num_rows() {
-                let seq = sequence(path, optional(seq, row))?;
-                let time = required(path, optional(exch_ts, row), "exch_ts")?;
-                if seq > last {
-                    continue;
+    let pieces: Vec<(&ParquetFile, usize)> = files
+        .into_iter()
+        .flat_map(|file| (0..file.num_row_groups()).map(move |row_group| (file, row_group)))
+        .collect();
+    let seen = parallel::fold(
+        threads,
+        pieces.len(),
+        || Seen {
+            bucket_max: vec![i64::MIN; selected.len()],
+            error: None,
+        },
+        |seen, piece| {
+            let (file, row_group) = pieces[piece];
+            let bucket_max = &mut seen.bucket_max;
+            let result = file.read(COLUMNS, Some(vec![row_group]), |path, batch| {
+                let seq = primitive::<Int64Type>(path, batch, "seq")?;
+                let exch_ts = primitive::<TimestampMicrosecondType>(path, batch, "exch_ts")?;
+                for row in 0..batch.num_rows() {
+                    let seq = sequence(path, optional(seq, row))?;
+                    let time = required(path, optional(exch_ts, row), "exch_ts")?;
+                    if seq > last {
+                        continue;
+                    }
+                    // Message `seq` is visible to every selected seq at or after it.
+                    let bucket = selected.partition_point(|&selected| selected < seq);
+                    let slot = &mut bucket_max[bucket];
+                    *slot = (*slot).max(time);
                 }
-                // Message `seq` is visible to every selected seq at or after it.
-                let bucket = selected.partition_point(|&selected| selected < seq);
-                let slot = &mut bucket_max[bucket];
-                *slot = (*slot).max(time);
+                Ok(())
+            });
+            if let Err(error) = result
+                && seen.error.as_ref().is_none_or(|(first, _)| piece < *first)
+            {
+                seen.error = Some((piece, error));
             }
-            Ok(())
-        })?;
+        },
+    );
+    let mut bucket_max = vec![i64::MIN; selected.len()];
+    let mut first_error: Option<(usize, MdError)> = None;
+    for seen in seen {
+        if let Some((piece, error)) = seen.error
+            && first_error.as_ref().is_none_or(|(first, _)| piece < *first)
+        {
+            first_error = Some((piece, error));
+        }
+        for (slot, value) in bucket_max.iter_mut().zip(seen.bucket_max) {
+            *slot = (*slot).max(value);
+        }
+    }
+    if let Some((_, error)) = first_error {
+        return Err(error);
     }
     let mut running = i64::MIN;
     for slot in &mut bucket_max {

@@ -8,11 +8,14 @@ use arrow_array::{
     cast::AsArray,
 };
 use arrow_schema::{DataType, TimeUnit};
-use parquet::arrow::{ProjectionMask, arrow_reader::ParquetRecordBatchReaderBuilder};
+use parquet::arrow::{
+    ProjectionMask,
+    arrow_reader::{ArrowReaderMetadata, ArrowReaderOptions, ParquetRecordBatchReaderBuilder},
+};
 
 use crate::MdError;
 
-const BATCH_SIZE: usize = 64 * 1024;
+const BATCH_SIZE: usize = 8 * 1024;
 
 /// The Arrow type marketdata schema version 1 gives a column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,23 +55,30 @@ impl ColumnType {
 /// A column osmium reads and the type it must have.
 pub(crate) type Column = (&'static str, ColumnType);
 
-/// One opened marketdata parquet file with its footer already parsed.
+/// One marketdata parquet file with its footer already parsed.
+///
+/// Every read opens the path again, so several threads can read row groups of one file
+/// at once: handles duplicated from one `File` would share a file position.
 pub(crate) struct ParquetFile {
     path: PathBuf,
-    builder: ParquetRecordBatchReaderBuilder<File>,
+    footer: ArrowReaderMetadata,
 }
 
 impl ParquetFile {
     pub(crate) fn open(path: &Path) -> Result<Self, MdError> {
-        let file = File::open(path).map_err(|source| MdError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+        let file = Self::file(path)?;
+        let footer = ArrowReaderMetadata::load(&file, ArrowReaderOptions::new())
             .map_err(|error| MdError::parquet(path, error))?;
         Ok(Self {
             path: path.to_path_buf(),
-            builder,
+            footer,
+        })
+    }
+
+    fn file(path: &Path) -> Result<File, MdError> {
+        File::open(path).map_err(|source| MdError::Io {
+            path: path.to_path_buf(),
+            source,
         })
     }
 
@@ -77,12 +87,16 @@ impl ParquetFile {
     }
 
     pub(crate) fn num_rows(&self) -> i64 {
-        self.builder.metadata().file_metadata().num_rows()
+        self.footer.metadata().file_metadata().num_rows()
+    }
+
+    pub(crate) fn num_row_groups(&self) -> usize {
+        self.footer.metadata().num_row_groups()
     }
 
     /// Value of a footer key-value entry such as `md.git_commit`.
     pub(crate) fn metadata_value(&self, key: &str) -> Option<&str> {
-        self.builder
+        self.footer
             .metadata()
             .file_metadata()
             .key_value_metadata()?
@@ -96,7 +110,7 @@ impl ParquetFile {
     ///
     /// marketdata files are sorted by `(symbol, seq)`, so min/max statistics prune exactly.
     pub(crate) fn row_groups_for_symbols(&self, sorted_symbols: &[&str]) -> Vec<usize> {
-        let metadata = self.builder.metadata();
+        let metadata = self.footer.metadata();
         let column = metadata
             .file_metadata()
             .schema_descr()
@@ -125,7 +139,7 @@ impl ParquetFile {
     ///
     /// The yearly tables are sorted by `(trade_date, symbol)`.
     pub(crate) fn row_groups_for_date(&self, epoch_days: i32) -> Vec<usize> {
-        let metadata = self.builder.metadata();
+        let metadata = self.footer.metadata();
         let column = metadata
             .file_metadata()
             .schema_descr()
@@ -151,49 +165,61 @@ impl ParquetFile {
             .collect()
     }
 
-    /// Streams record batches of `columns` from `row_groups` (all when `None`).
+    /// Fails when one of `columns` is missing or has another type.
     ///
-    /// Fails before reading any row when a column is missing or has another type.
     /// Columns osmium does not read are not checked: schema version 1 may gain columns.
-    pub(crate) fn read(
-        self,
-        columns: &[Column],
-        row_groups: Option<Vec<usize>>,
-        mut visit: impl FnMut(&Path, &RecordBatch) -> Result<(), MdError>,
-    ) -> Result<(), MdError> {
-        let Self { path, builder } = self;
+    pub(crate) fn check(&self, columns: &[Column]) -> Result<(), MdError> {
+        let path = self.path.as_path();
         for (name, expected) in columns {
-            match builder.schema().field_with_name(name) {
+            match self.footer.schema().field_with_name(name) {
                 Ok(field) if expected.matches(field.data_type()) => {}
                 Ok(field) => {
                     return Err(MdError::schema(
-                        &path,
+                        path,
                         format!(
                             "column {name} is {}, expected {expected:?}",
                             field.data_type()
                         ),
                     ));
                 }
-                Err(_) => return Err(MdError::schema(&path, format!("column {name} is missing"))),
+                Err(_) => return Err(MdError::schema(path, format!("column {name} is missing"))),
             }
         }
+        Ok(())
+    }
+
+    /// Streams record batches of `columns` from `row_groups` (all when `None`).
+    ///
+    /// Fails before reading any row when [`Self::check`] does.
+    pub(crate) fn read(
+        &self,
+        columns: &[Column],
+        row_groups: Option<Vec<usize>>,
+        mut visit: impl FnMut(&Path, &RecordBatch) -> Result<(), MdError>,
+    ) -> Result<(), MdError> {
+        self.check(columns)?;
+        let path = self.path.as_path();
+        if row_groups.as_ref().is_some_and(Vec::is_empty) {
+            return Ok(());
+        }
+        let builder = ParquetRecordBatchReaderBuilder::new_with_metadata(
+            Self::file(path)?,
+            self.footer.clone(),
+        );
         let mask = ProjectionMask::columns(
             builder.parquet_schema(),
             columns.iter().map(|(name, _)| *name),
         );
         let mut builder = builder.with_projection(mask).with_batch_size(BATCH_SIZE);
         if let Some(row_groups) = row_groups {
-            if row_groups.is_empty() {
-                return Ok(());
-            }
             builder = builder.with_row_groups(row_groups);
         }
         let reader = builder
             .build()
-            .map_err(|error| MdError::parquet(&path, error))?;
+            .map_err(|error| MdError::parquet(path, error))?;
         for batch in reader {
-            let batch = batch.map_err(|error| MdError::parquet(&path, error))?;
-            visit(&path, &batch)?;
+            let batch = batch.map_err(|error| MdError::parquet(path, error))?;
+            visit(path, &batch)?;
         }
         Ok(())
     }

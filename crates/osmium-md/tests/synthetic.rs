@@ -11,7 +11,14 @@ use osmium_types::{
     Book, Currency, Date, DayTradeFlag, DelayDirection, Feed, InstrumentType, Level, Message,
     MessageBody, Phase, Price, Shares, Symbol, Venue,
 };
-use parquet::{arrow::ArrowWriter, file::metadata::KeyValue, file::properties::WriterProperties};
+use parquet::{
+    arrow::ArrowWriter,
+    file::{
+        metadata::KeyValue,
+        properties::WriterProperties,
+        reader::{FileReader, SerializedFileReader},
+    },
+};
 
 const DATE: &str = "2026-10-15";
 const COMMIT: &str = "c0ffee";
@@ -316,6 +323,9 @@ struct Fixture {
     tamper: fn(Table, &mut Columns),
     /// Changes the row count the manifest records for a table.
     manifest_rows: fn(Table, i64) -> i64,
+    /// The largest number of rows in a row group of `books` and `trades`; `None` writes
+    /// each as one row group.
+    row_group_rows: Option<usize>,
 }
 
 impl Fixture {
@@ -328,6 +338,7 @@ impl Fixture {
             schema_version: "1",
             tamper: |_, _| {},
             manifest_rows: |_, rows| rows,
+            row_group_rows: None,
         }
     }
 
@@ -336,10 +347,14 @@ impl Fixture {
         let _ = fs::remove_dir_all(&root);
         let md = MdRoot::new(&root);
         let date = date();
-        let write = |path: PathBuf, columns: Columns| {
+        let write = |path: PathBuf, columns: Columns, row_group_rows: Option<usize>| {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             let batch = RecordBatch::try_from_iter(columns).unwrap();
-            let properties = WriterProperties::builder()
+            let mut properties = WriterProperties::builder();
+            if row_group_rows.is_some() {
+                properties = properties.set_max_row_group_row_count(row_group_rows);
+            }
+            let properties = properties
                 .set_key_value_metadata(Some(vec![
                     KeyValue::new(
                         "md.schema_version".to_owned(),
@@ -371,7 +386,11 @@ impl Fixture {
             ),
         ] {
             (self.tamper)(table, &mut columns);
-            let rows = write(md.file(table, date, part), columns);
+            let row_group_rows = match table {
+                Table::Books | Table::Trades => self.row_group_rows,
+                _ => None,
+            };
+            let rows = write(md.file(table, date, part), columns, row_group_rows);
             entries.push((table, part, (self.manifest_rows)(table, rows)));
         }
         let len = entries.len();
@@ -403,6 +422,7 @@ impl Fixture {
                 ("code_hash", strings(vec!["code"; len])),
                 ("inputs_hash", strings(vec!["inputs"; len])),
             ],
+            None,
         );
         Tree {
             root,
@@ -484,9 +504,9 @@ fn invalid_row(result: Result<FeedDay, MdError>) -> String {
     }
 }
 
-#[test]
-fn a_feed_becomes_messages_in_seq_order() {
-    let tree = Fixture::new(
+/// Every kind of message, over two symbols.
+fn kinds() -> Fixture {
+    Fixture::new(
         vec![
             // A: an indicative row, the opening uncross with its trade, then a sweep:
             // seq 5 is an intermediate fill (trades only) and seq 6 the final fill.
@@ -534,7 +554,11 @@ fn a_feed_becomes_messages_in_seq_order() {
             },
         ],
     )
-    .write("kinds");
+}
+
+#[test]
+fn a_feed_becomes_messages_in_seq_order() {
+    let tree = kinds().write("kinds");
     let day = tree.load().unwrap();
     assert_eq!(day.len(), 6);
     assert_eq!(day.feed(), Feed::TwseF6);
@@ -1140,9 +1164,66 @@ fn rows_that_break_the_message_model_are_rejected() {
         ),
     ];
     for (name, books, trades, expected) in cases {
-        let tree = Fixture::new(books, trades).write(&format!("invalid-{name}"));
-        let reason = invalid_row(tree.load());
+        let mut fixture = Fixture::new(books, trades);
+        let reason = invalid_row(fixture.write(&format!("invalid-{name}")).load());
         assert!(reason.contains(expected), "{name}: {reason}");
+        // The same row is the first one wrong when every row is a row group of its own.
+        fixture.row_group_rows = Some(1);
+        let split = invalid_row(fixture.write(&format!("invalid-split-{name}")).load());
+        assert_eq!(split, reason, "{name}");
+    }
+}
+
+#[test]
+fn the_messages_do_not_depend_on_how_the_files_are_split_into_row_groups() {
+    // Row groups are read independently of each other and then put together; a symbol's
+    // rows, a sweep and a joined `trades` row may all be cut by a row group boundary.
+    let unordered_times = Fixture::new(
+        vec![
+            book("A", 1, 10),
+            book("A", 3, 30),
+            book("A", 4, 5),
+            book("B", 2, 50),
+            book("B", 5, 60),
+        ],
+        vec![],
+    );
+    for (name, mut fixture) in [
+        ("kinds", kinds()),
+        ("sweeps", sweeps()),
+        ("times", unordered_times),
+    ] {
+        let read = |fixture: &Fixture, rows: usize| -> Vec<Vec<Message>> {
+            let tree = fixture.write(&format!("split-{name}-{rows}"));
+            [None, Some(&["A"][..]), Some(&["B"][..])]
+                .into_iter()
+                .map(|selection| {
+                    tree.load_with(selection, MissingLotSize::Reject)
+                        .unwrap()
+                        .messages()
+                        .collect()
+                })
+                .collect()
+        };
+        let whole = read(&fixture, 0);
+        assert!(!whole[0].is_empty());
+        for rows in 1..=4 {
+            fixture.row_group_rows = Some(rows);
+            assert_eq!(
+                read(&fixture, rows),
+                whole,
+                "{name}, {rows} rows a row group"
+            );
+        }
+        // The files really are split: one row a row group at the smallest size.
+        fixture.row_group_rows = Some(1);
+        let tree = fixture.write(&format!("split-{name}-groups"));
+        let books = MdRoot::new(&tree.root).file(Table::Books, date(), tree.feed.part());
+        let groups = SerializedFileReader::new(fs::File::open(books).unwrap())
+            .unwrap()
+            .metadata()
+            .num_row_groups();
+        assert_eq!(groups, fixture.books.len(), "{name}");
     }
 }
 
@@ -1210,17 +1291,17 @@ fn a_first_level_without_a_price_is_the_market_order_quantity() {
     }
 }
 
-#[test]
-fn a_fill_with_an_empty_book_is_intermediate_when_the_sweep_continues() {
-    // Days converted from a source without the continuation flag carry every fill in
-    // `books`; the fills before the last of a sweep have zero levels on both sides.
+/// Fills with an empty book, as days converted from a source without the continuation
+/// flag carry them: every fill is in `books`, and the fills before the last of a sweep
+/// have zero levels on both sides.
+fn sweeps() -> Fixture {
     let empty = |symbol, seq, ts| BookRow {
         has_trade: true,
         bid: Some(vec![]),
         ask: Some(vec![]),
         ..book(symbol, seq, ts)
     };
-    let tree = Fixture::new(
+    Fixture::new(
         vec![
             // A sweep of three fills; the last discloses the book.
             empty("A", 1, 10),
@@ -1261,7 +1342,11 @@ fn a_fill_with_an_empty_book_is_intermediate_when_the_sweep_continues() {
             trade("B", 11, 50, 100.0, 1),
         ],
     )
-    .write("intermediate");
+}
+
+#[test]
+fn a_fill_with_an_empty_book_is_intermediate_when_the_sweep_continues() {
+    let tree = sweeps().write("intermediate");
     let kinds: Vec<&str> = tree
         .messages()
         .iter()

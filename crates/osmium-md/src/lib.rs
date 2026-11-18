@@ -7,8 +7,11 @@ mod feed_day;
 mod instruments;
 mod layout;
 mod manifest;
+mod order;
+mod parallel;
 mod parquet_io;
 mod reference;
+mod stream;
 
 /// The version of the decoding of marketdata into messages
 /// (`docs/reference/marketdata.md`). It changes when the same files decode differently.
