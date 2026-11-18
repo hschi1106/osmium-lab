@@ -8,6 +8,7 @@ members = [
     "crates/osmium-replay",
     "crates/osmium-strategy",
     "crates/osmium-types",
+    "crates/osmium-runner",
 ]
 resolver = "2"
 
