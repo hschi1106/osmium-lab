@@ -31,7 +31,7 @@ osmium-runner：串接以上各層、run 設定與輸出；osmium-cli：指令�
 | `osmium-types` | 價格、數量、金額、時間、商品、board、行情訊息的型別與換算 | 任何規則 |
 | `osmium-md` | marketdata layout、schema 檢查、manifest identity、訊息解碼、衍生快取 | 排序以外的語義 |
 | `osmium-replay` | 跨 feed 全序、replay clock | 狀態、撮合 |
-| `osmium-book` | 五檔、交易階段、試撮與暫緩撮合狀態 | 模擬委託 |
+| `osmium-book` | 撮合方式、交易模式、目前五檔、試撮與暫緩撮合狀態 | 模擬委託 |
 | `osmium-strategy` | 策略 trait、context、委託意圖、計時器 | 成交判定 |
 | `osmium-matching` | 委託生命週期、交易規則檢查、撮合、排隊估計 | 現金與部位 |
 | `osmium-ledger` | 現金、部位、信用交易、交割、公司行動、費稅、損益、對帳 | 成交判定 |
@@ -53,7 +53,7 @@ osmium-runner：串接以上各層、run 設定與輸出；osmium-cli：指令�
 | `osmium-types` | 進行中：價格、股數、代號、時間、feed、行情訊息、商品基本資料；金額等隨使用的 crate 加入 | `market-types` |
 | `osmium-md` | 讀取、驗證、訊息解碼完成；串流讀取與衍生快取未開始 | — |
 | `osmium-replay` | 未開始 | `replay-engine` |
-| `osmium-book` | 未開始 | `market-state` |
+| `osmium-book` | 完成：撮合方式、交易模式、目前五檔、試撮與暫緩撮合狀態 | `market-state` |
 | `osmium-strategy` | 未開始 | `strategy-api` |
 | `osmium-matching` | 未開始 | `execution-sim`（撮合部分） |
 | `osmium-ledger` | 未開始 | `execution-sim`（帳務部分） |

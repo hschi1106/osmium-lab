@@ -16,6 +16,7 @@ invariants 與 workflow。
 
 ```text
 marketdata    → parquet → Message（osmium-md；型別在 osmium-types，見 ADR-0008）
+osmium-book   → 撮合方式、交易模式、目前五檔（docs/reference/matching.md 第 4 節）
 planner       → validated, frozen execution facts
 replay        → ordering/playback
 market-state  → cross-event state

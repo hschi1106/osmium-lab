@@ -13,6 +13,8 @@
 - 新增 `osmium-md`：讀取 marketdata F6／F17／F23 parquet，檢查 schema 版本與欄位型別、驗證
   manifest identity，計算全 feed observed time，並解碼成依 `seq` 排序的訊息（揭示、中間成交、
   試撮、暫緩撮合），數量一律換算成股數（見 [marketdata 介面](docs/reference/marketdata.md)）。
+- 新增 `osmium-book`：每本 book 的撮合方式（逐筆／分盤，含 `match_interval_s` 缺值時的推論）、
+  交易模式、目前五檔、最近成交、試撮與暫緩撮合狀態（[撮合規格](docs/reference/matching.md)第 4 節）。
 - 新增 `osmium-types`：整數的 `Price`（1e-4 元）、`Shares`、`Symbol`、`Timestamp`／`Date`、
   `Feed`，以及行情訊息與商品基本資料的型別
   （[ADR-0008](docs/design/decisions/0008-full-market-matching-simulation.md)）。
