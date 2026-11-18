@@ -109,6 +109,11 @@ impl DayRun<'_, '_> {
             self.outbox,
         );
         call(self.strategy, &mut context);
+        self.flush(now)
+    }
+
+    /// Puts what the strategy asked for in its last call on the timeline.
+    fn flush(&mut self, now: Timestamp) -> Result<(), RunError> {
         let commands: Vec<Command> = self.outbox.drain().collect();
         for command in commands {
             match command {
@@ -240,14 +245,25 @@ impl DayRun<'_, '_> {
             now = time;
             match event {
                 Event::MarketAtExchange(message) => {
-                    self.engine.on_market(&message, &mut self.events);
-                    self.report()?;
+                    self.engine.on_market(message, &mut self.events);
+                    if !self.events.is_empty() {
+                        self.report()?;
+                    }
                 }
                 Event::MarketAtStrategy(message) => {
-                    self.market.apply(&message);
-                    self.call(now, |strategy, context| {
-                        strategy.on_market(context, &message);
-                    })?;
+                    // The message stays with the timeline, so the strategy is called
+                    // here rather than through `call`, which needs all of `self`.
+                    self.market.apply(message);
+                    let mut context = Context::new(
+                        now,
+                        self.date,
+                        false,
+                        self.market,
+                        self.account,
+                        self.outbox,
+                    );
+                    self.strategy.on_market(&mut context, message);
+                    self.flush(now)?;
                 }
                 Event::Scheduled(_, pending) => self.arrive(now, pending)?,
             }

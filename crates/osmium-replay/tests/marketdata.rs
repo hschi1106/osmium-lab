@@ -185,13 +185,12 @@ fn merged_feeds_replay_in_exchange_order() {
     let mut previous_delivery: Option<MessageOrder> = None;
     let mut feeds_seen = [false; 6];
     while let Some((time, event)) = timeline.next_event() {
-        assert_eq!(timeline.now(), Some(time));
         assert!(previous_time.is_none_or(|previous| time >= previous));
         previous_time = Some(time);
         match event {
             Event::MarketAtExchange(message) => {
                 assert_eq!(time, message.observed_time);
-                let order = MessageOrder::of(&message);
+                let order = MessageOrder::of(message);
                 assert!(previous_order.is_none_or(|previous| order > previous));
                 previous_order = Some(order);
                 feeds_seen[usize::from(message.feed.rank())] = true;
@@ -210,7 +209,7 @@ fn merged_feeds_replay_in_exchange_order() {
             }
             Event::MarketAtStrategy(message) => {
                 assert_eq!(time, message.observed_time.plus_micros(LATENCY));
-                let order = MessageOrder::of(&message);
+                let order = MessageOrder::of(message);
                 assert!(previous_delivery.is_none_or(|previous| order > previous));
                 previous_delivery = Some(order);
                 at_strategy += 1;
@@ -221,6 +220,7 @@ fn merged_feeds_replay_in_exchange_order() {
                 fired += 1;
             }
         }
+        assert_eq!(timeline.now(), Some(time));
     }
     assert_eq!(at_exchange, total);
     assert_eq!(at_strategy, total);

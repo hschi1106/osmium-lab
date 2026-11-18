@@ -36,14 +36,17 @@ const MARKET_AT_EXCHANGE: u8 = 0;
 const MARKET_AT_STRATEGY: u8 = 3;
 
 /// One step of the timeline.
+///
+/// A message is lent, not copied: it stays with the timeline, which every step of a
+/// trading day goes through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Event<E> {
+pub enum Event<'a, E> {
     /// A market data message takes effect at the exchange.
-    MarketAtExchange(Message),
+    MarketAtExchange(&'a Message),
     /// An event passed to [`Timeline::schedule`].
     Scheduled(ScheduledClass, E),
     /// A market data message reaches the strategy.
-    MarketAtStrategy(Message),
+    MarketAtStrategy(&'a Message),
 }
 
 struct Entry<E> {
@@ -89,6 +92,9 @@ pub struct Timeline<I, E> {
     market_data_latency: i64,
     /// Messages applied at the exchange and not yet delivered to the strategy.
     in_flight: VecDeque<Message>,
+    /// The front of `in_flight` was lent as [`Event::MarketAtStrategy`] by the last
+    /// step and leaves the queue at the next one.
+    delivered: bool,
     scheduled: BinaryHeap<Reverse<Entry<E>>>,
     next_ordinal: u64,
     now: Option<Timestamp>,
@@ -108,6 +114,7 @@ impl<I: Iterator<Item = Message>, E> Timeline<I, E> {
             market,
             market_data_latency,
             in_flight: VecDeque::new(),
+            delivered: false,
             scheduled: BinaryHeap::new(),
             next_ordinal: 0,
             now: None,
@@ -143,36 +150,42 @@ impl<I: Iterator<Item = Message>, E> Timeline<I, E> {
     }
 
     /// Removes and returns the next event with its time; `None` when nothing is pending.
-    pub fn next_event(&mut self) -> Option<(Timestamp, Event<E>)> {
-        let at_exchange = self
-            .market
-            .peek()
-            .map(|message| (message.observed_time, MARKET_AT_EXCHANGE));
-        let at_strategy = self
-            .in_flight
-            .front()
-            .map(|message| (self.delivery_time(message), MARKET_AT_STRATEGY));
-        let scheduled = self
-            .scheduled
-            .peek()
-            .map(|Reverse(entry)| (entry.time, entry.class.rank()));
-        let (time, class) = [at_exchange, at_strategy, scheduled]
-            .into_iter()
-            .flatten()
-            .min()?;
+    pub fn next_event(&mut self) -> Option<(Timestamp, Event<'_, E>)> {
+        if self.delivered {
+            self.in_flight.pop_front();
+            self.delivered = false;
+        }
+        let mut next: Option<(Timestamp, u8)> = None;
+        let mut offer = |candidate: (Timestamp, u8)| {
+            if next.is_none_or(|next| candidate < next) {
+                next = Some(candidate);
+            }
+        };
+        if let Some(message) = self.market.peek() {
+            offer((message.observed_time, MARKET_AT_EXCHANGE));
+        }
+        if let Some(message) = self.in_flight.front() {
+            offer((self.delivery_time(message), MARKET_AT_STRATEGY));
+        }
+        if let Some(Reverse(entry)) = self.scheduled.peek() {
+            offer((entry.time, entry.class.rank()));
+        }
+        let (time, class) = next?;
+        self.now = Some(time);
         let event = match class {
             MARKET_AT_EXCHANGE => {
-                let message = self.market.next()?;
-                self.in_flight.push_back(message);
-                Event::MarketAtExchange(message)
+                self.market.pop_into(&mut self.in_flight);
+                Event::MarketAtExchange(self.in_flight.back()?)
             }
-            MARKET_AT_STRATEGY => Event::MarketAtStrategy(self.in_flight.pop_front()?),
+            MARKET_AT_STRATEGY => {
+                self.delivered = true;
+                Event::MarketAtStrategy(self.in_flight.front()?)
+            }
             _ => {
                 let Reverse(entry) = self.scheduled.pop()?;
                 Event::Scheduled(entry.class, entry.event)
             }
         };
-        self.now = Some(time);
         Some((time, event))
     }
 
@@ -202,13 +215,13 @@ mod tests {
     fn drain(timeline: &mut Day) -> Vec<(i64, String)> {
         let mut steps = Vec::new();
         while let Some((time, event)) = timeline.next_event() {
-            assert_eq!(timeline.now(), Some(time));
             steps.push((time.micros(), describe(&event)));
+            assert_eq!(timeline.now(), Some(time));
         }
         steps
     }
 
-    fn describe(event: &Event<&'static str>) -> String {
+    fn describe(event: &Event<'_, &'static str>) -> String {
         match event {
             Event::MarketAtExchange(message) => format!("exchange {}", message.seq),
             Event::MarketAtStrategy(message) => format!("strategy {}", message.seq),

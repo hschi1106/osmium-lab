@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use osmium_types::{Feed, Message, Timestamp};
 
 /// The position of a message in the total order of one trading day.
@@ -30,15 +32,23 @@ struct Stream<I> {
 }
 
 impl<I: Iterator<Item = Message>> Stream<I> {
-    /// Moves to the next message, which must follow `taken` in the same feed.
-    fn advance(&mut self, taken: &Message) {
+    /// Moves to the message after the head, which must follow it in the same feed.
+    fn advance(&mut self) {
+        let Some(taken) = self
+            .head
+            .as_ref()
+            .map(|taken| (taken.feed, MessageOrder::of(taken)))
+        else {
+            return;
+        };
         self.head = self.rest.next();
         if let Some(next) = &self.head {
-            assert_eq!(next.feed, taken.feed, "a stream carries one feed");
+            let (feed, taken) = taken;
+            assert_eq!(next.feed, feed, "a stream carries one feed");
             assert!(
                 next.seq > taken.seq && next.observed_time >= taken.observed_time,
                 "{} messages are not in exchange order: seq {} follows seq {}",
-                taken.feed.part(),
+                feed.part(),
                 next.seq,
                 taken.seq
             );
@@ -52,6 +62,8 @@ impl<I: Iterator<Item = Message>> Stream<I> {
 /// `osmium_md::FeedDay::messages` produces.
 pub struct MergedFeeds<I> {
     streams: Vec<Stream<I>>,
+    /// The stream whose head is the next message.
+    next: Option<usize>,
 }
 
 impl<I: Iterator<Item = Message>> MergedFeeds<I> {
@@ -82,13 +94,18 @@ impl<I: Iterator<Item = Message>> MergedFeeds<I> {
                 );
             }
         }
-        Self { streams }
+        let mut merged = Self {
+            streams,
+            next: None,
+        };
+        merged.next = merged.next_stream();
+        merged
     }
 
     /// The next message without consuming it.
     #[must_use]
     pub fn peek(&self) -> Option<&Message> {
-        self.next_stream()
+        self.next
             .and_then(|index| self.streams[index].head.as_ref())
     }
 
@@ -100,16 +117,34 @@ impl<I: Iterator<Item = Message>> MergedFeeds<I> {
             .min()
             .map(|(_, index)| index)
     }
+
+    /// Moves the next message to the back of `queue`; `false` when none is left.
+    ///
+    /// A message is large; this copies it once, where taking it out of the iterator
+    /// and pushing it would copy it several times.
+    pub(crate) fn pop_into(&mut self, queue: &mut VecDeque<Message>) -> bool {
+        let Some(index) = self.next else {
+            return false;
+        };
+        let stream = &mut self.streams[index];
+        let Some(message) = &stream.head else {
+            return false;
+        };
+        queue.push_back(*message);
+        stream.advance();
+        self.next = self.next_stream();
+        true
+    }
 }
 
 impl<I: Iterator<Item = Message>> Iterator for MergedFeeds<I> {
     type Item = Message;
 
     fn next(&mut self) -> Option<Message> {
-        let index = self.next_stream()?;
-        let stream = &mut self.streams[index];
-        let message = stream.head.take()?;
-        stream.advance(&message);
+        let stream = &mut self.streams[self.next?];
+        let message = stream.head?;
+        stream.advance();
+        self.next = self.next_stream();
         Some(message)
     }
 }
