@@ -134,21 +134,23 @@ impl Engine {
         let close = at(13, 30);
         match board {
             Board::Regular => {
-                (at(8, 30) <= now && now < close)
+                (Self::collection_start(self.date, board) <= now && now < close)
                     // A delayed close takes orders again for two minutes.
                     || (mode == Mode::Collecting(Collecting::Close)
                         && at(13, 31) <= now
                         && now < at(13, 33))
             }
-            Board::OddLot => {
-                let early = Date::from_ymd(2026, 12, 7).expect("a valid date");
-                let open = if self.date >= early {
-                    at(8, 30)
-                } else {
-                    at(9, 0)
-                };
-                open <= now && now < close
-            }
+            Board::OddLot => Self::collection_start(self.date, board) <= now && now < close,
+        }
+    }
+
+    /// When a board starts to take orders on `date` (section 4.3).
+    #[must_use]
+    pub fn collection_start(date: Date, board: Board) -> Timestamp {
+        let early_odd_lots = Date::from_ymd(2026, 12, 7).expect("a valid date");
+        match board {
+            Board::OddLot if date < early_odd_lots => date.at_taipei(9, 0, 0),
+            Board::Regular | Board::OddLot => date.at_taipei(8, 30, 0),
         }
     }
 
