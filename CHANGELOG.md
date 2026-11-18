@@ -44,3 +44,7 @@
 - 新增使用手冊（`docs/guide/`）：安裝與第一個回測、寫策略、執行、讀結果、疑難排解；以及完整的
   自訂策略範例程式 `crates/osmium-cli/examples/breakout.rs`。
 - 新增 agent skill `osmium-backtest`：使用系統跑回測的流程。
+- 效能（輸出位元組相同，不更新任何版本）：`osmium-md` 平行解碼 row group、`books` 列以差分保存、
+  以 `seq` 為索引的順序表取代排序；`Timeline::next_event` 借出訊息（`Event<'_, E>` 持有
+  `&Message`），訊息只複製一次；`osmium-book` 新增 `BookMap`。全市場四個 feed 的一個交易日由
+  17.5 秒／3.6 GB 降到 5.6 秒／0.7 GB（[效能](docs/design/performance.md)）。

@@ -7,7 +7,7 @@
 
 ```text
 marketdata /srv/md/v1（唯讀）
-  │  osmium-md：schema 與 manifest 驗證 → 依 seq 的訊息流（可經衍生快取）
+  │  osmium-md：schema 與 manifest 驗證 → 依 seq 的訊息流
   ▼
 osmium-replay：多 feed 合併 → observed_time 時鐘
   │
@@ -68,13 +68,13 @@ ADR-0008 的十個 crate 都已實作，舊 crate 已刪除。
 | Crate | 狀態 |
 | --- | --- |
 | `osmium-types` | 完成 |
-| `osmium-md` | 讀取、驗證、訊息解碼、參考表完成；串流讀取與衍生快取未開始（效能階段） |
+| `osmium-md` | 完成：讀取、驗證、訊息解碼、參考表；row group 平行解碼與差分保存見[效能](performance.md)。衍生快取沒有實作（同一頁第 6 節） |
 | `osmium-replay` | 完成：跨 feed 合併與時間線；交易日流程在 `osmium-runner` |
 | `osmium-book` | 完成 |
 | `osmium-strategy` | 完成：[策略介面規格](../reference/strategy.md) |
 | `osmium-matching` | 完成：[撮合規格](../reference/matching.md) |
 | `osmium-ledger` | 完成：[帳務規格](../reference/accounting.md) |
-| `osmium-runner` | 完成：[回放規格](../reference/replay.md)第 4 節以後、[設定](../reference/config.md)、[輸出](../reference/artifacts.md)；逐日循序、整天載入記憶體 |
+| `osmium-runner` | 完成：[回放規格](../reference/replay.md)第 4 節以後、[設定](../reference/config.md)、[輸出](../reference/artifacts.md)；逐日循序，一次載入一個交易日 |
 | `osmium-cli` | 完成：`osmium` 執行檔與可重用的指令列 library |
 | `osmium-examples` | 完成：三個範例策略 |
 

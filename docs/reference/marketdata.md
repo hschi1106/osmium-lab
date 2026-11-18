@@ -225,8 +225,9 @@ FeedDay::load(root, &manifest, feed, &instruments, selection, missing_lot_size)
 
 ## 11. 目前的限制
 
-- 一個 feed 一天解碼後整個留在記憶體，每則訊息約 140 bytes：`TWSE_F6` 一天約 1–5 GB，
-  `TWSE_F17` 一天（約 7,400 萬則）約 10 GB。串流讀取與衍生快取排在效能階段。
+- 一個 feed 一天整個留在記憶體：每個 `books` 列約 8 bytes、每個 `trades` 列 48 bytes、每個 `seq`
+  4 bytes。2026-09-01 的 `TWSE_F6`（1,711 萬則）約 263 MB；`TWSE_F17` 一天（約 6,900 萬則）的 run
+  峰值約 1.4 GB（[效能](../design/performance.md)）。
 - 指定 `selection` 時，為了計算 `observed_time`，會另外讀一次整個 feed 的 `seq` 與 `exch_ts`。
 
 ## 12. 檢視與比對

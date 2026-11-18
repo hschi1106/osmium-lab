@@ -26,6 +26,7 @@
 ## 設計（`design/`）
 
 - [架構](design/architecture.md)：資料流、ownership、不變條件、實作狀態。
+- [效能](design/performance.md)：時間與記憶體花在哪裡、為此做的設計、量測、刻意沒做的事。
 - 決策紀錄：
   [ADR-0008 全市場撮合模擬](design/decisions/0008-full-market-matching-simulation.md)、
   [ADR-0007 marketdata-native](design/decisions/0007-marketdata-native.md)、

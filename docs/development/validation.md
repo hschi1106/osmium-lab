@@ -63,7 +63,7 @@ cargo run --release -p osmium-cli -- run run.toml --out /path/outside/the/reposi
 | `osmium-matching` | 見下方 |
 | `osmium-ledger` | 見下方 |
 
-`osmium-replay` 的測試同時載入數個 feed 的一整天，約需 6 GB 記憶體。
+`osmium-replay` 的測試同時載入數個 feed 的一整天，約需 1.2 GB 記憶體。
 
 ### 撮合
 
@@ -82,7 +82,7 @@ cargo run --release -p osmium-cli -- run run.toml --out /path/outside/the/reposi
 0.5 %），以及一筆差不到一個升降單位的範圍外成交（撮合規格第 6.6 節）。重下的委託多成交、價格
 不同或被拒絕都是錯誤。
 
-整組約需 8 GB 記憶體與數分鐘。
+整組約需 2.5 GB 記憶體與半分鐘。
 
 ### 帳務
 
@@ -111,6 +111,24 @@ cargo run --release -p osmium-cli -- run run.toml --out /path/outside/the/reposi
 `instruments`，實際的 run 會因為缺少 `par_value` 而停止）、股利金額與價格的幣別不同（00774C）、
 `value` 與參考價不一致的特別股（8112A、9941A，只在近似時）。分割、反分割、面額變更與近似的減資，
 價值變動都在萬分之八以內。
+
+### 效能修改
+
+只改變速度或記憶體的修改不更新任何版本（[版本](../reference/versions.md)），但必須證明輸出沒有變：
+
+1. 修改前後各建一個 release 執行檔（修改前的可以用 `git archive <commit> | tar -x -C <dir>` 取出
+   原始碼，在 repository 之外編譯）。
+2. 兩個執行檔跑相同的設定，比較 `run.json` 的 `files`：
+
+   ```sh
+   diff <(jq -S .files before/run.json) <(jq -S .files after/run.json)
+   ```
+
+   至少涵蓋：全市場四個 feed 的一個交易日、同一個設定連續數個交易日、指定 `symbols` 的多日 run。
+3. 修改載入或平行處理時，另外以不同的核心數各跑一次（`taskset -c 0`、`taskset -c 0-3`），`files`
+   也必須相同；並重跑上面 `osmium-md`、`osmium-replay` 的真實資料測試與下一節的逐位元組比對。
+4. 以 `/usr/bin/time -f "%e s %M KB"` 記錄時間與記憶體峰值，更新[效能](../design/performance.md)
+   第 1 節與[執行](../guide/running.md#6-時間與記憶體)的表。
 
 ### 與獨立實作逐位元組比對
 
