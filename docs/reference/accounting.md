@@ -4,7 +4,7 @@
 [現股帳務規則研究](../design/research/cash-accounting-rules.md)（以下寫作「現股 §n」）與
 [信用交易規則研究](../design/research/margin-rules.md)（「信用 §n」）；本頁只寫帳務怎麼算。
 
-狀態：已實作於 `osmium-ledger`；接上 runner 的進度見[架構的遷移狀態](../design/architecture.md#遷移狀態)。
+狀態：已實作於 `osmium-ledger`，由 `osmium-runner` 串接。
 
 ## 1. 原則
 
@@ -141,7 +141,7 @@
 - `S(T)` = `T` 之後的第 2 個交割日。
 - 颱風等臨時休市日不是交割日，自然順延。
 - 需要的日期超出日曆範圍時 run 失敗，不外推。`qc/calendar` 只到資料的最後一天，最後兩個交易日
-  的交割日要由呼叫端另外提供（`Calendar::new` 的額外交割日）。
+  的交割日要由設定另外提供（[設定規格](config.md)的 `calendar.extra_settlement_days`）。
 
 ### 7.2 待交割款
 
@@ -521,7 +521,7 @@
 | `corporate_actions.missing_terms` | `"error"` | 設計選擇 |
 | `corporate_actions.overrides` | 空 | 使用者提供 |
 
-檔案格式見設定規格（撰寫中）。
+檔案格式見[設定規格](config.md)。
 
 ## 16. 已知限制
 

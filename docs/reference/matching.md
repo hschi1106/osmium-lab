@@ -5,7 +5,7 @@
 設計決策見 [ADR-0008](../design/decisions/0008-full-market-matching-simulation.md)。
 
 狀態：`osmium-matching` 已實作本頁全部規則。第 5.2 節第 8 項的事前檢查由 `osmium-ledger` 提供，
-延遲與時間線由 `osmium-runner` 串接（見[架構的遷移狀態](../design/architecture.md#遷移狀態)）。
+延遲與時間線由 `osmium-runner` 串接（[回放規格](replay.md)第 4 節）。
 
 ## 1. 基本假設
 
@@ -393,7 +393,7 @@
 | `latency.market_data`、`latency.order`、`latency.report` | 必填 | 第 3 節 |
 | `matching.auction_marginal` | `"conservative"` | 7.2 第二步；另一個值是 `"queue"` |
 
-檔案格式見設定規格（撰寫中）。
+檔案格式見[設定規格](config.md)。
 
 ## 10. 已知限制
 

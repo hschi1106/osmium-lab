@@ -3,8 +3,8 @@
 `osmium-replay` 與 `osmium-runner` 如何把 marketdata 的訊息、模擬委託與策略排成一條決定性的時間線。
 設計決策見 [ADR-0008](../design/decisions/0008-full-market-matching-simulation.md) 第 5 點。
 
-狀態：第 2、3 節由 `osmium-replay` 實作（`MergedFeeds`、`Timeline`）；第 4 節以後屬於
-`osmium-runner`，尚未實作（見[架構的遷移狀態](../design/architecture.md#遷移狀態)）。
+狀態：已實作。第 2、3 節在 `osmium-replay`（`MergedFeeds`、`Timeline`），第 4 節以後在
+`osmium-runner`。
 
 ## 1. 訊息
 
@@ -61,10 +61,21 @@ run 逐一處理日期範圍內的交易日（marketdata `qc/calendar`）。每�
 5. 帳務的日結。
 6. 策略的 `on_day_end`。
 
+- 交易日的時鐘從 08:30:00 開始：`on_day_start` 與強制委託的通知都在這個時刻。當天有早於
+  08:30:00 的行情訊息時 run 失敗（各 feed 的實際資料都不早於 08:30:00）。
+- 帳務的強制委託在該盤別開始收單的時刻到達交易所（[撮合規格](matching.md)第 4.3 節），不經過
+  `latency.order`：它由券商送出，不由策略送出。
+- 第 3 步結束的時刻是當天最後一個事件的時刻。第 4 步的失效回報在那個時刻產生，並在
+  `latency.report` 之後送達策略；這些回報與策略因此設定的計時器處理完，當天才結束。
+- 第 4 步之後才到達交易所的新委託以 `MarketClosed` 拒絕。
 - 委託與計時器不跨日。
-- 範圍內只辦理交割、不交易的日子只做帳務的交割步驟。
+- 回報產生時先記入帳務，再排入時間線送往策略。策略收到回報時看到的帳戶，是回報產生當下的狀態
+  （[策略介面規格](strategy.md)第 5 節）。
+- 交割日由 `qc/calendar` 的交易日與設定的額外交割日決定；兩個交易日之間到期的交割在下一個交易日
+  的開盤前步驟入帳。
 - 交易日缺少選定的 feed（當天的 manifest 沒有這個 feed 的列）時 run 失敗；
-  `data.missing_days = "skip"` 時改為記錄診斷並跳過那個 feed 的那一天。
+  `data.missing_days = "skip"` 時改為記錄診斷並跳過那個 feed 的那一天。被跳過的日子帳務照常進行。
+- 每個交易日需要當天與前一個交易日的 `daily` 列（評價與前一日事實）；沒有時 run 失敗。
 
 ## 5. 資料品質
 

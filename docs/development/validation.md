@@ -15,6 +15,24 @@ workspace gate。
 Repository 不 commit 交易所真實資料；需要真實 marketdata 的驗證只在可讀取 `/srv/md/v1` 的機器上
 執行，並在回報中寫明實際使用的日期與 feed。
 
+## 合成資料
+
+`osmium-runner`、`osmium-examples` 與 `osmium-cli` 的測試不需要真實資料：`osmium-fixture` 在暫存
+目錄寫出一棵小的 marketdata 樹（日曆、manifest、`instruments`、`books`、`trades`、`daily`、
+`daily_ext`、`corp_actions`、`events`），格式與真實資料相同，由 `osmium-md` 以同樣的檢查讀取。
+`osmium_fixture::sample` 是兩個交易日、一檔商品的樣本市場，每一則訊息都寫在程式裡，測試的預期
+值可以手算。
+
+| 測試 | 檢查的內容 |
+| --- | --- |
+| `crates/osmium-runner/tests/run.rs` | 一個完整的 run：策略收到的每一次呼叫（golden log）、每個輸出檔的內容、兩次 run 位元組相同、不覆寫既有結果、缺少 feed 的日子、沒有交易日的範圍 |
+| `crates/osmium-runner/tests/config.rs` | 設定檔的預設值、每個 section、錯誤訊息指出 key |
+| `crates/osmium-examples/tests/examples.rs` | 三個範例策略在樣本市場的委託事件與權益 |
+| `crates/osmium-cli/tests/cli.rs` | 每個指令的輸出與 exit status |
+
+修改撮合、帳務或 runner 而讓這些 golden 改變時，先確認新的數字是對的（手算），再更新 golden 與
+[對應的版本](../reference/versions.md)。
+
 ## 真實資料
 
 真實資料測試以 `#[ignore]` 標記，不在 workspace gate 內執行：
@@ -27,6 +45,16 @@ OSMIUM_MD_ROOT=/srv/md/v1 cargo test --locked -p osmium-ledger --release --test 
 ```
 
 `OSMIUM_MD_ROOT` 未設定時使用 `/srv/md/v1`。這些測試只讀取資料，不寫入 marketdata 目錄。
+
+完整的 run 以 CLI 對真實資料執行，輸出放在 repository 之外：
+
+```sh
+cargo run --release -p osmium-cli -- check run.toml
+cargo run --release -p osmium-cli -- run run.toml --out /path/outside/the/repository/run-1
+```
+
+同一個設定跑兩次，兩份 `run.json` 的 `files`（每個輸出檔的 `blake3`）必須相同。只改變速度或記憶體
+的修改，修改前後的 `files` 也必須相同。
 
 | Crate | 檢查的內容 |
 | --- | --- |

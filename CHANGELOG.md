@@ -2,37 +2,42 @@
 
 ## Unreleased
 
-- 改建為 marketdata-native 架構（[ADR-0007](docs/design/decisions/0007-marketdata-native.md)）。
-  移除 Teralion provider、`data-sync`（source sync／verify／replay cache）、舊 CLI 與 config loader、
-  synthetic Teralion fixtures、acceptance 與 release tooling，以及 AGPL／Strategy Linking Exception。
-  `run-planner` 只保留 effective config、session 與 canonical encoding，資料根目錄改為 `md_root`。
-  舊版本歷史保留於 Git。
-- `Symbol`／`SourceFormatId` 改為最多 23 bytes 的 inline `Copy` 型別；`InstrumentId` 因此為 `Copy`。
-- `DomainEvent` 新增 `observed_time`；ordering rule v5 依 `observed_time`、market、source format、
-  source sequence 排序，replay clock 改為 observed time。移除 Teralion `STOCK_REALTIME` phase rank。
+全市場撮合模擬的改建（[ADR-0007](docs/design/decisions/0007-marketdata-native.md)、
+[ADR-0008](docs/design/decisions/0008-full-market-matching-simulation.md)）。所有版本號重新從 1 起算。
+
+- 移除 Teralion provider、`data-sync`（source sync／verify／replay cache）、synthetic Teralion
+  fixtures、acceptance 與 release tooling，以及 AGPL／Strategy Linking Exception。舊版本歷史保留於
+  Git。
+- 移除舊架構的 crate：`market-types`、`market-state`、`replay-engine`、`strategy-api`、
+  `execution-sim`、`run-planner`、`example-strategy`，以及它們的文件（`docs/design/legacy/`）。
+- 新增 `osmium-types`：整數的 `Price`（1e-4 元）、`Shares`、`Money`、`PerShare`、`Symbol`、
+  `Timestamp`／`Date`、`Feed`，行情訊息、商品基本資料、參考資料，以及委託與委託事件的型別
+  （`NewOrder`、`OrderEvent`、`Fill`、`RejectReason` 等）。
 - 新增 `osmium-md`：讀取 marketdata F6／F17／F23 parquet，檢查 schema 版本與欄位型別、驗證
   manifest identity，計算全 feed observed time，並解碼成依 `seq` 排序的訊息（揭示、中間成交、
-  試撮、暫緩撮合），數量一律換算成股數（見 [marketdata 介面](docs/reference/marketdata.md)）。
+  試撮、暫緩撮合），數量一律換算成股數；讀取參考表 `qc/calendar`、`corp_actions`、`events`、
+  `daily`、`daily_ext`（[marketdata 介面](docs/reference/marketdata.md)）。
 - 新增 `osmium-replay`：依 `observed_time`、feed rank、`seq` 合併多個 feed（`MergedFeeds`），以及把
   行情、委託到達、回報、行情送達策略、計時器排成單一時間線的 `Timeline`
-  （[回放規格](docs/reference/replay.md)第 2、3 節）。
+  （[回放規格](docs/reference/replay.md)）。
+- 新增 `osmium-book`：每本 book 的撮合方式（逐筆／分盤，含 `match_interval_s` 缺值時的推論）、
+  交易模式、目前五檔、最近成交、試撮與暫緩撮合狀態（[撮合規格](docs/reference/matching.md)第 4 節）。
+- 新增 `osmium-matching`：模擬委託對真實行情撮合。交易所端的委託檢查、逐筆交易（到達時吃五檔、
+  排隊估計、被動成交、交叉成交）、集合競價（開盤、收盤、分盤、盤中零股、暫緩撮合結束）、瞬間
+  價格穩定措施的 ±3.5 % 範圍、改單與刪單（[撮合規格](docs/reference/matching.md)第 5–8 節）。
 - 新增 `osmium-ledger`：整數元的精確帳務。手續費與證交稅、T+2 交割與待交割款、資金檢查與掛單
   保留、現股當沖、融資融券（利息、期限、資券相抵、維持率、追繳與強制委託）、公司行動（現金與
   股票股利、二代健保補充保費、分割、面額變更、反分割、減資）、逐筆分錄與已實現損益
   （[帳務規格](docs/reference/accounting.md)）。
-- `osmium-md` 新增參考表的讀取：`qc/calendar`、`corp_actions`、`events`、`daily`、`daily_ext`，以及
-  `instruments` 的 `f1_daytrade_flag`、`f1_non10_par`（[marketdata 介面](docs/reference/marketdata.md)
-  第 9 節）。`osmium-types` 新增 `Money`、`PerShare` 與參考資料的型別。
-- 新增 `osmium-matching`：模擬委託對真實行情撮合。交易所端的委託檢查、逐筆交易（到達時吃五檔、
-  排隊估計、被動成交、交叉成交）、集合競價（開盤、收盤、分盤、盤中零股、暫緩撮合結束）、瞬間
-  價格穩定措施的 ±3.5 % 範圍、改單與刪單（[撮合規格](docs/reference/matching.md)第 5–8 節）。
-  委託與委託事件的型別（`NewOrder`、`OrderEvent`、`Fill`、`RejectReason` 等）在 `osmium-types`。
-- 新增 `osmium-book`：每本 book 的撮合方式（逐筆／分盤，含 `match_interval_s` 缺值時的推論）、
-  交易模式、目前五檔、最近成交、試撮與暫緩撮合狀態（[撮合規格](docs/reference/matching.md)第 4 節）。
-- 新增 `osmium-types`：整數的 `Price`（1e-4 元）、`Shares`、`Symbol`、`Timestamp`／`Date`、
-  `Feed`，以及行情訊息與商品基本資料的型別
-  （[ADR-0008](docs/design/decisions/0008-full-market-matching-simulation.md)）。
-- 移除 Teralion raw status／limit bit annotations（`TwseQuoteAnnotations` 等）；`MarketAnnotations`
-  只保留 `None` 作為日後中性 annotation 的 canonical 欄位。
-- 移除內建 Teralion market-state profiles（`twse_regular`、`taifex_futures` 等），改以
-  `MarketStateProfile::accepting_all` 建立；marketdata feed profile 由 `Feed::state_profile` 提供。
+- 新增 `osmium-strategy`：策略 trait、`Context`（委託、改單、刪單、計時器）、行情與帳戶視圖、
+  具型別的參數、策略註冊表（[策略介面規格](docs/reference/strategy.md)）。
+- 新增 `osmium-runner`：交易日流程（前一日事實、開盤前帳務、強制委託、行情／委託／回報延遲、
+  收盤失效、日結）、TOML 設定（[設定規格](docs/reference/config.md)）與輸出
+  （`run.json`、`orders.csv`、`order_events.csv`、`entries.csv`、`realized.csv`、`daily.csv`、
+  `positions.csv`、`diagnostics.csv`；[輸出規格](docs/reference/artifacts.md)）。相同的資料、設定與
+  版本產生位元組相同的輸出。
+- 新增 `osmium-cli`：`osmium run`、`check`、`strategies`、`version`；同時是 library，自己的策略
+  以 `osmium_cli::main(&registry)` 建立自己的執行檔。
+- 新增 `osmium-examples`：範例策略 `buy_and_hold`、`open_to_close`、`passive_quote`。
+- 新增 `osmium-fixture`（只供測試）：寫出合成的 marketdata 樹。
+- 結果依賴的版本與更新規則見[版本](docs/reference/versions.md)。
