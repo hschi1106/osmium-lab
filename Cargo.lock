@@ -412,6 +412,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "osmium-fixture"
+version = "0.1.0"
+dependencies = [
+ "arrow-array",
+ "osmium-types",
+ "parquet",
+]
+
+[[package]]
 name = "osmium-ledger"
 version = "0.1.0"
 dependencies = [

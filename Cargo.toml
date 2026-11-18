@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/osmium-book",
+    "crates/osmium-fixture",
     "crates/osmium-ledger",
     "crates/osmium-matching",
     "crates/osmium-md",
