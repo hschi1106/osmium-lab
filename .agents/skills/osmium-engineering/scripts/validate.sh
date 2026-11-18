@@ -5,7 +5,7 @@ repo_root="$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd)"
 cd "$repo_root"
 
 usage() {
-  echo "usage: $0 focused <market|md|book|replay|matching|strategy|execution|runner|config> | full" >&2
+  echo "usage: $0 focused <market|md|book|replay|matching|ledger|strategy|execution|runner|config> | full" >&2
   exit 2
 }
 
@@ -30,6 +30,9 @@ case "$mode" in
         ;;
       matching)
         cargo test --locked -p osmium-types -p osmium-book -p osmium-matching
+        ;;
+      ledger)
+        cargo test --locked -p osmium-types -p osmium-ledger
         ;;
       strategy)
         cargo test --locked -p strategy-api

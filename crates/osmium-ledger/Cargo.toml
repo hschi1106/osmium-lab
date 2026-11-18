@@ -1,0 +1,15 @@
+[package]
+name = "osmium-ledger"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dev-dependencies]
+osmium-md = { path = "../osmium-md" }
+
+[lints]
+workspace = true
+
+[dependencies]
+osmium-matching = { path = "../osmium-matching" }
+osmium-types = { path = "../osmium-types" }

@@ -20,6 +20,8 @@ osmium-replay → 跨 feed 全序、事件時間線（docs/reference/replay.md�
 osmium-book   → 撮合方式、交易模式、目前五檔（docs/reference/matching.md 第 4 節）
 osmium-matching → 委託檢查、撮合、排隊估計、價格穩定範圍（docs/reference/matching.md 第 5–8 節；
                   委託與委託事件的型別在 osmium-types）
+osmium-ledger → 現金、部位、費稅、交割、當沖、信用交易、公司行動、損益（docs/reference/accounting.md；
+                不讀檔，參考表由 osmium-md 讀取）
 planner       → validated, frozen execution facts
 replay        → ordering/playback
 market-state  → cross-event state
@@ -34,6 +36,8 @@ CLI           → composition/user contract
 
 - 目標架構與遷移狀態 → `docs/design/architecture.md`、`docs/design/decisions/0008-full-market-matching-simulation.md`
 - marketdata 讀取與 mapping → `docs/reference/marketdata.md`
+- 帳務 → `docs/reference/accounting.md`（改規則時同時更新 `tests/ledger.rs` 的手算例子，並跑
+  `tests/invariants.rs`）
 - 舊 crate（遷移期間）→ `docs/design/legacy/`
 
 ## High-risk invariants

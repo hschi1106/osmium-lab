@@ -29,7 +29,7 @@ osmium-runner：串接以上各層、run 設定與輸出；osmium-cli：指令�
 | Crate | 擁有 | 不擁有 |
 | --- | --- | --- |
 | `osmium-types` | 價格、數量、金額、時間、商品、board、行情訊息、委託與委託事件的型別與換算 | 任何規則 |
-| `osmium-md` | marketdata layout、schema 檢查、manifest identity、訊息解碼、衍生快取 | 排序以外的語義 |
+| `osmium-md` | marketdata layout、schema 檢查、manifest identity、訊息解碼、參考表（日曆、盤後價格、公司行動、事件）、衍生快取 | 排序以外的語義 |
 | `osmium-replay` | 跨 feed 全序、replay clock、事件時間線 | 狀態、撮合、讀檔 |
 | `osmium-book` | 撮合方式、交易模式、目前五檔、試撮與暫緩撮合狀態 | 模擬委託 |
 | `osmium-strategy` | 策略 trait、context、委託意圖、計時器 | 成交判定 |
@@ -41,6 +41,11 @@ osmium-runner：串接以上各層、run 設定與輸出；osmium-cli：指令�
 `osmium-matching` 是同步的：呼叫端依時間線把行情訊息與已到達交易所的委託交給它，它回傳委託
 事件。延遲與排序屬於 `osmium-replay`／`osmium-runner`，帳務的事前檢查由呼叫端以 closure 傳入。
 它不依賴 `osmium-md`；只有真實資料測試以 dev-dependency 讀取 marketdata。
+
+`osmium-ledger` 也是同步的，而且不讀檔：呼叫端每個交易日把當天的事實（`DayFacts`：商品、前一日
+盤後資料、事件、公司行動）與收盤價交給它，委託的事前檢查（`check_new`、`check_reprice`、
+`check_forced`）就是傳給 `osmium-matching` 的 closure。它依賴 `osmium-matching` 只為了商品分類與
+升降單位；`osmium-md` 同樣只是真實資料測試的 dev-dependency。
 
 ## 不變條件
 
@@ -54,13 +59,13 @@ osmium-runner：串接以上各層、run 設定與輸出；osmium-cli：指令�
 
 | 目標 crate | 狀態 | 取代的舊 crate |
 | --- | --- | --- |
-| `osmium-types` | 進行中：價格、股數、代號、時間、feed、行情訊息、商品基本資料、委託與委託事件；金額等隨使用的 crate 加入 | `market-types` |
-| `osmium-md` | 讀取、驗證、訊息解碼完成；串流讀取與衍生快取未開始 | — |
+| `osmium-types` | 進行中：價格、股數、金額、代號、時間、feed、行情訊息、商品基本資料、委託與委託事件、參考資料（盤後價格、信用限額、事件、公司行動） | `market-types` |
+| `osmium-md` | 讀取、驗證、訊息解碼、參考表完成；串流讀取與衍生快取未開始 | — |
 | `osmium-replay` | 跨 feed 合併與時間線完成；交易日流程在 `osmium-runner` | `replay-engine` |
 | `osmium-book` | 完成：撮合方式、交易模式、目前五檔、試撮與暫緩撮合狀態 | `market-state` |
 | `osmium-strategy` | 未開始 | `strategy-api` |
 | `osmium-matching` | 完成：[撮合規格](../reference/matching.md)第 5–8 節；事前檢查與延遲由 `osmium-ledger`、`osmium-runner` 接上 | `execution-sim`（撮合部分） |
-| `osmium-ledger` | 未開始 | `execution-sim`（帳務部分） |
+| `osmium-ledger` | 完成：[帳務規格](../reference/accounting.md)；由 `osmium-runner` 接上資料與撮合 | `execution-sim`（帳務部分） |
 | `osmium-runner` | 未開始 | `osmium-runner`、`run-planner` |
 | `osmium-cli` | 未開始 | — |
 | `osmium-examples` | 未開始 | `example-strategy` |

@@ -16,6 +16,13 @@
 - 新增 `osmium-replay`：依 `observed_time`、feed rank、`seq` 合併多個 feed（`MergedFeeds`），以及把
   行情、委託到達、回報、行情送達策略、計時器排成單一時間線的 `Timeline`
   （[回放規格](docs/reference/replay.md)第 2、3 節）。
+- 新增 `osmium-ledger`：整數元的精確帳務。手續費與證交稅、T+2 交割與待交割款、資金檢查與掛單
+  保留、現股當沖、融資融券（利息、期限、資券相抵、維持率、追繳與強制委託）、公司行動（現金與
+  股票股利、二代健保補充保費、分割、面額變更、反分割、減資）、逐筆分錄與已實現損益
+  （[帳務規格](docs/reference/accounting.md)）。
+- `osmium-md` 新增參考表的讀取：`qc/calendar`、`corp_actions`、`events`、`daily`、`daily_ext`，以及
+  `instruments` 的 `f1_daytrade_flag`、`f1_non10_par`（[marketdata 介面](docs/reference/marketdata.md)
+  第 9 節）。`osmium-types` 新增 `Money`、`PerShare` 與參考資料的型別。
 - 新增 `osmium-matching`：模擬委託對真實行情撮合。交易所端的委託檢查、逐筆交易（到達時吃五檔、
   排隊估計、被動成交、交叉成交）、集合競價（開盤、收盤、分盤、盤中零股、暫緩撮合結束）、瞬間
   價格穩定措施的 ±3.5 % 範圍、改單與刪單（[撮合規格](docs/reference/matching.md)第 5–8 節）。

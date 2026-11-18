@@ -23,16 +23,17 @@ Repository 不 commit 交易所真實資料；需要真實 marketdata 的驗證�
 OSMIUM_MD_ROOT=/srv/md/v1 cargo test --locked -p osmium-md --release -- --ignored --nocapture
 OSMIUM_MD_ROOT=/srv/md/v1 cargo test --locked -p osmium-replay --release -- --ignored --nocapture
 OSMIUM_MD_ROOT=/srv/md/v1 cargo test --locked -p osmium-matching --release --test marketdata -- --ignored --nocapture
+OSMIUM_MD_ROOT=/srv/md/v1 cargo test --locked -p osmium-ledger --release --test marketdata -- --ignored --nocapture
 ```
 
 `OSMIUM_MD_ROOT` 未設定時使用 `/srv/md/v1`。這些測試只讀取資料，不寫入 marketdata 目錄。
 
 | Crate | 檢查的內容 |
 | --- | --- |
-| `osmium-md` | 每個 feed 的訊息種類、列數對帳、`observed_time`、指定商品與整個 feed 讀到相同的訊息 |
+| `osmium-md` | 每個 feed 的訊息種類、列數對帳、`observed_time`、指定商品與整個 feed 讀到相同的訊息；參考表（`tests/reference.rs`）：日曆、2022 年以來全部的公司行動與事件、每年數個交易日的盤後價格與信用限額都能精確轉換 |
 | `osmium-replay` | 四個 feed 合併後的全序與時間線；每本 book 恰有一列開盤與一列收盤撮合列、撮合方式的推論與 `match_interval_s` 相同、每一則訊息的 `phase` 與 [`osmium-book` 的模式](../reference/matching.md)一致 |
-
 | `osmium-matching` | 見下方 |
+| `osmium-ledger` | 見下方 |
 
 `osmium-replay` 的測試同時載入數個 feed 的一整天，約需 6 GB 記憶體。
 
@@ -54,6 +55,34 @@ OSMIUM_MD_ROOT=/srv/md/v1 cargo test --locked -p osmium-matching --release --tes
 不同或被拒絕都是錯誤。
 
 整組約需 8 GB 記憶體與數分鐘。
+
+### 帳務
+
+`osmium-ledger` 的正確性主要由不需要資料的測試保證：
+
+- `tests/ledger.rs`：每一條[帳務規格](../reference/accounting.md)的規則一個手算的例子。
+- `tests/invariants.rs`：隨機交易 40 個交易日、300 個 seed（現股、當沖、融資、融券、資券相抵、
+  強制委託、部分成交），每天日結檢查：`cash` 等於期初現金加上已交割的分錄、待交割款等於尚未交割
+  的分錄、權益的變動等於已實現加未實現損益、每筆已實現損益等於賣出淨額減成本加利息；以及
+  `cash_check = "at_order"` 時，通過檢查的委託不論怎麼成交，交割日的現金都不是負數。
+
+真實資料測試 `real_corporate_actions_keep_the_value_of_a_position`
+（`crates/osmium-ledger/tests/marketdata.rs`）對 2022 年以來 `corp_actions` 的每一列：在除權息日
+前一個交易日以 `before_price` 買進 10,000 股，除權息日以 `ref_price` 評價，比較兩天的權益。參考價
+的定義就是讓持有人在除權息前後的價值相同，所以帳務處理正確時權益不變。`missing_terms` 的兩種
+設定各跑一次，價值變動超過 1 % 的列不得超過千分之一。
+
+實測（2026-11）：
+
+| `missing_terms` | 套用 | 缺少事實而停止 | 變動超過 1 % |
+| --- | --- | --- | --- |
+| `"error"` | 11,164 | `dividend` 缺 `cash_dividend` 232、`reduction_loss` 98、`reduction_cash` 72、`par_change` 1 | 5 |
+| `"approximate"` | 11,563 | `reduction_cash` 3、`par_change` 1 | 7 |
+
+超過 1 % 的列都有已知的原因：面額不是 10 元的股票配發股票股利（5314、8932；這個測試不讀
+`instruments`，實際的 run 會因為缺少 `par_value` 而停止）、股利金額與價格的幣別不同（00774C）、
+`value` 與參考價不一致的特別股（8112A、9941A，只在近似時）。分割、反分割、面額變更與近似的減資，
+價值變動都在萬分之八以內。
 
 ### 與獨立實作逐位元組比對
 
