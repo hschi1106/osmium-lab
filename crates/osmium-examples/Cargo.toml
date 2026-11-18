@@ -1,0 +1,17 @@
+[package]
+name = "osmium-examples"
+version.workspace = true
+publish.workspace = true
+edition.workspace = true
+
+[dependencies]
+osmium-book = { path = "../osmium-book" }
+osmium-strategy = { path = "../osmium-strategy" }
+osmium-types = { path = "../osmium-types" }
+
+[dev-dependencies]
+osmium-fixture = { path = "../osmium-fixture" }
+osmium-runner = { path = "../osmium-runner" }
+
+[lints]
+workspace = true

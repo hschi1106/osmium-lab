@@ -481,6 +481,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "osmium-examples"
+version = "0.1.0"
+dependencies = [
+ "osmium-book",
+ "osmium-fixture",
+ "osmium-runner",
+ "osmium-strategy",
+ "osmium-types",
+]
+
+[[package]]
 name = "osmium-fixture"
 version = "0.1.0"
 dependencies = [
