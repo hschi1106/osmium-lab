@@ -481,6 +481,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "osmium-cli"
+version = "0.1.0"
+dependencies = [
+ "osmium-examples",
+ "osmium-fixture",
+ "osmium-ledger",
+ "osmium-matching",
+ "osmium-md",
+ "osmium-replay",
+ "osmium-runner",
+ "osmium-strategy",
+ "osmium-types",
+]
+
+[[package]]
 name = "osmium-examples"
 version = "0.1.0"
 dependencies = [

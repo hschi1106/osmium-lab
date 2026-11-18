@@ -1,0 +1,25 @@
+[package]
+name = "osmium-cli"
+version.workspace = true
+publish.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "osmium"
+path = "src/main.rs"
+
+[dependencies]
+osmium-examples = { path = "../osmium-examples" }
+osmium-ledger = { path = "../osmium-ledger" }
+osmium-matching = { path = "../osmium-matching" }
+osmium-md = { path = "../osmium-md" }
+osmium-replay = { path = "../osmium-replay" }
+osmium-runner = { path = "../osmium-runner" }
+osmium-strategy = { path = "../osmium-strategy" }
+
+[dev-dependencies]
+osmium-fixture = { path = "../osmium-fixture" }
+osmium-types = { path = "../osmium-types" }
+
+[lints]
+workspace = true
