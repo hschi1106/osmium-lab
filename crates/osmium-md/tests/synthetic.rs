@@ -118,7 +118,7 @@ fn instrument(symbol: &'static str, lot: Option<i32>) -> InstrumentRow {
         interval: Some(0),
         currency: "TWD",
         derived: false,
-        day_trade: Some("A"),
+        day_trade: Some("BOTH"),
         non_10_par: Some(false),
     }
 }
@@ -298,7 +298,7 @@ fn instrument_columns(rows: &[InstrumentRow]) -> Columns {
             )),
         ),
         (
-            "f1_daytrade_flag",
+            "daytrade",
             Arc::new(StringArray::from_iter(rows.iter().map(|row| row.day_trade))),
         ),
         (
@@ -804,7 +804,7 @@ fn instruments_keep_what_the_source_provides() {
             kind: "ETF",
             lot: Some(100),
             currency: "USD",
-            day_trade: Some("B"),
+            day_trade: Some("BUY_FIRST"),
             non_10_par: Some(true),
             ..instrument("00636K", Some(100))
         },
@@ -814,6 +814,7 @@ fn instruments_keep_what_the_source_provides() {
             limit_up: Some(9_999.95),
             limit_down: Some(0.01),
             interval: Some(300),
+            day_trade: Some("NONE"),
             ..instrument("030001", Some(1_000))
         },
         InstrumentRow {
@@ -825,7 +826,8 @@ fn instruments_keep_what_the_source_provides() {
             limit_down: Some(0.0),
             interval: None,
             derived: true,
-            // A derived day has none of the F1 fields.
+            // A derived day has none of the F1 fields, nor a day-trade list when
+            // marketdata had none for the day.
             day_trade: None,
             non_10_par: None,
             ..instrument("A00102", None)
@@ -855,7 +857,7 @@ fn instruments_keep_what_the_source_provides() {
     assert_eq!(warrant.limit_up, Some(price("9999.95")));
     assert_eq!(warrant.limit_down, Some(price("0.01")));
     assert_eq!(warrant.match_interval_s, Some(300));
-    assert_eq!(warrant.day_trade, Some(DayTradeFlag::Both));
+    assert_eq!(warrant.day_trade, Some(DayTradeFlag::Neither));
     assert_eq!(warrant.non_10_par, Some(false));
 
     let bond = instruments.get(symbol("A00102")).unwrap();
@@ -895,7 +897,8 @@ fn instruments_with_undefined_values_are_rejected() {
         (
             "day-trade",
             InstrumentRow {
-                day_trade: Some("C"),
+                // The F1 code, not marketdata's `daytrade` value.
+                day_trade: Some("A"),
                 ..instrument("A", Some(1_000))
             },
         ),

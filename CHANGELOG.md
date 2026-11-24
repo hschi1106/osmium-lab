@@ -45,6 +45,9 @@
   成交形狀，`osmium-md` 移除對舊形狀的辨識。揭示五檔內沒有價格的檔位一律是錯誤，中間成交只來自
   沒有 `books` 列的 `trades` 列；`seq` 缺口旁有 4 列的分類與之前不同
   （[marketdata 介面](docs/reference/marketdata.md)第 6 節）。
+- `DECODER_VERSION` 3、`osmium_ledger::RULES_VERSION` 2：當沖資格改讀 marketdata 的 `daytrade`
+  （`BOTH`、`BUY_FIRST`、`NONE`），沒有 `F1` 的日子也採用它，不再近似；只有 null 時才用近似
+  （[帳務規格](docs/reference/accounting.md) 8.1）。
 - 新增使用手冊（`docs/guide/`）：安裝與第一個回測、寫策略、執行、讀結果、疑難排解；以及完整的
   自訂策略範例程式 `crates/osmium-cli/examples/breakout.rs`。
 - 新增 agent skill `osmium-backtest`：使用系統跑回測的流程。

@@ -167,23 +167,18 @@ impl SecurityFacts {
         let disposition = active(MarketEventKind::Disposition);
         let short_suspended = active(MarketEventKind::ShortSuspended);
 
-        let day_trade = if disposition || !class.is_share_or_fund() {
-            DayTrade {
-                approx: instrument.derived && class.is_share_or_fund(),
-                ..DayTrade::default()
-            }
-        } else if instrument.derived {
-            DayTrade {
+        let day_trade = match instrument.day_trade {
+            _ if disposition || !class.is_share_or_fund() => DayTrade::default(),
+            Some(flag) => DayTrade {
+                buy_first: flag != DayTradeFlag::Neither,
+                sell_first: flag == DayTradeFlag::Both,
+                approx: false,
+            },
+            None => DayTrade {
                 buy_first: true,
                 sell_first: !active(MarketEventKind::DayTradeSuspended),
                 approx: true,
-            }
-        } else {
-            DayTrade {
-                buy_first: instrument.day_trade.is_some(),
-                sell_first: instrument.day_trade == Some(DayTradeFlag::Both),
-                approx: false,
-            }
+            },
         };
 
         let listed =
@@ -438,10 +433,18 @@ mod tests {
         instrument.day_trade = Some(DayTradeFlag::BuyFirst);
         let buy = facts("2026-10-08", &instrument, None, &[]).day_trade;
         assert_eq!((buy.buy_first, buy.sell_first), (true, false));
-        instrument.day_trade = None;
+        instrument.day_trade = Some(DayTradeFlag::Neither);
         assert_eq!(
             facts("2026-10-08", &instrument, None, &[]).day_trade,
             DayTrade::default()
+        );
+        // A derived row's flag is used as it is.
+        instrument.derived = true;
+        instrument.day_trade = Some(DayTradeFlag::BuyFirst);
+        let derived = facts("2023-06-01", &instrument, None, &[]).day_trade;
+        assert_eq!(
+            (derived.buy_first, derived.sell_first, derived.approx),
+            (true, false, false)
         );
     }
 

@@ -55,13 +55,15 @@ pub enum Currency {
     Foreign,
 }
 
-/// The marketdata `f1_daytrade_flag`: which same-day round trips the exchange allows.
+/// The marketdata `daytrade`: which same-day round trips the exchange allows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DayTradeFlag {
-    /// `A`: buy then sell, and sell then buy.
+    /// `BOTH`: buy then sell, and sell then buy.
     Both,
-    /// `B`: buy then sell only.
+    /// `BUY_FIRST`: buy then sell only.
     BuyFirst,
+    /// `NONE`: no day trading.
+    Neither,
 }
 
 /// One row of the marketdata `instruments` table: an instrument on one trading date.
@@ -80,11 +82,10 @@ pub struct Instrument {
     /// Matching cycle in seconds: `0` continuous trading, `> 0` periodic call auction.
     pub match_interval_s: Option<u32>,
     pub currency: Currency,
-    /// The row does not come from the exchange's instrument broadcast: part of it was
-    /// derived from daily quotes, and `currency` is a default rather than a fact.
+    /// The row does not come from the exchange's instrument broadcast: marketdata
+    /// built it from public daily data.
     pub derived: bool,
-    /// `None` when the instrument may not be day traded, or when the row is derived
-    /// and the flag is not known.
+    /// `None` when the source does not say.
     pub day_trade: Option<DayTradeFlag>,
     /// Whether the par value is not 10 yuan; `None` when the row is derived.
     pub non_10_par: Option<bool>,

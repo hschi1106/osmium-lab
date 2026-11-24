@@ -22,7 +22,7 @@ osmium 依賴 marketdata schema 版本 `1`（`osmium_md::SCHEMA_VERSION`）：
 | --- | --- |
 | `books` | `symbol` string、`exch_ts` timestamp[µs, UTC]、`seq` int64、`phase` string、`has_trade` bool、`n_bid`／`n_ask` int8、`bid_px_1..5`／`ask_px_1..5` float64、`bid_qty_1..5`／`ask_qty_1..5` int64、`bid_mkt_qty`／`ask_mkt_qty` int64、`is_indicative` bool、`indicative_px` float64、`indicative_qty` int64、`delay_open`／`delay_close` bool、`delay_state` int8 |
 | `trades` | `symbol` string、`exch_ts` timestamp[µs, UTC]、`seq` int64、`sub_seq` int16、`price` float64、`qty` int64、`cum_qty` int64、`phase` string |
-| `instruments` | `symbol` string、`instrument_type` string、`shares_per_lot` int32、`ref_price`／`limit_up`／`limit_down` float64、`match_interval_s` int32、`currency` string、`derived` bool、`f1_daytrade_flag` string、`f1_non10_par` bool |
+| `instruments` | `symbol` string、`instrument_type` string、`shares_per_lot` int32、`ref_price`／`limit_up`／`limit_down` float64、`match_interval_s` int32、`currency` string、`derived` bool、`daytrade` string、`f1_non10_par` bool |
 | `qc/calendar` | `trade_date` date32、`twse_open`／`tpex_open` bool |
 | `corp_actions` | `symbol` string、`ex_date` date32、`action` string、`before_price`／`ref_price`／`cash_dividend`／`stock_dividend`／`value` float64 |
 | `events` | `symbol` string、`event` string、`start_date`／`end_date` date32 |
@@ -152,7 +152,7 @@ FeedDay::load(root, &manifest, feed, &instruments, selection, missing_lot_size)
 | `match_interval_s` | `match_interval_s` | 撮合循環秒數，0 是逐筆交易；null → `None` |
 | `currency` | `currency` | `TWD` → `Twd`，其他 → `Foreign` |
 | `derived` | `derived` | 這一列不是交易所播送的資料，而是由盤後資料推導 |
-| `day_trade` | `f1_daytrade_flag` | `A` → `Both`（可先買後賣、先賣後買），`B` → `BuyFirst`，null → `None`；其他值是錯誤 |
+| `day_trade` | `daytrade` | `BOTH` → `Both`（可先買後賣、先賣後買），`BUY_FIRST` → `BuyFirst`，`NONE` → `Neither`（不可當沖），null（來源沒有）→ `None`；其他值是錯誤 |
 | `non_10_par` | `f1_non10_par` | 面額不是 10 元；null → `None` |
 
 交易規則用到的商品分類與升降單位由 `osmium-matching` 決定，見[撮合規格](matching.md)。
@@ -205,6 +205,8 @@ FeedDay::load(root, &manifest, feed, &instruments, selection, missing_lot_size)
   `00687C`、`008201`（2022-08-10 以前），每張 100 股。
 - `currency` 是實際的計價幣別（`USD`、`CNY` 的商品各有數檔）。
 - 漲跌停價只有 153 列是 null。
+- `daytrade` 取自 FinMind 的當沖清單，與 `F1` 的旗標偶有不同（marketdata 比對 123 天差 25 列，原因
+  未查）。
 - `match_interval_s` 都是 null：撮合方式由資料推定（[撮合規格](matching.md) 4.1）。
 - 權證與 TPEx 可轉換公司債沒有列：2026-10-13 起的 `TWSE_F17`、`TPEX_F17` 與 `TPEX_F6` 的可轉換
   公司債沒有 `shares_per_lot`，回放這些商品必須用 `MissingLotSize::Assume`。

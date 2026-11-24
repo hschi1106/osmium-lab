@@ -118,7 +118,7 @@ pub fn instrument(symbol: &'static str, lot: Option<i32>) -> InstrumentRow {
         interval: Some(0),
         currency: "TWD",
         derived: false,
-        day_trade: Some("A"),
+        day_trade: Some("BOTH"),
         non_10_par: Some(false),
     }
 }
@@ -298,7 +298,7 @@ fn instrument_columns(rows: &[InstrumentRow]) -> Columns {
             )),
         ),
         (
-            "f1_daytrade_flag",
+            "daytrade",
             Arc::new(StringArray::from_iter(rows.iter().map(|row| row.day_trade))),
         ),
         (

@@ -23,7 +23,7 @@ const COLUMNS: &[Column] = &[
     ("match_interval_s", ColumnType::Int32),
     ("currency", ColumnType::String),
     ("derived", ColumnType::Bool),
-    ("f1_daytrade_flag", ColumnType::String),
+    ("daytrade", ColumnType::String),
     ("f1_non10_par", ColumnType::Bool),
 ];
 
@@ -52,7 +52,7 @@ impl DayInstruments {
             let interval = primitive::<Int32Type>(path, batch, "match_interval_s")?;
             let currency = strings(path, batch, "currency")?;
             let derived = boolean(path, batch, "derived")?;
-            let day_trade = strings(path, batch, "f1_daytrade_flag")?;
+            let day_trade = strings(path, batch, "daytrade")?;
             let non_10_par = boolean(path, batch, "f1_non10_par")?;
             for row in 0..batch.num_rows() {
                 let code = required(path, optional_str(symbol, row), "symbol")?;
@@ -93,10 +93,11 @@ impl DayInstruments {
                     derived: required(path, optional_bool(derived, row), "derived")?,
                     day_trade: match optional_str(day_trade, row) {
                         None => None,
-                        Some("A") => Some(DayTradeFlag::Both),
-                        Some("B") => Some(DayTradeFlag::BuyFirst),
+                        Some("BOTH") => Some(DayTradeFlag::Both),
+                        Some("BUY_FIRST") => Some(DayTradeFlag::BuyFirst),
+                        Some("NONE") => Some(DayTradeFlag::Neither),
                         Some(flag) => {
-                            return Err(invalid(format!("unknown f1_daytrade_flag {flag}")));
+                            return Err(invalid(format!("unknown daytrade {flag}")));
                         }
                     },
                     non_10_par: optional_bool(non_10_par, row),

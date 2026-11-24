@@ -34,4 +34,4 @@ pub use position::{CashLot, Holding, LotId, MarginLot, OwedLot, ShortLot};
 /// The version of the accounting rules (`docs/reference/accounting.md`), including
 /// its built-in tables (tax rates, margin ratios, settlement-only days). It changes
 /// when the same fills and facts give different entries.
-pub const RULES_VERSION: u32 = 1;
+pub const RULES_VERSION: u32 = 2;
