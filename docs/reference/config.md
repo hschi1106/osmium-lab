@@ -59,7 +59,7 @@ run 處理範圍內 marketdata `qc/calendar` 的每個交易日。範圍內沒�
 | `feeds` | 必填 | 要回放的 feed：`"TWSE_F6"`、`"TWSE_F17"`、`"TWSE_F23"`、`"TPEX_F6"`、`"TPEX_F17"`、`"TPEX_F23"` 中的一個以上，不得重複（[marketdata](marketdata.md)）|
 | `symbols` | 全部 | 只回放這些商品；省略時回放所選 feed 的所有商品。不得為空列表 |
 | `missing_days` | `"error"` | 交易日缺少所選 feed 時：`"error"` 使 run 失敗，`"skip"` 記錄診斷後跳過那個 feed 的那一天（[回放規格](replay.md)第 4 節）|
-| `assume_lot_size` | 無 | 被回放的整股商品在 marketdata 沒有 `shares_per_lot` 時假設的交易單位（股）。省略時遇到這樣的商品 run 失敗。`instruments` 是推導資料的日子（2024-04-01 以前、2026-10-13 起）必須設定，通常是 `1000`（[marketdata](marketdata.md)第 10 節）|
+| `assume_lot_size` | 無 | 被回放的整股商品在 marketdata 沒有 `shares_per_lot` 時假設的交易單位（股）。省略時遇到這樣的商品 run 失敗。目前只有 2026-10-13 起的權證與 TPEx 可轉換公司債需要，通常是 `1000`（[marketdata](marketdata.md)第 10 節）|
 
 - 策略只看得到、也只能交易被回放的 book。要交易零股必須選 `F23` 的 feed。
 - 強制委託也需要它的 book 被回放；沒有被回放時強制委託被拒絕，連續 6 個交易日無法成交時 run 失敗

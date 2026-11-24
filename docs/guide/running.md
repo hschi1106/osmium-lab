@@ -43,9 +43,8 @@ symbols = ["2330", "6488"]        # 省略 = 所選 feed 的全部商品
   但帳務的強制委託（追繳、到期、未回補的先賣）需要那檔商品被回放才能成交，所以**持有或可能持有
   的商品都要列在 `symbols`**。
 - 只列需要的商品與 feed：時間與記憶體大致和回放的訊息數成正比（第 6 節）。
-- `instruments` 是推導資料的日子（2024-03-29 以前、2026-10-13 起）沒有交易單位，必須設定
-  `assume_lot_size = 1000`，否則 run 會以 `instruments has no shares_per_lot` 結束。這些日子的
-  漲跌停價也常是空的。
+- 2026-10-13 起權證與 TPEx 可轉換公司債沒有商品資料，回放它們必須設定 `assume_lot_size = 1000`，
+  否則 run 會以 `instruments has no shares_per_lot` 結束。
 - 某些日子缺少某個 feed 時 run 預設會失敗；`missing_days = "skip"` 改成記錄診斷後跳過。
   `osmium check` 會先列出缺少的日子。
 
