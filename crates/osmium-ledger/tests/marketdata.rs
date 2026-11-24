@@ -15,7 +15,7 @@ use osmium_md::{CorporateActions, DEFAULT_MD_ROOT, MdRoot, TradingCalendar};
 use osmium_types::{
     Board, CorporateAction, DailyQuote, Date, Fill, FillBasis, Money, NewOrder, OrderEvent,
     OrderEventKind, OrderId, OrderPrice, Price, Shares, Side, Symbol, TimeInForce, Timestamp,
-    TradeKind, Venue,
+    TradeKind,
 };
 
 const SHARES: i64 = 10_000;
@@ -103,14 +103,11 @@ fn hold_through(
 fn real_corporate_actions_keep_the_value_of_a_position() {
     let root =
         MdRoot::new(std::env::var("OSMIUM_MD_ROOT").unwrap_or_else(|_| DEFAULT_MD_ROOT.to_owned()));
-    let trading: Vec<Date> = TradingCalendar::load(&root)
-        .unwrap()
-        .trading_days(Venue::Twse)
-        .collect();
-    let last = *trading.last().unwrap();
-    let extra = (1..=4).map(|days| Date::from_epoch_days(last.epoch_days() + days).unwrap());
-    let calendar = Calendar::new(trading.iter().copied(), extra);
-    let actions = CorporateActions::load(&root, trading[1]).unwrap();
+    let days = TradingCalendar::load(&root).unwrap();
+    let trading: Vec<Date> = days.trading_days().collect();
+    let calendar = Calendar::new(trading.iter().copied(), days.settlement_days());
+    // The second day of data: the first has no day before it to buy on.
+    let actions = CorporateActions::load(&root, "2022-01-04".parse().unwrap()).unwrap();
 
     for (name, missing_terms) in [
         ("exact terms only", MissingTerms::Error),

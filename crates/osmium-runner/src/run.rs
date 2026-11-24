@@ -16,7 +16,7 @@ use osmium_replay::{Event, MergedFeeds, ScheduledClass, Timeline};
 use osmium_strategy::{Account, Command, Context, Market, Outbox, Strategy, TimerId};
 use osmium_types::{
     DailyQuote, Date, Feed, Money, NewOrder, OrderChange, OrderEvent, OrderEventKind, OrderId,
-    Position, RejectReason, Request, Symbol, Timestamp, Venue,
+    Position, RejectReason, Request, Symbol, Timestamp,
 };
 
 use crate::{
@@ -568,20 +568,12 @@ impl Run<'_> {
     }
 }
 
-/// Every trading day marketdata knows, and which of them the run covers.
+/// Every trading day of the calendar, and which of them the run covers.
 fn trading_days(
     calendar: &TradingCalendar,
     config: &RunConfig,
 ) -> Result<(Vec<Date>, Range<usize>), RunError> {
-    for day in calendar.days() {
-        if (config.start..=config.end).contains(&day.date) && day.twse_open != day.tpex_open {
-            return Err(RunError::Unsupported {
-                date: day.date,
-                reason: "only one of the two markets is open".to_owned(),
-            });
-        }
-    }
-    let all: Vec<Date> = calendar.trading_days(Venue::Twse).collect();
+    let all: Vec<Date> = calendar.trading_days().collect();
     let days = all.partition_point(|&date| date < config.start)
         ..all.partition_point(|&date| date <= config.end);
     if days.is_empty() {
@@ -608,6 +600,7 @@ pub fn run(request: RunRequest<'_>) -> Result<RunSummary, RunError> {
     let root = MdRoot::new(&config.md_root);
     let calendar = TradingCalendar::load(&root)?;
     let (all_days, days) = trading_days(&calendar, config)?;
+    let settlement_days: Vec<Date> = calendar.settlement_days().collect();
     let actions = CorporateActions::load(&root, config.start)?;
     let events = MarketEvents::load(&root, config.start)?;
     let mut reference = Reference::new();
@@ -620,10 +613,7 @@ pub fn run(request: RunRequest<'_>) -> Result<RunSummary, RunError> {
         config,
         ledger: Ledger::new(
             config.ledger.clone(),
-            Calendar::new(
-                all_days.iter().copied(),
-                config.extra_settlement_days.iter().copied(),
-            ),
+            Calendar::new(all_days.iter().copied(), settlement_days),
         ),
         root,
         actions,

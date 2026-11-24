@@ -11,7 +11,7 @@ use std::path::Path;
 use arrow_array::types::{Date32Type, Decimal128Type, Float64Type, Int8Type, Int64Type};
 use osmium_types::{
     CorporateAction, CorporateActionKind, CreditQuota, DailyQuote, Date, Decimal8, MarketEvent,
-    MarketEventKind, PerShare, Price, Symbol, Venue,
+    MarketEventKind, PerShare, Price, Symbol,
 };
 
 use crate::{
@@ -111,15 +111,18 @@ fn per_share_units(value: f64) -> Option<i64> {
 /// The largest amount per share a decimal column may state, in yuan.
 const MAX_PER_SHARE: i64 = 100_000;
 
-/// One row of marketdata `qc/calendar`.
+/// One row of marketdata `ref/calendar`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CalendarDay {
     pub date: Date,
-    pub twse_open: bool,
-    pub tpex_open: bool,
+    /// The market trades.
+    pub open: bool,
+    /// Settlement is done. Every open day settles; a few closed days settle too.
+    pub settle: bool,
 }
 
-/// marketdata `qc/calendar`: every weekday marketdata knows, open or closed.
+/// marketdata `ref/calendar`: every calendar day of the exchange calendar, including
+/// days after the last day of data.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TradingCalendar {
     file: ReferenceFile,
@@ -127,33 +130,39 @@ pub struct TradingCalendar {
 }
 
 impl TradingCalendar {
-    pub const PATH: &'static str = "qc/calendar.parquet";
+    pub const PATH: &'static str = "ref/calendar.parquet";
 
     pub fn load(root: &MdRoot) -> Result<Self, MdError> {
         const COLUMNS: &[Column] = &[
-            ("trade_date", ColumnType::Date32),
-            ("twse_open", ColumnType::Bool),
-            ("tpex_open", ColumnType::Bool),
+            ("date", ColumnType::Date32),
+            ("open", ColumnType::Bool),
+            ("settle", ColumnType::Bool),
         ];
         let (file, identity) = open(root, Self::PATH)?;
         let mut days: Vec<CalendarDay> = Vec::new();
         file.read(COLUMNS, None, |path, batch| {
-            let trade_date = primitive::<Date32Type>(path, batch, "trade_date")?;
-            let twse = boolean(path, batch, "twse_open")?;
-            let tpex = boolean(path, batch, "tpex_open")?;
+            let dates = primitive::<Date32Type>(path, batch, "date")?;
+            let open = boolean(path, batch, "open")?;
+            let settle = boolean(path, batch, "settle")?;
             for row in 0..batch.num_rows() {
-                let day = CalendarDay {
-                    date: date(path, optional(trade_date, row), "trade_date")?,
-                    twse_open: required(path, optional_bool(twse, row), "twse_open")?,
-                    tpex_open: required(path, optional_bool(tpex, row), "tpex_open")?,
-                };
-                if days.last().is_some_and(|last| last.date >= day.date) {
+                let date = date(path, optional(dates, row), "date")?;
+                let open = required(path, optional_bool(open, row), "open")?;
+                // Older years do not say whether a closed day settled; none of them
+                // is near the data.
+                let settle = optional_bool(settle, row).unwrap_or(open);
+                if open && !settle {
                     return Err(MdError::inconsistent(
                         path,
-                        format!("trade_date {} is not after the row before it", day.date),
+                        format!("{date} is open but does not settle"),
                     ));
                 }
-                days.push(day);
+                if days.last().is_some_and(|last| last.date >= date) {
+                    return Err(MdError::inconsistent(
+                        path,
+                        format!("date {date} is not after the row before it"),
+                    ));
+                }
+                days.push(CalendarDay { date, open, settle });
             }
             Ok(())
         })?;
@@ -174,14 +183,17 @@ impl TradingCalendar {
         &self.days
     }
 
-    /// The days `venue` is open, in order.
-    pub fn trading_days(&self, venue: Venue) -> impl Iterator<Item = Date> + '_ {
+    /// The days the market is open, in order.
+    pub fn trading_days(&self) -> impl Iterator<Item = Date> + '_ {
+        self.days.iter().filter(|day| day.open).map(|day| day.date)
+    }
+
+    /// The days settlement is done, in order: the trading days and the days that only
+    /// settle.
+    pub fn settlement_days(&self) -> impl Iterator<Item = Date> + '_ {
         self.days
             .iter()
-            .filter(move |day| match venue {
-                Venue::Twse => day.twse_open,
-                Venue::Tpex => day.tpex_open,
-            })
+            .filter(|day| day.settle)
             .map(|day| day.date)
     }
 }

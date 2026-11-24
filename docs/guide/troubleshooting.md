@@ -34,7 +34,7 @@ osmium 只讀取 `md_root`，不會修改它。
 
 | 訊息 | 原因與做法 |
 | --- | --- |
-| `accounting on <date>: the calendar has no settlement day far enough after ...` | run 跑到資料的最後兩個交易日，交割日不在日曆裡。在 `calendar.extra_settlement_days` 補上之後的交易日（[執行](running.md#5-公司行動與日曆)）|
+| `accounting on <date>: the calendar has no settlement day far enough after ...` | 需要的交割日或交易日超出 marketdata 的日曆（`ref/calendar`，目前到 2027-12-31）。縮短日期範圍 |
 | `accounting on <date>: <symbol> <action> on <ex_date>: marketdata does not have ...` | 持有的商品在那一天除權息或減資，而 marketdata 沒有需要的事實（例如非 10 元面額股票配股畸零的面額）。以 `[[corporate_actions.overrides]]` 補上，或設 `corporate_actions.missing_terms = "approximate"` |
 | `... shares of <symbol> sold without inventory were not bought back` | 策略以 `CashSellFirst` 賣出、當天沒有買回。修正策略，或設 `daytrade.uncovered = "force_cover"` 讓帳務隔天強制買回 |
 | `cash is ... after settlement on <date>` | `account.cash_check = "at_settlement"` 而交割日的現金不夠。增加期初現金或改回 `"at_order"` |

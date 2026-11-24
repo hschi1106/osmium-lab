@@ -56,6 +56,10 @@
 - `DECODER_VERSION` 5、`osmium_ledger::RULES_VERSION` 4：讀取 `events.disp_nth`。融資停止與融券
   保證金加成只適用於第二次以上的處置；TWSE 的第一次處置不再受限，TPEx 沒有次數，仍取較嚴者
   （[帳務規格](docs/reference/accounting.md) 9.1）。
+- `DECODER_VERSION` 6：交易日與交割日改讀 marketdata 的 `ref/calendar`（`open`、`settle`），不再讀
+  `qc/calendar`，`osmium-ledger` 也不再內建只辦理交割的日子。日曆涵蓋資料之後的日子，因此移除
+  `calendar.extra_settlement_days`；日期範圍超過資料的最後一天時，之後的交易日是缺少資料的日子
+  （[帳務規格](docs/reference/accounting.md) 7.1）。
 - 新增使用手冊（`docs/guide/`）：安裝與第一個回測、寫策略、執行、讀結果、疑難排解；以及完整的
   自訂策略範例程式 `crates/osmium-cli/examples/breakout.rs`。
 - 新增 agent skill `osmium-backtest`：使用系統跑回測的流程。

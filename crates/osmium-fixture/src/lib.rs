@@ -466,17 +466,22 @@ impl Tree {
         i64::try_from(batch.num_rows()).unwrap()
     }
 
-    /// `qc/calendar`: each day and whether both markets are open.
+    /// `ref/calendar`: each day and whether the market is open. Open days settle;
+    /// closed days do not.
     pub fn calendar(&self, days: &[(&'static str, bool)]) {
         let open = || -> ArrayRef {
             Arc::new(BooleanArray::from_iter(days.iter().map(|day| Some(day.1))))
         };
         self.write(
-            "qc/calendar.parquet",
+            "ref/calendar.parquet",
             vec![
-                ("trade_date", dates(days.iter().map(|day| day.0))),
-                ("twse_open", open()),
-                ("tpex_open", open()),
+                ("date", dates(days.iter().map(|day| day.0))),
+                ("open", open()),
+                ("settle", open()),
+                (
+                    "name",
+                    Arc::new(StringArray::from_iter(days.iter().map(|_| None::<&str>))),
+                ),
             ],
         );
     }

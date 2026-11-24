@@ -2,21 +2,6 @@ use osmium_types::Date;
 
 use crate::LedgerError;
 
-/// Days on which settlement is done but nothing trades: the two days before each Lunar
-/// New Year holiday (`docs/reference/accounting.md` section 7.1).
-const SETTLEMENT_ONLY: &[(u32, u32, u32)] = &[
-    (2022, 1, 27),
-    (2022, 1, 28),
-    (2023, 1, 18),
-    (2023, 1, 19),
-    (2024, 2, 6),
-    (2024, 2, 7),
-    (2025, 1, 23),
-    (2025, 1, 24),
-    (2026, 2, 12),
-    (2026, 2, 13),
-];
-
 /// Trading days and settlement days. Nothing is extrapolated: asking for a day beyond
 /// the last known one is an error.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,30 +11,19 @@ pub struct Calendar {
 }
 
 impl Calendar {
-    /// `trading_days` are the days the market is open. `extra_settlement_days` are
-    /// further days on which settlement is done, on top of the built-in
-    /// settlement-only days; a run that ends at the last trading day of marketdata
-    /// needs the next two settlement days here.
+    /// `trading_days` are the days the market is open. `settlement_days` are the days
+    /// on which settlement is done; every trading day is one whether or not it is
+    /// listed there (`docs/reference/accounting.md` section 7.1).
     #[must_use]
     pub fn new(
         trading_days: impl IntoIterator<Item = Date>,
-        extra_settlement_days: impl IntoIterator<Item = Date>,
+        settlement_days: impl IntoIterator<Item = Date>,
     ) -> Self {
         let mut trading: Vec<Date> = trading_days.into_iter().collect();
         trading.sort_unstable();
         trading.dedup();
         let mut settlement = trading.clone();
-        if let (Some(&first), Some(&last)) = (trading.first(), trading.last()) {
-            settlement.extend(
-                SETTLEMENT_ONLY
-                    .iter()
-                    .map(|&(year, month, day)| {
-                        Date::from_ymd(year, month, day).expect("a valid built-in date")
-                    })
-                    .filter(|&day| first < day && day < last),
-            );
-        }
-        settlement.extend(extra_settlement_days);
+        settlement.extend(settlement_days);
         settlement.sort_unstable();
         settlement.dedup();
         Self {
@@ -160,7 +134,7 @@ mod tests {
         // 02-07 settled only, trading resumed on 02-15.
         let calendar = Calendar::new(
             days(&["2024-02-02", "2024-02-05", "2024-02-15", "2024-02-16"]),
-            [],
+            days(&["2024-02-06", "2024-02-07"]),
         );
         assert_eq!(
             calendar.settlement_date(day("2024-02-02")),
@@ -186,7 +160,7 @@ mod tests {
     }
 
     #[test]
-    fn extra_settlement_days_extend_the_calendar() {
+    fn settlement_days_may_go_beyond_the_trading_days() {
         let calendar = Calendar::new(
             days(&["2026-10-15", "2026-10-16"]),
             days(&["2026-10-19", "2026-10-20"]),

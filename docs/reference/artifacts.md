@@ -34,7 +34,7 @@
 | `files` | 其他每個輸出檔案的 `name`、`rows`（資料列數）與 `blake3` |
 
 兩個 run 的輸入是否相同，比對 `versions`、`strategy`、`config_blake3`、`reference` 與 `days[].files`。
-參考表（`qc/calendar`、`corp_actions`、`events`、`daily`、`daily_ext`）在 marketdata 沒有 manifest
+參考表（`ref/calendar`、`corp_actions`、`events`、`daily`、`daily_ext`）在 marketdata 沒有 manifest
 列，只能以路徑、列數與 `git_commit` 識別（[marketdata](marketdata.md)第 9 節）。
 
 ## 3. `config.toml`

@@ -59,7 +59,6 @@ pub struct RunConfig {
     pub latency: Latency,
     pub auction_marginal: AuctionMarginal,
     pub ledger: osmium_ledger::Config,
-    pub extra_settlement_days: Vec<Date>,
     pub strategy: String,
     pub params: Params,
 }
@@ -154,8 +153,6 @@ struct RawConfig {
     credit: RawCredit,
     #[serde(default)]
     corporate_actions: RawCorporateActions,
-    #[serde(default)]
-    calendar: RawCalendar,
     strategy: RawStrategy,
 }
 
@@ -266,13 +263,6 @@ struct RawOverride {
     fraction_price: Option<Decimal>,
     cash_dividend: Option<Decimal>,
     stock_dividend: Option<Decimal>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawCalendar {
-    #[serde(default)]
-    extra_settlement_days: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -661,13 +651,6 @@ impl RunConfig {
             actions.overrides.push(item);
         }
 
-        let extra_settlement_days = raw
-            .calendar
-            .extra_settlement_days
-            .iter()
-            .map(|text| date("calendar.extra_settlement_days", text))
-            .collect::<Result<Vec<_>, _>>()?;
-
         if raw.strategy.name.is_empty() {
             return Err(invalid("strategy.name", "must not be empty"));
         }
@@ -695,7 +678,6 @@ impl RunConfig {
             latency,
             auction_marginal,
             ledger,
-            extra_settlement_days,
             strategy: raw.strategy.name,
             params: Params::new(params),
         })

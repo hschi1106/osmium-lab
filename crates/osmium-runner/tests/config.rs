@@ -50,7 +50,6 @@ fn the_required_keys_are_enough() {
     assert_eq!(config.missing_lot_size, MissingLotSize::Reject);
     assert_eq!(config.auction_marginal, AuctionMarginal::Conservative);
     assert_eq!(config.strategy, "buy_and_hold");
-    assert!(config.extra_settlement_days.is_empty());
     // Everything else is the default of the accounting.
     assert_eq!(
         config.ledger,
@@ -137,9 +136,6 @@ share_ratio = [7, 10]
 refund_per_share = 3
 fraction_price = "10"
 
-[calendar]
-extra_settlement_days = ["2026-10-19", "2026-10-20"]
-
 [strategy]
 name = "quoter"
 
@@ -197,7 +193,6 @@ watch = ["2330", "0050"]
     assert_eq!(reduction.share_ratio, Some((7, 10)));
     assert_eq!(reduction.refund_per_share.unwrap().units(), 30_000_000_000);
     assert_eq!(reduction.fraction_price.unwrap().to_string(), "10");
-    assert_eq!(config.extra_settlement_days.len(), 2);
 
     // A strategy takes its parameters out one by one; what is left is unknown to it.
     let params = &mut config.params;

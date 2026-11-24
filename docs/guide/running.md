@@ -120,14 +120,9 @@ cash_date = "2024-04-02"
 要精確就用 `overrides`（事實來自公開資訊觀測站的公告）；只是想讓 run 跑完就用 `"approximate"`，
 並檢查 `entries.csv`、`realized.csv` 中 `approx = true` 的列。
 
-**run 跑到資料的最後幾天。** 成交在兩個交易日後交割（T+2）。marketdata 的日曆只到資料的最後
-一天，所以最後兩個交易日的交割日不在日曆裡，run 會以
-`the calendar has no settlement day far enough after ...` 結束。補上之後的交易日：
-
-```toml
-[calendar]
-extra_settlement_days = ["2026-10-19", "2026-10-20"]
-```
+**日期範圍超過資料的最後一天。** marketdata 的日曆（含只辦理交割的日子）涵蓋到 2027 年底，比
+資料長，所以 run 跑到資料的最後一天也有交割日可用。但 `end` 在資料的最後一天之後時，之後的交易日
+沒有資料，run 預設會失敗；`osmium check` 會列出這些日子，把 `end` 改成資料的最後一天即可。
 
 ## 6. 時間與記憶體
 

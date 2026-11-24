@@ -52,7 +52,7 @@
 
 ## 4. 交易日
 
-run 逐一處理日期範圍內的交易日（marketdata `qc/calendar`）。每個交易日：
+run 逐一處理日期範圍內的交易日（marketdata `ref/calendar`）。每個交易日：
 
 1. 帳務的開盤前步驟（[帳務規格](accounting.md)第 3 節）。
 2. 策略的 `on_day_start`。
@@ -71,7 +71,7 @@ run 逐一處理日期範圍內的交易日（marketdata `qc/calendar`）。每�
 - 委託與計時器不跨日。
 - 回報產生時先記入帳務，再排入時間線送往策略。策略收到回報時看到的帳戶，是回報產生當下的狀態
   （[策略介面規格](strategy.md)第 5 節）。
-- 交割日由 `qc/calendar` 的交易日與設定的額外交割日決定；兩個交易日之間到期的交割在下一個交易日
+- 交割日由 `ref/calendar` 決定；兩個交易日之間到期的交割在下一個交易日
   的開盤前步驟入帳。
 - 交易日缺少選定的 feed（當天的 manifest 沒有這個 feed 的列）時 run 失敗；
   `data.missing_days = "skip"` 時改為記錄診斷並跳過那個 feed 的那一天。被跳過的日子帳務照常進行。

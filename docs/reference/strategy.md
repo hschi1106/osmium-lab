@@ -125,7 +125,7 @@
 
 ## 6. 參數與註冊
 
-策略的參數寫在設定檔的 `[strategy.params]`（[設定規格](config.md)第 12 節），以 `Params` 交給策略的
+策略的參數寫在設定檔的 `[strategy.params]`（[設定規格](config.md)第 11 節），以 `Params` 交給策略的
 建構函式：
 
 | 方法 | 型別 |

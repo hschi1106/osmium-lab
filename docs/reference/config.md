@@ -48,8 +48,9 @@ symbol = "2330"
 | `start` | 是 | 第一天（含） |
 | `end` | 是 | 最後一天（含），不得早於 `start` |
 
-run 處理範圍內 marketdata `qc/calendar` 的每個交易日。範圍內沒有交易日是錯誤。範圍內有只開一個
-市場（上市或上櫃）的日子時 run 失敗。
+run 處理範圍內 marketdata `ref/calendar` 的每個交易日。範圍內沒有交易日是錯誤。`ref/calendar` 涵蓋
+資料之後的日子，所以範圍超過資料的最後一天時，之後的交易日是缺少資料的日子（第 4 節
+`missing_days`；`osmium check` 會列出）。
 
 ## 4. `[data]`
 
@@ -138,22 +139,13 @@ refund_per_share = 3
 cash_date = "2024-04-02"
 ```
 
-## 9. `[calendar]`
-
-| Key | 預設 | 說明 |
-| --- | --- | --- |
-| `extra_settlement_days` | 空 | 額外的交割日（日期的列表）|
-
-交割日由 `qc/calendar` 的交易日推算。run 的最後幾個交易日，其交割日可能在 `qc/calendar` 的最後一天
-之後；此時必須在這裡列出那些日子，否則 run 以帳務錯誤結束（[帳務規格](accounting.md)第 7.1 節）。
-
-## 10. `[strategy]`
+## 9. `[strategy]`
 
 | Key | 必填 | 說明 |
 | --- | --- | --- |
 | `name` | 是 | 程式登記的策略名稱（`osmium strategies` 列出）|
 
-## 11. 完整範例
+## 10. 完整範例
 
 ```toml
 [run]
@@ -199,7 +191,7 @@ symbol = "2330"
 lots = 2
 ```
 
-## 12. `[strategy.params]`
+## 11. `[strategy.params]`
 
 策略自己的參數，內容由策略定義（[策略介面規格](strategy.md)第 6 節）。值可以是整數、文字、布林，
 或它們的列表；浮點數、日期時間與巢狀的 table 會被拒絕。策略不認得的參數是錯誤。

@@ -12,12 +12,10 @@ use arrow_array::{
     RecordBatch, StringArray,
 };
 use osmium_md::{
-    CorporateActions, CreditQuotas, DEFAULT_MD_ROOT, DailyQuotes, MarketEvents, MdError, MdRoot,
-    TradingCalendar,
+    CorporateActions, CreditQuotas, DEFAULT_MD_ROOT, DailyQuotes, DayManifest, MarketEvents,
+    MdError, MdRoot, TradingCalendar,
 };
-use osmium_types::{
-    CorporateActionKind, Date, Decimal8, MarketEventKind, PerShare, Price, Symbol, Venue,
-};
+use osmium_types::{CorporateActionKind, Date, Decimal8, MarketEventKind, PerShare, Price, Symbol};
 use parquet::{arrow::ArrowWriter, file::metadata::KeyValue, file::properties::WriterProperties};
 
 type Columns = Vec<(&'static str, ArrayRef)>;
@@ -95,54 +93,74 @@ impl Tree {
     }
 }
 
-fn calendar_columns(rows: &[(&'static str, bool, bool)]) -> Columns {
+fn calendar_columns(rows: &[(&'static str, bool, Option<bool>)]) -> Columns {
     vec![
-        ("trade_date", dates(rows.iter().map(|row| Some(row.0)))),
+        ("date", dates(rows.iter().map(|row| Some(row.0)))),
         (
-            "twse_open",
+            "open",
             Arc::new(BooleanArray::from_iter(rows.iter().map(|row| Some(row.1)))),
         ),
         (
-            "tpex_open",
-            Arc::new(BooleanArray::from_iter(rows.iter().map(|row| Some(row.2)))),
+            "settle",
+            Arc::new(BooleanArray::from_iter(rows.iter().map(|row| row.2))),
         ),
+        ("name", strings(rows.iter().map(|_| ""))),
     ]
 }
 
 #[test]
-fn the_calendar_lists_open_and_closed_days() {
+fn the_calendar_lists_trading_and_settlement_days() {
     let tree = Tree::new("calendar");
     tree.write(
         TradingCalendar::PATH,
         calendar_columns(&[
-            ("2024-02-05", true, true),
-            ("2024-02-06", false, false),
-            ("2024-02-15", true, false),
+            ("2020-01-23", false, None),
+            ("2024-02-05", true, Some(true)),
+            ("2024-02-06", false, Some(true)),
+            ("2024-02-10", false, Some(false)),
+            ("2024-02-15", true, None),
         ]),
     );
     let calendar = TradingCalendar::load(&tree.root()).unwrap();
-    assert_eq!(calendar.days().len(), 3);
-    assert_eq!(calendar.file().path, "qc/calendar.parquet");
-    assert_eq!(calendar.file().rows, 3);
+    assert_eq!(calendar.days().len(), 5);
+    assert_eq!(calendar.file().path, "ref/calendar.parquet");
+    assert_eq!(calendar.file().rows, 5);
     assert_eq!(calendar.file().git_commit, "c0ffee");
     assert_eq!(
-        calendar.trading_days(Venue::Twse).collect::<Vec<_>>(),
+        calendar.trading_days().collect::<Vec<_>>(),
         [day("2024-02-05"), day("2024-02-15")]
     );
     assert_eq!(
-        calendar.trading_days(Venue::Tpex).collect::<Vec<_>>(),
-        [day("2024-02-05")]
+        calendar.settlement_days().collect::<Vec<_>>(),
+        [day("2024-02-05"), day("2024-02-06"), day("2024-02-15")]
     );
 
-    let tree = Tree::new("calendar-order");
-    tree.write(
-        TradingCalendar::PATH,
-        calendar_columns(&[("2024-02-06", true, true), ("2024-02-05", true, true)]),
-    );
-    assert!(matches!(
-        TradingCalendar::load(&tree.root()),
-        Err(MdError::Inconsistent { .. })
-    ));
+    for (name, rows) in [
+        (
+            "order",
+            [
+                ("2024-02-06", true, Some(true)),
+                ("2024-02-05", true, Some(true)),
+            ],
+        ),
+        (
+            "open-without-settlement",
+            [
+                ("2024-02-05", true, Some(true)),
+                ("2024-02-06", true, Some(false)),
+            ],
+        ),
+    ] {
+        let tree = Tree::new(&format!("calendar-{name}"));
+        tree.write(TradingCalendar::PATH, calendar_columns(&rows));
+        assert!(
+            matches!(
+                TradingCalendar::load(&tree.root()),
+                Err(MdError::Inconsistent { .. })
+            ),
+            "{name}"
+        );
+    }
 }
 
 #[test]
@@ -151,7 +169,7 @@ fn only_schema_version_1_with_the_documented_types_is_read() {
     tree.write_as(
         TradingCalendar::PATH,
         "2",
-        calendar_columns(&[("2024-02-05", true, true)]),
+        calendar_columns(&[("2024-02-05", true, Some(true))]),
     );
     assert!(matches!(
         TradingCalendar::load(&tree.root()),
@@ -162,9 +180,9 @@ fn only_schema_version_1_with_the_documented_types_is_read() {
     tree.write(
         TradingCalendar::PATH,
         vec![
-            ("trade_date", strings(["2024-02-05"])),
-            ("twse_open", Arc::new(BooleanArray::from(vec![true]))),
-            ("tpex_open", Arc::new(BooleanArray::from(vec![true]))),
+            ("date", strings(["2024-02-05"])),
+            ("open", Arc::new(BooleanArray::from(vec![true]))),
+            ("settle", Arc::new(BooleanArray::from(vec![true]))),
         ],
     );
     assert!(matches!(
@@ -665,19 +683,27 @@ fn real_root() -> MdRoot {
 fn real_reference_tables_read_exactly() {
     let root = real_root();
     let calendar = TradingCalendar::load(&root).unwrap();
-    let trading: Vec<Date> = calendar.trading_days(Venue::Twse).collect();
+    // The trading days with data: from the first day of data to the last day with a
+    // manifest.
+    let trading: Vec<Date> = calendar
+        .trading_days()
+        .filter(|&date| date >= day("2022-01-03"))
+        .take_while(|&date| DayManifest::load(&root, date).is_ok())
+        .collect();
     let (first, last) = (trading[0], *trading.last().unwrap());
+    let settlement_only = calendar
+        .days()
+        .iter()
+        .filter(|day| day.settle && !day.open && day.date >= first)
+        .count();
     println!(
-        "calendar: {} rows, {} trading days, {first} to {last}",
+        "calendar: {} rows, {} trading days with data from {first} to {last}, \
+         {settlement_only} settlement-only days from {first}",
         calendar.days().len(),
         trading.len()
     );
-    assert!(
-        calendar
-            .days()
-            .iter()
-            .all(|day| day.twse_open == day.tpex_open)
-    );
+    assert!(calendar.days().last().unwrap().date > last);
+    assert!(settlement_only >= 10);
 
     let actions = CorporateActions::load(&root, first).unwrap();
     let mut by_kind = std::collections::BTreeMap::new();

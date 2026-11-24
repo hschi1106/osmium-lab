@@ -38,8 +38,7 @@ impl fmt::Display for LedgerError {
         match self {
             Self::OutsideCalendar { needed_after } => write!(
                 formatter,
-                "the calendar has no settlement day far enough after {needed_after}; \
-                 add the missing days to calendar.extra_settlement_days"
+                "the calendar has no settlement day far enough after {needed_after}"
             ),
             Self::NotATradingDay { date } => {
                 write!(formatter, "{date} is not a trading day of the calendar")
