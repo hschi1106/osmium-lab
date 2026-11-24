@@ -183,8 +183,9 @@ FeedDay::load(root, &manifest, feed, &instruments, selection, missing_lot_size)
 
 實測（2026-11，`/srv/md/v1`）：
 
-- `ref/calendar`：12,145 列，1994-10-01 → 2027-12-31。2022-01-03 起有資料的交易日到 2026-11-23 共
-  1,184 天；只交割的日子 12 天（2022 至 2027 每年農曆春節前兩天）。`settle` 為 null 的 415 列都在
+- `ref/calendar`：12,145 列，1994-10-01 → 2027-12-31。2022-01-03 起到最後一個有 manifest 的交易日
+  2026-11-23 共 1,184 天（tick 資料只到 2026-10-16，之後的 manifest 只有 `fmbroker`）；只交割的日子
+  12 天（2022 至 2027 每年農曆春節前兩天）。`settle` 為 null 的 415 列都在
   2020-10 以前、都是休市日。
 - `corp_actions`（2022-01-03 起 11,927 列）全部可以精確轉換。`dividend` 11,254 列、`rights` 455、
   `reduction_loss` 107、`reduction_cash` 78、`par_change` 21、`reverse_split` 6、`split` 6。
