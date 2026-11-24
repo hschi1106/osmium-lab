@@ -2,7 +2,7 @@
 
 一個 run 寫出的檔案：內容、欄位與識別資訊。由 `osmium-runner` 寫出。
 
-狀態：已實作；格式版本 `output_version = 1`（[版本](versions.md)）。
+狀態：已實作；格式版本 `output_version = 2`（[版本](versions.md)）。
 
 ## 1. 原則
 
@@ -27,7 +27,7 @@
 | `strategy` | `name` 與 `version` |
 | `config_blake3` | `config.toml` 的 BLAKE3 |
 | `md_root`、`start`、`end` | 設定的資料根目錄與日期範圍 |
-| `reference` | 讀取的每個參考表檔案：`path`（相對於 `md_root`）、`rows`、`git_commit` |
+| `reference` | 讀取的每個參考表檔案在 marketdata `fm/_build` 的身分：`path`（相對於 `md_root`）、`rows`、`git_commit`、`content_hash`（內容的雜湊，與壓縮與檔案切法無關）、`file_sha256`（檔案位元組的 SHA-256）|
 | `days` | 每個交易日：`date`、`messages`、`orders`、`fills`、`cash`、`equity`，以及 `files` |
 | `days[].files` | 當天讀取的每個檔案的 manifest identity：`table`、`part`、`path`、`rows`、`git_commit`、`code_hash`、`inputs_hash` |
 | `summary` | `trading_days`、`messages`、`orders`、`fills`、`initial_cash`、`final_cash`、`final_equity` |
@@ -35,7 +35,7 @@
 
 兩個 run 的輸入是否相同，比對 `versions`、`strategy`、`config_blake3`、`reference` 與 `days[].files`。
 參考表（`ref/calendar`、`corp_actions`、`events`、`daily`、`daily_ext`）在 marketdata 沒有 manifest
-列，只能以路徑、列數與 `git_commit` 識別（[marketdata](marketdata.md)第 9 節）。
+列，以 `fm/_build` 的列識別；`content_hash` 相同就是相同的內容（[marketdata](marketdata.md)第 9 節）。
 
 ## 3. `config.toml`
 

@@ -12,6 +12,7 @@ arrow-array = "60"
 arrow-schema = "60"
 osmium-types = { path = "../osmium-types" }
 parquet = { version = "60", default-features = false, features = ["arrow", "zstd"] }
+sha2 = "0.10"
 
 [dev-dependencies]
 parquet = { version = "60", default-features = false, features = ["arrow"] }

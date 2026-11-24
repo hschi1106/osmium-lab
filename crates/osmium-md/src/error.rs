@@ -40,6 +40,11 @@ pub enum MdError {
         table: &'static str,
         part: String,
     },
+    /// A reference file or its `fm/_build` row changed while it was being read, or the
+    /// file is not the one `fm/_build` records (a marketdata rebuild is in progress).
+    ReferenceChanged {
+        path: String,
+    },
     /// A row holds a value or a combination of fields the specification does not define.
     InvalidRow {
         path: PathBuf,
@@ -100,6 +105,11 @@ impl fmt::Display for MdError {
             Self::ManifestChanged { date, table, part } => write!(
                 formatter,
                 "marketdata manifest for {table}/{part} on {date} changed during the read"
+            ),
+            Self::ReferenceChanged { path } => write!(
+                formatter,
+                "marketdata {path} does not match fm/_build or changed during the read; \
+                 marketdata may be rebuilding it, read again later"
             ),
             Self::InvalidRow {
                 path,

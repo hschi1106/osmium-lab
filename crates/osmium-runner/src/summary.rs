@@ -80,6 +80,8 @@ struct ReferenceRecord {
     path: String,
     rows: u64,
     git_commit: String,
+    content_hash: String,
+    file_sha256: String,
 }
 
 #[derive(Serialize)]
@@ -172,6 +174,8 @@ pub(crate) fn write_summary(
                 path: file.path,
                 rows: file.rows,
                 git_commit: file.git_commit,
+                content_hash: file.content_hash,
+                file_sha256: file.file_sha256,
             })
             .collect(),
         days: days

@@ -11,3 +11,4 @@ workspace = true
 arrow-array = "60"
 osmium-types = { path = "../osmium-types" }
 parquet = { version = "60", default-features = false, features = ["arrow"] }
+sha2 = "0.10"

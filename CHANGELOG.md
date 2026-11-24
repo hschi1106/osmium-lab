@@ -60,6 +60,9 @@
   `qc/calendar`，`osmium-ledger` 也不再內建只辦理交割的日子。日曆涵蓋資料之後的日子，因此移除
   `calendar.extra_settlement_days`；日期範圍超過資料的最後一天時，之後的交易日是缺少資料的日子
   （[帳務規格](docs/reference/accounting.md) 7.1）。
+- `OUTPUT_VERSION` 2：參考表以 marketdata `fm/_build` 的列識別。讀取前核對列數與 `md.git_commit`、
+  讀取後確認那一列沒有改變，run 第一次讀到一個檔案時比對 `file_sha256`；`run.json` 的 `reference`
+  多了 `content_hash`、`file_sha256`（[marketdata 介面](docs/reference/marketdata.md)第 9 節）。
 - 新增使用手冊（`docs/guide/`）：安裝與第一個回測、寫策略、執行、讀結果、疑難排解；以及完整的
   自訂策略範例程式 `crates/osmium-cli/examples/breakout.rs`。
 - 新增 agent skill `osmium-backtest`：使用系統跑回測的流程。

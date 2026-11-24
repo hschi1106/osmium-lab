@@ -5,7 +5,7 @@
 //! OSMIUM_MD_ROOT=/srv/md/v1 cargo test --release --locked -p osmium-md --test reference -- --ignored --nocapture
 //! ```
 
-use std::{fs, path::PathBuf, sync::Arc};
+use std::{cell::RefCell, collections::BTreeMap, fs, path::PathBuf, sync::Arc};
 
 use arrow_array::{
     ArrayRef, BooleanArray, Date32Array, Decimal128Array, Float64Array, Int8Array, Int64Array,
@@ -17,6 +17,7 @@ use osmium_md::{
 };
 use osmium_types::{CorporateActionKind, Date, Decimal8, MarketEventKind, PerShare, Price, Symbol};
 use parquet::{arrow::ArrowWriter, file::metadata::KeyValue, file::properties::WriterProperties};
+use sha2::{Digest, Sha256};
 
 type Columns = Vec<(&'static str, ArrayRef)>;
 
@@ -48,12 +49,24 @@ fn floats(values: impl IntoIterator<Item = Option<f64>>) -> ArrayRef {
     Arc::new(Float64Array::from_iter(values))
 }
 
-struct Tree(PathBuf);
+/// A marketdata tree with its `fm/_build` kept up to date with every file written.
+struct Tree {
+    root: PathBuf,
+    /// Path to rows and SHA-256 of every file written.
+    build: RefCell<BTreeMap<String, (i64, String)>>,
+}
 
 impl Drop for Tree {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        let _ = fs::remove_dir_all(&self.root);
     }
+}
+
+fn sha256(path: &std::path::Path) -> String {
+    Sha256::digest(fs::read(path).unwrap())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 impl Tree {
@@ -61,15 +74,18 @@ impl Tree {
         let root =
             std::env::temp_dir().join(format!("osmium-md-ref-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
-        Self(root)
+        Self {
+            root,
+            build: RefCell::new(BTreeMap::new()),
+        }
     }
 
     fn root(&self) -> MdRoot {
-        MdRoot::new(&self.0)
+        MdRoot::new(&self.root)
     }
 
-    fn write_as(&self, relative: &str, schema_version: &str, columns: Columns) {
-        let path = self.0.join(relative);
+    fn put(&self, relative: &str, schema_version: &str, columns: Columns) -> i64 {
+        let path = self.root.join(relative);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         let batch = RecordBatch::try_from_iter(columns).unwrap();
         let properties = WriterProperties::builder()
@@ -86,11 +102,100 @@ impl Tree {
         .unwrap();
         writer.write(&batch).unwrap();
         writer.close().unwrap();
+        i64::try_from(batch.num_rows()).unwrap()
+    }
+
+    /// Writes `fm/_build` with one row per file written so far.
+    fn write_build(&self) {
+        let build = self.build.borrow();
+        let column = |values: Vec<String>| -> ArrayRef { Arc::new(StringArray::from(values)) };
+        self.put(
+            "fm/_build.parquet",
+            "1",
+            vec![
+                ("path", column(build.keys().cloned().collect())),
+                (
+                    "rows",
+                    Arc::new(Int64Array::from_iter_values(
+                        build.values().map(|(rows, _)| *rows),
+                    )),
+                ),
+                (
+                    "git_commit",
+                    column(build.values().map(|_| "c0ffee".to_owned()).collect()),
+                ),
+                (
+                    "content_hash",
+                    column(
+                        build
+                            .values()
+                            .map(|(_, sha)| format!("content-{sha}"))
+                            .collect(),
+                    ),
+                ),
+                (
+                    "file_sha256",
+                    column(build.values().map(|(_, sha)| sha.clone()).collect()),
+                ),
+            ],
+        );
+    }
+
+    fn write_as(&self, relative: &str, schema_version: &str, columns: Columns) {
+        let rows = self.put(relative, schema_version, columns);
+        let sha = sha256(&self.root.join(relative));
+        self.build
+            .borrow_mut()
+            .insert(relative.to_owned(), (rows, sha));
+        self.write_build();
     }
 
     fn write(&self, relative: &str, columns: Columns) {
         self.write_as(relative, "1", columns);
     }
+}
+
+#[test]
+fn a_reference_file_is_read_only_as_fm_build_records_it() {
+    let rows = || calendar_columns(&[("2024-02-05", true, Some(true))]);
+    let tree = Tree::new("build");
+    tree.write(TradingCalendar::PATH, rows());
+    let calendar = TradingCalendar::load(&tree.root()).unwrap();
+    let file = calendar.file();
+    assert_eq!(
+        file.file_sha256,
+        sha256(&tree.root.join(TradingCalendar::PATH))
+    );
+    assert_eq!(file.content_hash, format!("content-{}", file.file_sha256));
+    file.verify_bytes(&tree.root()).unwrap();
+
+    // The file was replaced and fm/_build not yet rewritten.
+    tree.put(
+        TradingCalendar::PATH,
+        "1",
+        calendar_columns(&[("2024-02-05", true, Some(true)), ("2024-02-06", true, None)]),
+    );
+    assert!(matches!(
+        TradingCalendar::load(&tree.root()),
+        Err(MdError::Inconsistent { .. })
+    ));
+    tree.put(
+        TradingCalendar::PATH,
+        "1",
+        calendar_columns(&[("2024-02-06", true, None)]),
+    );
+    assert!(matches!(
+        file.verify_bytes(&tree.root()),
+        Err(MdError::ReferenceChanged { .. })
+    ));
+
+    // A file fm/_build does not list.
+    tree.build.borrow_mut().clear();
+    tree.write_build();
+    assert!(matches!(
+        TradingCalendar::load(&tree.root()),
+        Err(MdError::Inconsistent { .. })
+    ));
 }
 
 fn calendar_columns(rows: &[(&'static str, bool, Option<bool>)]) -> Columns {

@@ -2,9 +2,10 @@
 //! trading calendar, daily closing quotes, credit quotas, trading restrictions and
 //! corporate actions.
 //!
-//! These tables are whole files or one file per year and have no manifest rows. Each
-//! file is checked against schema version 1 through its footer and the types of the
-//! columns that are read.
+//! These tables are whole files or one file per year and have no manifest rows; their
+//! identity is their row in `fm/_build`. Each file is checked against schema version 1
+//! through its footer, against its `fm/_build` row before the read and that row again
+//! after it, and the types of the columns that are read.
 
 use std::path::Path;
 
@@ -22,37 +23,145 @@ use crate::{
     },
 };
 
-/// Which file a reference table was read from, for the record of a run.
+/// The build record of the reference files: one row per published file.
+const BUILD: &str = "fm/_build.parquet";
+
+/// The identity of a reference file, as marketdata records it in `fm/_build`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ReferenceFile {
     /// Relative to the marketdata root.
     pub path: String,
     pub rows: u64,
-    /// The footer's `md.git_commit`.
+    /// The commit of the marketdata code that wrote the file.
     pub git_commit: String,
+    /// The hash of the file's contents, independent of compression and layout.
+    pub content_hash: String,
+    /// The SHA-256 of the file's bytes.
+    pub file_sha256: String,
 }
 
-fn open(root: &MdRoot, relative: &str) -> Result<(ParquetFile, ReferenceFile), MdError> {
-    let file = ParquetFile::open(&root.path().join(relative))?;
+impl ReferenceFile {
+    /// Hashes the file and fails when its bytes are not the ones `fm/_build` records:
+    /// marketdata replaced the file and has not yet rewritten `fm/_build`.
+    pub fn verify_bytes(&self, root: &MdRoot) -> Result<(), MdError> {
+        use sha2::{Digest, Sha256};
+
+        let path = root.path().join(&self.path);
+        let mut file = std::fs::File::open(&path).map_err(|source| MdError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        let mut hasher = Sha256::new();
+        std::io::copy(&mut file, &mut hasher).map_err(|source| MdError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        let actual: String = hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        if actual == self.file_sha256 {
+            Ok(())
+        } else {
+            Err(MdError::ReferenceChanged {
+                path: self.path.clone(),
+            })
+        }
+    }
+}
+
+/// The `fm/_build` row of `relative`.
+fn build_entry(root: &MdRoot, relative: &str) -> Result<ReferenceFile, MdError> {
+    const COLUMNS: &[Column] = &[
+        ("path", ColumnType::String),
+        ("rows", ColumnType::Int64),
+        ("git_commit", ColumnType::String),
+        ("content_hash", ColumnType::String),
+        ("file_sha256", ColumnType::String),
+    ];
+    let file = ParquetFile::open(&root.path().join(BUILD))?;
+    schema_version(&file)?;
+    let mut found: Option<ReferenceFile> = None;
+    file.read(COLUMNS, None, |path, batch| {
+        let paths = strings(path, batch, "path")?;
+        let rows = primitive::<Int64Type>(path, batch, "rows")?;
+        let commits = strings(path, batch, "git_commit")?;
+        let contents = strings(path, batch, "content_hash")?;
+        let bytes = strings(path, batch, "file_sha256")?;
+        for row in 0..batch.num_rows() {
+            if optional_str(paths, row) != Some(relative) {
+                continue;
+            }
+            if found.is_some() {
+                return Err(MdError::inconsistent(
+                    path,
+                    format!("more than one row for {relative}"),
+                ));
+            }
+            let text =
+                |column, name| required(path, optional_str(column, row), name).map(str::to_owned);
+            let count = required(path, optional(rows, row), "rows")?;
+            found = Some(ReferenceFile {
+                path: relative.to_owned(),
+                rows: u64::try_from(count).map_err(|_| {
+                    MdError::inconsistent(path, format!("{relative}: rows {count}"))
+                })?,
+                git_commit: text(commits, "git_commit")?,
+                content_hash: text(contents, "content_hash")?,
+                file_sha256: text(bytes, "file_sha256")?,
+            });
+        }
+        Ok(())
+    })?;
+    found.ok_or_else(|| MdError::inconsistent(file.path(), format!("no row for {relative}")))
+}
+
+fn schema_version(file: &ParquetFile) -> Result<(), MdError> {
     let version = file.metadata_value("md.schema_version");
-    if version != Some(SCHEMA_VERSION) {
-        return Err(MdError::schema(
+    if version == Some(SCHEMA_VERSION) {
+        Ok(())
+    } else {
+        Err(MdError::schema(
             file.path(),
             format!("md.schema_version {version:?} is not the supported version {SCHEMA_VERSION}"),
+        ))
+    }
+}
+
+/// Opens a reference file after checking it against its `fm/_build` row.
+fn open(root: &MdRoot, relative: &str) -> Result<(ParquetFile, ReferenceFile), MdError> {
+    let file = ParquetFile::open(&root.path().join(relative))?;
+    schema_version(&file)?;
+    let identity = build_entry(root, relative)?;
+    let git_commit = file.metadata_value("md.git_commit");
+    if git_commit != Some(identity.git_commit.as_str()) {
+        return Err(MdError::inconsistent(
+            file.path(),
+            format!(
+                "md.git_commit {git_commit:?} != fm/_build {}",
+                identity.git_commit
+            ),
         ));
     }
-    let git_commit = file
-        .metadata_value("md.git_commit")
-        .ok_or_else(|| MdError::schema(file.path(), "the footer has no md.git_commit".to_owned()))?
-        .to_owned();
-    let rows = u64::try_from(file.num_rows())
-        .map_err(|_| MdError::inconsistent(file.path(), "a negative row count".to_owned()))?;
-    let identity = ReferenceFile {
-        path: relative.to_owned(),
-        rows,
-        git_commit,
-    };
+    if u64::try_from(file.num_rows()).ok() != Some(identity.rows) {
+        return Err(MdError::inconsistent(
+            file.path(),
+            format!("{} rows, fm/_build says {}", file.num_rows(), identity.rows),
+        ));
+    }
     Ok((file, identity))
+}
+
+/// Fails when the `fm/_build` row a read relied on has changed since.
+fn unchanged(root: &MdRoot, identity: &ReferenceFile) -> Result<(), MdError> {
+    if build_entry(root, &identity.path)? == *identity {
+        Ok(())
+    } else {
+        Err(MdError::ReferenceChanged {
+            path: identity.path.clone(),
+        })
+    }
 }
 
 fn date(path: &Path, value: Option<i32>, name: &str) -> Result<Date, MdError> {
@@ -166,6 +275,7 @@ impl TradingCalendar {
             }
             Ok(())
         })?;
+        unchanged(root, &identity)?;
         Ok(Self {
             file: identity,
             days,
@@ -315,6 +425,7 @@ impl CorporateActions {
             }
             Ok(())
         })?;
+        unchanged(root, &identity)?;
         Ok(Self {
             file: identity,
             rows,
@@ -399,6 +510,7 @@ impl MarketEvents {
             }
             Ok(())
         })?;
+        unchanged(root, &identity)?;
         Ok(Self {
             file: identity,
             rows,
@@ -452,6 +564,7 @@ fn read_day<T>(
         }
         Ok(())
     })?;
+    unchanged(root, &identity)?;
     Ok((identity, rows))
 }
 

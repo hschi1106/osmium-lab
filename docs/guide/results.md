@@ -160,7 +160,7 @@ date,symbol,kind,shares,opened,proceeds,cost,interest,pnl,approx
 versions       osmium、marketdata schema、decoder、ordering、matching rules、ledger rules
 strategy       名稱與版本
 config_blake3  設定檔的雜湊
-reference      讀取的參考表檔案
+reference      讀取的參考表檔案與它們的雜湊（content_hash、file_sha256）
 days[].files   每個交易日讀取的每個 marketdata 檔案的 identity
 files          每個輸出檔案的列數與 BLAKE3
 summary        交易日數、訊息數、委託數、成交數、期初現金、期末現金、期末權益
@@ -169,7 +169,8 @@ summary        交易日數、訊息數、委託數、成交數、期初現金�
 - 兩個 run 的 `versions`、`strategy`、`config_blake3`、`reference`、`days[].files` 都相同時，
   `files` 裡每個檔案的 `blake3` 也必須相同。不同就是 bug，請回報。
 - 結果不同時，從這幾項找出是什麼變了：設定、策略版本、osmium 的規則版本，還是 marketdata 重新
-  產生過（`git_commit`、`inputs_hash` 不同）。
+  產生過（`days[].files` 的 `git_commit`、`inputs_hash` 不同，或 `reference` 的 `content_hash`
+  不同）。
 - 改了策略的邏輯卻沒有改它的 `version`，兩份結果就無從分辨。
 
 ```sh

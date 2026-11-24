@@ -16,4 +16,4 @@ pub use run::{Plan, RunRequest, plan, run};
 pub use summary::{DaySummary, RunSummary};
 
 /// Changes whenever the files of a run change their names, columns or meaning.
-pub const OUTPUT_VERSION: u32 = 1;
+pub const OUTPUT_VERSION: u32 = 2;

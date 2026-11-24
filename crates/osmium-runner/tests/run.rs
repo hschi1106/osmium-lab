@@ -413,7 +413,8 @@ fn a_run_replays_trades_and_settles() {
         assert!(record.contains(&file.blake3), "{}", file.name);
     }
     assert_eq!(summary.files.len() + 1, FILES.len());
-    assert!(record.contains("\"output_version\": 1"));
+    assert!(record.contains("\"output_version\": 2"));
+    assert!(record.contains("\"content_hash\": \"content-"));
     assert!(record.contains("\"path\": \"books/2026/2026-10-15/TWSE_F6.parquet\""));
     assert!(record.contains("\"path\": \"daily/2026.parquet\""));
 }

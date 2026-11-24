@@ -25,6 +25,7 @@
 | `osmium check` 的 `missing` 列出日期與 feed | 那些日子沒有那個 feed 的資料。縮小日期範圍、拿掉那個 feed，或設 `data.missing_days = "skip"` 跳過 |
 | `marketdata: ... instruments has no shares_per_lot` | 那一天的商品資料沒有這檔商品（2026-10-13 起的權證與 TPEx 可轉換公司債）。設 `data.assume_lot_size = 1000` |
 | `<date>: marketdata daily/... has no row for this day` | 那一天（或 run 第一天的前一個交易日）沒有盤後資料，無法評價。調整日期範圍 |
+| `marketdata ... does not match fm/_build or changed during the read` | marketdata 正在更新那個參考表（每日更新時會發生）。等更新完成後重跑 |
 | `marketdata: ... schema ...`、`... manifest ...` | marketdata 的檔案與 osmium 支援的 schema 版本不符，或檔案與 manifest 不一致。確認 `md_root` 指向 schema 版本 1 的資料（`osmium version`），並回報給 marketdata 的維護者 |
 | `the output directory ... is not empty` | 輸出目錄已有東西。osmium 不覆寫結果；換一個目錄 |
 

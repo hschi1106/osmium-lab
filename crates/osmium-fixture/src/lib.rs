@@ -7,6 +7,7 @@
 pub mod sample;
 
 use std::{
+    cell::RefCell,
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
@@ -19,6 +20,7 @@ use arrow_array::{
 };
 use osmium_types::{Date, Feed, Venue};
 use parquet::{arrow::ArrowWriter, file::metadata::KeyValue, file::properties::WriterProperties};
+use sha2::{Digest, Sha256};
 
 /// The `md.git_commit` of every file written.
 pub const COMMIT: &str = "c0ffee";
@@ -410,6 +412,8 @@ pub struct EventRow {
 #[derive(Debug)]
 pub struct Tree {
     root: PathBuf,
+    /// The `fm/_build` rows: path to rows and SHA-256 of every reference file written.
+    build: RefCell<BTreeMap<String, (i64, String)>>,
 }
 
 impl Drop for Tree {
@@ -434,7 +438,10 @@ impl Tree {
         let root =
             std::env::temp_dir().join(format!("osmium-fixture-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
-        let tree = Self { root };
+        let tree = Self {
+            root,
+            build: RefCell::new(BTreeMap::new()),
+        };
         tree.actions(&[]);
         tree.events(&[]);
         tree
@@ -466,13 +473,54 @@ impl Tree {
         i64::try_from(batch.num_rows()).unwrap()
     }
 
+    /// Writes a reference file and its row of `fm/_build`.
+    fn write_reference(&self, relative: &str, columns: Columns) {
+        let rows = self.write(relative, columns);
+        let sha: String = Sha256::digest(fs::read(self.root.join(relative)).unwrap())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let mut build = self.build.borrow_mut();
+        build.insert(relative.to_owned(), (rows, sha));
+        let text = |values: Vec<String>| -> ArrayRef { Arc::new(StringArray::from(values)) };
+        self.write(
+            "fm/_build.parquet",
+            vec![
+                ("path", text(build.keys().cloned().collect())),
+                (
+                    "rows",
+                    Arc::new(Int64Array::from_iter_values(
+                        build.values().map(|(rows, _)| *rows),
+                    )),
+                ),
+                (
+                    "git_commit",
+                    text(build.values().map(|_| COMMIT.to_owned()).collect()),
+                ),
+                (
+                    "content_hash",
+                    text(
+                        build
+                            .values()
+                            .map(|(_, sha)| format!("content-{sha}"))
+                            .collect(),
+                    ),
+                ),
+                (
+                    "file_sha256",
+                    text(build.values().map(|(_, sha)| sha.clone()).collect()),
+                ),
+            ],
+        );
+    }
+
     /// `ref/calendar`: each day and whether the market is open. Open days settle;
     /// closed days do not.
     pub fn calendar(&self, days: &[(&'static str, bool)]) {
         let open = || -> ArrayRef {
             Arc::new(BooleanArray::from_iter(days.iter().map(|day| Some(day.1))))
         };
-        self.write(
+        self.write_reference(
             "ref/calendar.parquet",
             vec![
                 ("date", dates(days.iter().map(|day| day.0))),
@@ -551,7 +599,7 @@ impl Tree {
             years.entry(year(row.date)).or_default().push(row);
         }
         for (year, rows) in years {
-            self.write(
+            self.write_reference(
                 &format!("daily/{year}.parquet"),
                 vec![
                     ("trade_date", dates(rows.iter().map(|row| row.date))),
@@ -568,7 +616,7 @@ impl Tree {
 
     /// `daily_ext` of one year, which may have no rows.
     pub fn quotas(&self, year: &str, rows: &[QuotaRow]) {
-        self.write(
+        self.write_reference(
             &format!("daily_ext/{year}.parquet"),
             vec![
                 ("trade_date", dates(rows.iter().map(|row| row.date))),
@@ -591,7 +639,7 @@ impl Tree {
 
     /// `corp_actions`.
     pub fn actions(&self, rows: &[ActionRow]) {
-        self.write(
+        self.write_reference(
             "corp_actions.parquet",
             vec![
                 ("symbol", strings(rows.iter().map(|row| row.symbol))),
@@ -631,7 +679,7 @@ impl Tree {
 
     /// `events`.
     pub fn events(&self, rows: &[EventRow]) {
-        self.write(
+        self.write_reference(
             "events.parquet",
             vec![
                 ("symbol", strings(rows.iter().map(|row| row.symbol))),

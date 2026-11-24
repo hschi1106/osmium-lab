@@ -605,7 +605,7 @@ pub fn run(request: RunRequest<'_>) -> Result<RunSummary, RunError> {
     let events = MarketEvents::load(&root, config.start)?;
     let mut reference = Reference::new();
     for file in [calendar.file(), actions.file(), events.file()] {
-        reference.note(file);
+        reference.note(&root, file)?;
     }
     drop(calendar);
 

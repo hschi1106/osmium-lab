@@ -186,8 +186,22 @@ impl Reference {
         }
     }
 
-    pub(crate) fn note(&mut self, file: &ReferenceFile) {
-        self.files.insert(file.path.clone(), file.clone());
+    /// Records a reference file a read used. The first time a run sees a file its bytes
+    /// are checked against `fm/_build`; a later read of the same file must see the same
+    /// identity, so the whole run uses one version of it.
+    pub(crate) fn note(&mut self, root: &MdRoot, file: &ReferenceFile) -> Result<(), RunError> {
+        match self.files.get(&file.path) {
+            Some(seen) if seen == file => Ok(()),
+            Some(_) => Err(MdError::ReferenceChanged {
+                path: file.path.clone(),
+            }
+            .into()),
+            None => {
+                file.verify_bytes(root)?;
+                self.files.insert(file.path.clone(), file.clone());
+                Ok(())
+            }
+        }
     }
 
     pub(crate) fn into_files(self) -> Vec<ReferenceFile> {
@@ -198,7 +212,7 @@ impl Reference {
     /// positions could not be valued.
     pub(crate) fn quotes(&mut self, root: &MdRoot, date: Date) -> Result<DailyQuotes, RunError> {
         let quotes = DailyQuotes::load(root, date)?;
-        self.note(quotes.file());
+        self.note(root, quotes.file())?;
         if quotes.rows().is_empty() {
             return Err(RunError::Unsupported {
                 date,
@@ -221,7 +235,7 @@ impl Reference {
             .map(|quote| (quote.symbol, PreviousDay::of(quote)))
             .collect();
         let quotas = CreditQuotas::load(root, quotes.date())?;
-        self.note(quotas.file());
+        self.note(root, quotas.file())?;
         for quota in quotas.rows() {
             previous.entry(quota.symbol).or_default().set_quota(quota);
         }

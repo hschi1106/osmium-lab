@@ -159,9 +159,19 @@ FeedDay::load(root, &manifest, feed, &instruments, selection, missing_lot_size)
 
 ## 9. 參考表
 
-帳務（[帳務規格](accounting.md)）需要的盤後與公司行動資料。這些表不分日目錄、沒有 manifest 列，
-`ReferenceFile`（路徑、列數、`md.git_commit`）供 run 的輸出記錄。價格與每股金額在來源是 float64，
-讀取時轉成整數，**不是精確往返即 `Inconsistent`**，不會捨入。
+帳務（[帳務規格](accounting.md)）需要的盤後與公司行動資料。這些表不分日目錄、沒有 manifest 列；
+它們的身分是 `fm/_build.parquet` 中 `path` 相同的那一列（`ReferenceFile`：`path`、`rows`、
+`git_commit`、`content_hash`、`file_sha256`），供 run 的輸出記錄。每次讀取：
+
+- 讀取前：`fm/_build` 必須恰好有一列，檔案的列數與檔尾 `md.git_commit` 必須與它相同（否則
+  `Inconsistent`）。
+- 讀取後：再讀一次 `fm/_build`，那一列必須沒有改變（否則 `ReferenceChanged`）。
+- `ReferenceFile::verify_bytes` 計算檔案的 SHA-256 並與 `file_sha256` 比對。marketdata 先換上檔案、
+  整批做完才重寫 `fm/_build`，不相同表示正在重建（`ReferenceChanged`）。runner 在一個 run 第一次
+  讀到某個檔案時做這項比對；同一個 run 之後讀到的同一個檔案必須是相同的身分，所以整個 run 使用
+  同一個版本。
+
+價格與每股金額在來源是 float64，讀取時轉成整數，**不是精確往返即 `Inconsistent`**，不會捨入。
 
 | 讀取 | 檔案 | 內容與規則 |
 | --- | --- | --- |
