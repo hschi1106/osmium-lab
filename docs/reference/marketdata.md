@@ -214,8 +214,10 @@ FeedDay::load(root, &manifest, feed, &instruments, selection, missing_lot_size)
   `00687C`、`008201`（2022-08-10 以前），每張 100 股。
 - `currency` 是實際的計價幣別（`USD`、`CNY` 的商品各有數檔）。
 - 漲跌停價只有 153 列是 null。
-- `daytrade` 取自 FinMind 的當沖清單，與 `F1` 的旗標偶有不同（marketdata 比對 123 天差 25 列，原因
-  未查）。
+- `daytrade` 取自 FinMind 的當沖清單。marketdata 在有 `F1` 的 615 天逐列比對，約 118 萬列中有 122 列
+  與 `F1` 的旗標不同：119 列在 `daytrade_suspended` 期間的開始日或結束日附近，多半是 FinMind 的清單比交易所
+  晚一天（例如開始那天 `F1` 已是 `BUY_FIRST`，清單還是 `BOTH`）；3 列是剛加入當沖名單的第一天。
+  marketdata 判定這是來源的時間差，不修正。
 - `match_interval_s` 都是 null：撮合方式由資料推定（[撮合規格](matching.md) 4.1）。
 - 權證與 TPEx 可轉換公司債沒有列：2026-10-13 起的 `TWSE_F17`、`TPEX_F17` 與 `TPEX_F6` 的可轉換
   公司債沒有 `shares_per_lot`，回放這些商品必須用 `MissingLotSize::Assume`。
