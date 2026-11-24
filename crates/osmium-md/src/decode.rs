@@ -48,12 +48,7 @@ impl CompactSide {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BookKind {
-    Disclosure {
-        has_trade: bool,
-    },
-    /// A fill of a sweep still in progress that the source wrote to `books` with an empty
-    /// book instead of leaving it to `trades` alone; see [`mark_intermediate_fills`].
-    IntermediateTrade,
+    Disclosure { has_trade: bool },
     Indicative,
     Delay(DelayDirection),
 }
@@ -61,10 +56,7 @@ pub(crate) enum BookKind {
 impl BookKind {
     /// Whether a `trades` row shares this row's seq.
     pub(crate) const fn has_trade(self) -> bool {
-        matches!(
-            self,
-            Self::Disclosure { has_trade: true } | Self::IntermediateTrade
-        )
+        matches!(self, Self::Disclosure { has_trade: true })
     }
 }
 
@@ -403,20 +395,15 @@ impl<'a> SideColumns<'a> {
             .filter(|len| usize::from(*len) <= BOOK_DEPTH)
             .ok_or_else(|| format!("level count {levels} is outside 0..=5"))?;
         let market = quantity(optional(self.market, row), "market-order qty")?;
-        // The exchange sends market orders as a first level without a price. marketdata moves
-        // that level to `*_mkt_qty`, except on days converted from a source that records the
-        // missing price as null: there it stays the first level, counted in `n_*`.
-        let market_level = len > 0 && market.is_none() && optional(self.price[0], row).is_none();
-        let skipped = usize::from(market_level);
         let mut side = CompactSide {
-            len: len - u8::from(market_level),
+            len,
             market_qty: market.unwrap_or(0),
             ..CompactSide::EMPTY
         };
-        for source in 0..BOOK_DEPTH {
-            let level_price = optional(self.price[source], row);
-            let level_qty = optional(self.qty[source], row);
-            if source >= usize::from(len) {
+        for level in 0..BOOK_DEPTH {
+            let level_price = optional(self.price[level], row);
+            let level_qty = optional(self.qty[level], row);
+            if level >= usize::from(len) {
                 if level_price.is_some() || level_qty.is_some() {
                     return Err("level beyond the disclosed count".to_owned());
                 }
@@ -424,11 +411,6 @@ impl<'a> SideColumns<'a> {
             }
             let level_qty =
                 quantity(level_qty, "level qty")?.ok_or("disclosed level has a null qty")?;
-            if source < skipped {
-                side.market_qty = level_qty;
-                continue;
-            }
-            let level = source - skipped;
             let value = level_price.ok_or("disclosed level has a null price")?;
             side.price[level] = price(value, "level price")?;
             side.qty[level] = level_qty;
@@ -595,49 +577,17 @@ pub(crate) struct BookChunk {
     pub(crate) runs: Vec<Run>,
     /// The bytes each run has in `bytes`.
     pub(crate) run_bytes: Vec<usize>,
-    /// Every kept row but the last, encoded by [`crate::stream`], run after run. The
-    /// first row of every run is written from [`Frame::START`].
+    /// Every kept row, encoded by [`crate::stream`], run after run. The first row of every
+    /// run is written from [`Frame::START`].
     pub(crate) bytes: Vec<u8>,
     /// The seq of every kept row and whether it has a trade, in file order, as
     /// [`crate::order::pack_seq`] writes them.
     pub(crate) seqs: Vec<u8>,
     /// The kept rows with `has_trade`, in file order.
     pub(crate) joined: Vec<Joined>,
-    /// `exch_ts` and kind of the first kept row.
-    pub(crate) head: Option<(i64, BookKind)>,
-    /// The last kept row. Whether it is an intermediate fill depends on the row after
-    /// it, which is in another chunk.
-    pub(crate) tail: Option<BookRow>,
     pub(crate) edge: Edge,
     /// Why decoding stopped early. The fields above describe the rows before it.
     pub(crate) error: Option<MdError>,
-}
-
-/// Whether `row` is a fill of a sweep still in progress that `books` records with an
-/// empty book, given the row after it: a row of the same symbol when `same_symbol`.
-///
-/// One order that trades at several prices produces one message per price, all with the
-/// same `exch_ts`; only the last discloses the book. marketdata keeps the earlier ones out
-/// of `books`, except on days converted from a source without the exchange's continuation
-/// flag: there each is a `has_trade` row with zero levels on both sides, which is also how
-/// a trade that really empties the book looks.
-///
-/// The symbol's next message tells them apart. A sweep continues with another fill, or with
-/// a delay row when it stops at the price-stabilisation band, at the same `exch_ts`; nothing
-/// can trade against a book that is empty.
-pub(crate) fn is_intermediate_fill(
-    row: &BookRow,
-    same_symbol: bool,
-    next_exch_ts: i64,
-    next_kind: BookKind,
-) -> bool {
-    same_symbol
-        && next_exch_ts == row.exch_ts
-        && (next_kind.has_trade() || matches!(next_kind, BookKind::Delay(_)))
-        && row.kind == (BookKind::Disclosure { has_trade: true })
-        && row.phase == Phase::Continuous
-        && row.bid == CompactSide::EMPTY
-        && row.ask == CompactSide::EMPTY
 }
 
 /// Reads the selected symbols' rows of one row group of a `books` file.
@@ -649,9 +599,6 @@ pub(crate) fn read_book_chunk(
     let mut chunk = BookChunk::default();
     let mut runs = SymbolRuns::new();
     let mut frame = Frame::START;
-    // The row before the current one, waiting for it to tell whether it is intermediate.
-    let mut pending: Option<BookRow> = None;
-    let mut starts_run = true;
     // The seq of the kept row before the current one in its run.
     let mut previous_seq = 0;
     let result = file.read(BOOK_COLUMNS, Some(vec![row_group]), |path, batch| {
@@ -676,23 +623,15 @@ pub(crate) fn read_book_chunk(
                 exch_ts: required(path, optional(columns.exch_ts, row), "exch_ts")?,
                 ..decoded
             };
-            if let Some(mut previous) = pending.take() {
-                if is_intermediate_fill(&previous, new_run.is_none(), decoded.exch_ts, decoded.kind)
-                {
-                    previous.kind = BookKind::IntermediateTrade;
-                }
-                let before = chunk.bytes.len();
-                encode(&mut chunk.bytes, &mut frame, starts_run, &previous);
-                starts_run = false;
-                *chunk.run_bytes.last_mut().expect("the row has a run") +=
-                    chunk.bytes.len() - before;
-            }
+            let starts_run = new_run.is_some();
             if let Some(entry) = new_run {
                 chunk.runs.push(Run { entry, rows: 0 });
                 chunk.run_bytes.push(0);
-                starts_run = true;
                 previous_seq = 0;
             }
+            let before = chunk.bytes.len();
+            encode(&mut chunk.bytes, &mut frame, starts_run, &decoded);
+            *chunk.run_bytes.last_mut().expect("the row has a run") += chunk.bytes.len() - before;
             let has_trade = decoded.kind.has_trade();
             if has_trade {
                 chunk.joined.push(Joined {
@@ -702,17 +641,12 @@ pub(crate) fn read_book_chunk(
                     phase: decoded.phase,
                 });
             }
-            if chunk.head.is_none() {
-                chunk.head = Some((decoded.exch_ts, decoded.kind));
-            }
             pack_seq(&mut chunk.seqs, previous_seq, seq, has_trade);
             previous_seq = seq;
             chunk.runs.last_mut().expect("the row has a run").rows += 1;
-            pending = Some(decoded);
         }
         Ok(())
     });
-    chunk.tail = pending;
     chunk.edge = runs.edge();
     chunk.error = result.err();
     chunk

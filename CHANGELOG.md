@@ -41,6 +41,10 @@
 - 新增 `osmium-examples`：範例策略 `buy_and_hold`、`open_to_close`、`passive_quote`。
 - 新增 `osmium-fixture`（只供測試）：寫出合成的 marketdata 樹。
 - 結果依賴的版本與更新規則見[版本](docs/reference/versions.md)。
+- `DECODER_VERSION` 2：marketdata 在來源端修正了 2022-01-03 → 2024-03-29 `TWSE_F6` 的市價委託與中間
+  成交形狀，`osmium-md` 移除對舊形狀的辨識。揭示五檔內沒有價格的檔位一律是錯誤，中間成交只來自
+  沒有 `books` 列的 `trades` 列；`seq` 缺口旁有 4 列的分類與之前不同
+  （[marketdata 介面](docs/reference/marketdata.md)第 6 節）。
 - 新增使用手冊（`docs/guide/`）：安裝與第一個回測、寫策略、執行、讀結果、疑難排解；以及完整的
   自訂策略範例程式 `crates/osmium-cli/examples/breakout.rs`。
 - 新增 agent skill `osmium-backtest`：使用系統跑回測的流程。

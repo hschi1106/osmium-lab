@@ -1228,44 +1228,16 @@ fn the_messages_do_not_depend_on_how_the_files_are_split_into_row_groups() {
 }
 
 #[test]
-fn a_first_level_without_a_price_is_the_market_order_quantity() {
-    // Days converted from a source that records the exchange's market-order level with a
-    // null price keep it as the first level instead of `*_mkt_qty`.
-    let tree = Fixture::new(
-        vec![
+fn a_disclosed_level_without_a_price_is_rejected() {
+    // Market orders are in `*_mkt_qty`, never a level of their own.
+    for (name, row) in [
+        (
+            "first",
             BookRow {
-                bid: Some(vec![(f64::NAN, 20), (100.0, 7), (99.5, 2)]),
-                ask: Some(vec![]),
+                bid: Some(vec![(f64::NAN, 20), (100.0, 7)]),
                 ..book("A", 1, 10)
             },
-            BookRow {
-                bid: Some(vec![(100.0, 7)]),
-                ask: Some(vec![(f64::NAN, 4)]),
-                ..book("A", 2, 20)
-            },
-        ],
-        vec![],
-    )
-    .write("market-level");
-    let messages = tree.messages();
-    let MessageBody::Disclosure { book: first, .. } = messages[0].body else {
-        panic!("{:?}", messages[0]);
-    };
-    assert_eq!(first.bid().market_qty(), Shares::new(20_000));
-    assert_eq!(
-        first.bid().levels(),
-        [level("100", 7_000), level("99.5", 2_000)]
-    );
-    assert_eq!(first.ask().levels(), []);
-    let MessageBody::Disclosure { book: second, .. } = messages[1].body else {
-        panic!("{:?}", messages[1]);
-    };
-    assert_eq!(second.ask().market_qty(), Shares::new(4_000));
-    assert_eq!(second.ask().levels(), []);
-    assert_eq!(second.bid().levels(), [level("100", 7_000)]);
-
-    // A price may be missing only there.
-    for (name, row) in [
+        ),
         (
             "second",
             BookRow {
@@ -1273,16 +1245,8 @@ fn a_first_level_without_a_price_is_the_market_order_quantity() {
                 ..book("A", 1, 10)
             },
         ),
-        (
-            "both",
-            BookRow {
-                bid: Some(vec![(f64::NAN, 7), (100.0, 2)]),
-                bid_mkt: Some(3),
-                ..book("A", 1, 10)
-            },
-        ),
     ] {
-        let tree = Fixture::new(vec![row], vec![]).write(&format!("market-level-{name}"));
+        let tree = Fixture::new(vec![row], vec![]).write(&format!("null-price-{name}"));
         let reason = invalid_row(tree.load());
         assert!(
             reason.contains("disclosed level has a null price"),
@@ -1291,11 +1255,10 @@ fn a_first_level_without_a_price_is_the_market_order_quantity() {
     }
 }
 
-/// Fills with an empty book, as days converted from a source without the continuation
-/// flag carry them: every fill is in `books`, and the fills before the last of a sweep
-/// have zero levels on both sides.
+/// Sweeps and trades that empty the book. Only the last fill of a sweep is in `books`;
+/// the fills before it are in `trades` alone.
 fn sweeps() -> Fixture {
-    let empty = |symbol, seq, ts| BookRow {
+    let emptied = |symbol, seq, ts| BookRow {
         has_trade: true,
         bid: Some(vec![]),
         ask: Some(vec![]),
@@ -1304,28 +1267,23 @@ fn sweeps() -> Fixture {
     Fixture::new(
         vec![
             // A sweep of three fills; the last discloses the book.
-            empty("A", 1, 10),
-            empty("A", 2, 10),
             BookRow {
                 has_trade: true,
                 ..book("A", 3, 10)
             },
             // A sweep stopped by the price-stabilisation band ends with a delay row.
-            empty("A", 4, 20),
             BookRow {
                 bid: None,
                 ask: None,
                 delay_state: 1,
                 ..book("A", 5, 20)
             },
-            // A trade that really empties the book: the symbol continues later, ...
-            empty("A", 6, 30),
+            // Trades that empty the book, whatever follows them.
+            emptied("A", 6, 30),
             book("A", 7, 31),
-            // ... or with something else than a fill or a delay, ...
-            empty("A", 8, 40),
+            emptied("A", 8, 40),
             book("A", 9, 40),
-            // ... or not at all; another symbol's fill at the same time does not count.
-            empty("A", 10, 50),
+            emptied("A", 10, 50),
             BookRow {
                 has_trade: true,
                 ..book("B", 11, 50)
@@ -1345,7 +1303,7 @@ fn sweeps() -> Fixture {
 }
 
 #[test]
-fn a_fill_with_an_empty_book_is_intermediate_when_the_sweep_continues() {
+fn a_fill_without_a_books_row_is_intermediate_and_an_emptied_book_is_disclosed() {
     let tree = sweeps().write("intermediate");
     let kinds: Vec<&str> = tree
         .messages()
@@ -1382,30 +1340,6 @@ fn a_fill_with_an_empty_book_is_intermediate_when_the_sweep_continues() {
         panic!();
     };
     assert_eq!((first.price, first.qty), (price("100"), Shares::new(1_000)));
-}
-
-#[test]
-fn a_call_auction_fill_with_an_empty_book_is_not_intermediate() {
-    let auction = |seq, ts, has_book: bool| BookRow {
-        phase: "PERIODIC_AUCTION",
-        has_trade: true,
-        bid: Some(if has_book { vec![(100.0, 7)] } else { vec![] }),
-        ask: Some(vec![]),
-        ..book("A", seq, ts)
-    };
-    let fill = |seq, ts| TradeRow {
-        phase: "PERIODIC_AUCTION",
-        ..trade("A", seq, ts, 100.0, 1)
-    };
-    let tree = Fixture::new(
-        vec![auction(1, 10, false), auction(2, 10, true)],
-        vec![fill(1, 10), fill(2, 10)],
-    )
-    .write("auction-empty");
-    assert!(matches!(
-        tree.messages()[0].body,
-        MessageBody::Disclosure { trade: Some(_), .. }
-    ));
 }
 
 #[test]

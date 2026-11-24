@@ -144,5 +144,5 @@ cmp rust.tsv python.tsv
 ```
 
 修改解碼、加入快取或平行處理之後都要重跑。日期至少涵蓋：每一個 feed、2024-04-01 以前的
-`TWSE_F6`（[marketdata 介面](../reference/marketdata.md)第 6 節的形狀）、`instruments` 是推導資料
+`TWSE_F6`（[marketdata 介面](../reference/marketdata.md)第 6 節的舊來源）、`instruments` 是推導資料
 的日子，以及指定商品的讀取。輸出檔放在 repository 之外。

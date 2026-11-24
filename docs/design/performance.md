@@ -43,9 +43,6 @@ marketdata 的 `books`／`trades` 依 `(symbol, seq)` 排序，回放要的是�
 - **`observed_time`。** 整個 feed 的 observed time 是訊息 `exch_ts` 的累計最大值，回放時順便算出，
   不儲存。只讀部分商品時它取決於沒有讀進來的商品，所以另外平行掃一次整個 feed 的 `seq` 與
   `exch_ts`。
-- **中間成交的判斷跨 row group。** 一列是不是掃單的中間成交，要看同商品的下一列
-  （[marketdata 介面](../reference/marketdata.md)第 6 節）。每個 row group 的最後一列留到合併時、
-  看到下一個 row group 的第一列才決定。
 
 一個 feed 一天留在記憶體的量：每個 `books` 列約 8 bytes、每個 `trades` 列 48 bytes、每個 `seq`
 4 bytes。2026-09-01 的 `TWSE_F6`（1,711 萬則訊息）合計約 263 MB。

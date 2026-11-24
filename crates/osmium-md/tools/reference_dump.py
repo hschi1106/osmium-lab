@@ -21,19 +21,9 @@ year = date[:4]
 books = pl.scan_parquet(f"{root}/books/{year}/{date}/{feed}.parquet")
 trades = pl.scan_parquet(f"{root}/trades/{year}/{date}/{feed}.parquet")
 
-# A fill with an empty book is intermediate when the symbol's next message has the same
-# exch_ts and is another fill or a delay row (marketdata.md section 6).
-next_in_symbol = lambda column: pl.col(column).shift(-1).over("symbol")  # noqa: E731
-books = books.sort("symbol", "seq").with_columns(
-    _intermediate=(
-        pl.col("has_trade") & (pl.col("n_bid") == 0) & (pl.col("n_ask") == 0)
-        & (pl.col("phase") == "CONTINUOUS")
-        & (next_in_symbol("exch_ts") == pl.col("exch_ts"))
-        & (next_in_symbol("has_trade") | (next_in_symbol("delay_state") != 0))
-    ).fill_null(False))
-
 messages = pl.concat([
-    books.join(trades.select("seq", "price", "qty", "cum_qty"), on="seq", how="left"),
+    books.join(trades.select("seq", "price", "qty", "cum_qty"), on="seq", how="left")
+    .with_columns(_intermediate=pl.lit(False)),
     trades.join(books.select("seq"), on="seq", how="anti").with_columns(_intermediate=pl.lit(True)),
 ], how="diagonal_relaxed").sort("seq")
 # Observed time spans the whole feed, so it is computed before any symbol is dropped.
@@ -62,10 +52,7 @@ def when(condition: pl.Expr, text: pl.Expr) -> pl.Expr:
 
 
 def side(name: str) -> pl.Expr:
-    # A first level without a price is the market-order quantity (marketdata.md section 6);
-    # having no price, it is not among the levels below.
-    market_level = (pl.col(f"n_{name}") > 0) & pl.col(f"{name}_mkt_qty").is_null() & pl.col(f"{name}_px_1").is_null()
-    market = pl.when(market_level).then(pl.col(f"{name}_qty_1")).otherwise(pl.col(f"{name}_mkt_qty").fill_null(0))
+    market = pl.col(f"{name}_mkt_qty").fill_null(0)
     levels = pl.concat_str([
         pl.when(pl.col(f"{name}_px_{i}").is_not_null())
         .then(pl.format("{}*{}", units(f"{name}_px_{i}"), shares(f"{name}_qty_{i}")))

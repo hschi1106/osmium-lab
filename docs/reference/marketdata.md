@@ -81,7 +81,7 @@ FeedDay::load(root, &manifest, feed, &instruments, selection, missing_lot_size)
 | --- | --- | --- |
 | `Disclosure { book, trade: None }` | `books` 一列，`has_trade = false` | 五檔變動後的五檔 |
 | `Disclosure { book, trade: Some }` | `books` 一列（`has_trade`）與同 `seq` 的 `trades` 一列 | 一筆成交與成交後的五檔 |
-| `IntermediateTrade(trade)` | 只在 `trades` 的一列，或第 6 節的形狀 | 同一筆委託連續成交多個價位時，最後一筆以前的成交；不揭示五檔 |
+| `IntermediateTrade(trade)` | 只在 `trades` 的一列 | 同一筆委託連續成交多個價位時，最後一筆以前的成交；不揭示五檔 |
 | `Indicative { book, matched, delay_open, delay_close }` | `books` 一列，`is_indicative` | 試撮：五檔、試算成交價量（沒有時為 `None`）、延後開盤／收盤的預告（來源沒有時為 `None`） |
 | `Delay(direction)` | `books` 一列，`delay_state` 為 1（`Up`，趨漲）或 -1（`Down`，趨跌） | 暫緩撮合；不揭示五檔 |
 
@@ -102,7 +102,7 @@ FeedDay::load(root, &manifest, feed, &instruments, selection, missing_lot_size)
 - 暫緩撮合列（`delay_state ≠ 0`）：`delay_state` 是 ±1，沒有五檔（`n_bid`／`n_ask` 為 null），不是
   成交也不是試撮，沒有試算價量。
 - 其他列一定揭示五檔（`n_bid`／`n_ask` 不是 null）。
-- 五檔：檔數 0–5；檔數內的價量都存在（第 6 節的例外除外），檔數外都是 null；各檔價格由最佳
+- 五檔：檔數 0–5；檔數內的價量都存在，檔數外都是 null；各檔價格由最佳
   往外嚴格單調；最佳買價低於最佳賣價。
 - 試撮列不是成交；`indicative_px`／`indicative_qty` 同時存在或同時為 null。非試撮列沒有試算
   價量，`delay_open`／`delay_close` 不為 true。
@@ -110,33 +110,20 @@ FeedDay::load(root, &manifest, feed, &instruments, selection, missing_lot_size)
 
 `seq` 的缺口（封包遺失）不是錯誤；manifest 的 `seq_gaps` 記錄缺口數，由回放寫進輸出。
 
-## 6. 舊來源的兩種形狀
+## 6. 舊來源
 
-`TWSE_F6` 在 2022-01-03 → 2024-03-29 由較舊的來源轉換（manifest `partial = true`），有兩處與之後
-的日子不同。`osmium-md` 依結構辨識，所以輸出的訊息與其他日子同一個模型。
+`TWSE_F6` 在 2022-01-03 → 2024-03-29 由較舊的來源轉換（manifest `partial = true`）。marketdata 在
+來源端修正了這段期間的兩處形狀（tick manifest 的 `code_hash` `a5fb45c78b36a1f393a3762722ccd885fa2ae9cc`
+起）：市價委託在 `*_mkt_qty`，中間成交只在 `trades`。`osmium-md` 不再辨識舊的形狀；在較早轉換的
+資料上，揭示五檔內沒有價格的檔位是 `InvalidRow`。
 
-**市價委託在第 1 檔。** 交易所把市價委託送成「第 1 檔、沒有價格」。marketdata 的規則是把它移到
-`*_mkt_qty`，但這段期間來源以 null 記錄這個價格，轉換沒有移動它，於是它留在第 1 檔並計入
-`n_*`。規則：`n_* > 0`、`*_mkt_qty` 為 null、第 1 檔價格為 null 時，第 1 檔的數量是市價委託數量，
-第 2 檔以後依序前移。其他位置的 null 價格仍是錯誤。
+這段期間仍然與之後不同的地方：
 
-**中間成交也在 `books`。** 這段期間來源沒有「中間成交」的旗標，所以每筆成交都同時寫進 `trades`
-與 `books`；中間成交的 `books` 列是 `has_trade` 且買賣檔數都是 0，與「成交後委託簿真的空了」的
-形狀相同。規則：`CONTINUOUS` 中 `has_trade`、兩邊 0 檔、沒有市價委託的列，如果同一個商品的
-下一則訊息有相同的 `exch_ts`，且是成交或暫緩撮合，它就是 `IntermediateTrade`；否則是空的
-`Disclosure`。
-
-依據：同一筆委託的連續成交有相同的 `exch_ts`，最後一筆才揭示五檔；連續成交在瞬間價格穩定措施
-的界線停下時，以暫緩撮合列結束。委託簿空了之後，下一則訊息不可能是成交。實測（2022-01-03、
-2022-06-15、2023-03-15、2024-03-29 的 `TWSE_F6`，2025-04-07、2026-10-08 的 `TWSE_F6`、`TPEX_F6`、
-`TPEX_F17`）：
-
-- 有旗標的日子，每一筆只在 `trades` 的中間成交，同商品的下一則訊息都是同 `exch_ts` 的成交或
-  暫緩撮合；帶五檔的成交後面從來不是同 `exch_ts` 的成交。
-- 沒有旗標的日子，每天約 10,000–15,000 列符合規則；不符合的（2022-06-15 有 1 列）下一則訊息
-  時間較晚，是真的空了。
-
-`seq` 有缺口時，缺口旁的這類列可能被歸錯類。
+- 沒有 `delay_open`／`delay_close`（null）。
+- 來源沒有中間成交的旗標，marketdata 依同一筆委託的連續成交有相同的 `exch_ts` 推定。`seq` 有
+  缺口時，缺口旁的成交可能被歸錯類（2022-01-03 → 2024-03-29 的 41 個有缺口的日子，與 osmium
+  先前的規則不同的有 31 列）。
+- 每一天都是 `partial`，回放在輸出記錄 `data_quality`（[輸出規格](artifacts.md)）。
 
 ## 7. 數值
 
@@ -214,14 +201,15 @@ FeedDay::load(root, &manifest, feed, &instruments, selection, missing_lot_size)
 `instruments` 只有 2024-04-01 → 2026-10-12 是交易所播送的資料。其他日子（2022-01-03 →
 2024-03-29、2026-10-13 起）的列是推導的（`derived = true`）：
 
-- `shares_per_lot`、`match_interval_s` 都是 null：一般 board 必須用 `MissingLotSize::Assume`。
-  每張不是 1,000 股的商品（實測只有以外幣計價的 ETF `00636K`、`00657K`、`00668K`、`00687C`，
-  每張 100 股）會被換算錯。
-- 權證與 TPEx 可轉換公司債沒有列。
-- `currency` 一律是 `TWD`，包含外幣計價的商品。
-- 漲跌停價有許多是 null。
+- `shares_per_lot` 每一列都有。每張不是 1,000 股的商品只有 `00636K`、`00657K`、`00668K`、
+  `00687C`、`008201`（2022-08-10 以前），每張 100 股。
+- `currency` 是實際的計價幣別（`USD`、`CNY` 的商品各有數檔）。
+- 漲跌停價只有 153 列是 null。
+- `match_interval_s` 都是 null：撮合方式由資料推定（[撮合規格](matching.md) 4.1）。
+- 權證與 TPEx 可轉換公司債沒有列：2026-10-13 起的 `TWSE_F17`、`TPEX_F17` 與 `TPEX_F6` 的可轉換
+  公司債沒有 `shares_per_lot`，回放這些商品必須用 `MissingLotSize::Assume`。
 
-`TWSE_F6` 在 2022-01-03 → 2024-03-29：`delay_open`／`delay_close` 是 null，另有第 6 節的兩種形狀。
+`TWSE_F6` 在 2022-01-03 → 2024-03-29 的差異見第 6 節。
 
 ## 11. 目前的限制
 

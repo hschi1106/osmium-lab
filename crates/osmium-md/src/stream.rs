@@ -58,10 +58,9 @@ const fn kind_code(kind: BookKind) -> u8 {
     match kind {
         BookKind::Disclosure { has_trade: false } => 0,
         BookKind::Disclosure { has_trade: true } => 1,
-        BookKind::IntermediateTrade => 2,
-        BookKind::Indicative => 3,
-        BookKind::Delay(DelayDirection::Up) => 4,
-        BookKind::Delay(DelayDirection::Down) => 5,
+        BookKind::Indicative => 2,
+        BookKind::Delay(DelayDirection::Up) => 3,
+        BookKind::Delay(DelayDirection::Down) => 4,
     }
 }
 
@@ -69,10 +68,9 @@ fn kind_of(code: u8) -> BookKind {
     match code {
         0 => BookKind::Disclosure { has_trade: false },
         1 => BookKind::Disclosure { has_trade: true },
-        2 => BookKind::IntermediateTrade,
-        3 => BookKind::Indicative,
-        4 => BookKind::Delay(DelayDirection::Up),
-        5 => BookKind::Delay(DelayDirection::Down),
+        2 => BookKind::Indicative,
+        3 => BookKind::Delay(DelayDirection::Up),
+        4 => BookKind::Delay(DelayDirection::Down),
         _ => unreachable!("the stream was written by `encode`"),
     }
 }
@@ -398,8 +396,9 @@ mod tests {
                 side(&[(1_000_000, 6)], 9),
                 ask,
             ),
+            // A trade that empties the book.
             row(
-                BookKind::IntermediateTrade,
+                traded,
                 1_760_000_000_000_200,
                 CompactSide::EMPTY,
                 CompactSide::EMPTY,

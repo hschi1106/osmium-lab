@@ -8,14 +8,13 @@ use osmium_types::{
 use crate::{
     DayInstruments, DayManifest, ManifestEntry, MdError, MdRoot, Table,
     decode::{
-        BookChunk, BookKind, BookRow, CompactSide, DecodeContext, Edge, Joined, SymbolEntry,
-        TradeChunk, TradeRow, book_columns, is_intermediate_fill, observed_times, read_book_chunk,
-        read_trade_chunk, trade_columns,
+        BookChunk, BookKind, CompactSide, DecodeContext, Edge, Joined, SymbolEntry, TradeChunk,
+        TradeRow, book_columns, observed_times, read_book_chunk, read_trade_chunk, trade_columns,
     },
     order::{BOOK, BookSeqs, MAX_SYMBOLS, Order, Rows, TRADE, symbol_of},
     parallel,
     parquet_io::ParquetFile,
-    stream::{Decoded, Frame, decode, encode},
+    stream::{Frame, decode},
 };
 
 /// What to do when a regular-board symbol has no `shares_per_lot` in `instruments`
@@ -114,9 +113,6 @@ struct Join<'a> {
     books: Vec<u8>,
     seqs: Vec<BookSeqs>,
     joined: Vec<Joined>,
-    /// The last kept `books` row so far and its symbol: the first row of the next chunk
-    /// tells whether it is an intermediate fill.
-    tail: Option<(BookRow, u32)>,
     /// Whether `books` has ended.
     in_trades: bool,
     trades: Vec<TradeRow>,
@@ -132,7 +128,6 @@ impl<'a> Join<'a> {
             books: Vec::new(),
             seqs: Vec::new(),
             joined: Vec::new(),
-            tail: None,
             in_trades: false,
             trades: Vec::new(),
         }
@@ -156,13 +151,6 @@ impl<'a> Join<'a> {
         Ok(())
     }
 
-    /// Writes the last row of a chunk, now that the row after it is known. Like the
-    /// first row of a chunk it does not depend on the rows before it.
-    fn write_tail(&mut self, row: &BookRow) {
-        let mut frame = Frame::START;
-        encode(&mut self.books, &mut frame, true, row);
-    }
-
     fn push(&mut self, chunk: Chunk) -> Result<(), MdError> {
         match chunk {
             Chunk::Books(chunk) => self.push_books(*chunk),
@@ -173,17 +161,6 @@ impl<'a> Join<'a> {
     fn push_books(&mut self, chunk: BookChunk) -> Result<(), MdError> {
         self.enter(self.books_file, &chunk.edge, chunk.error)?;
         let mut runs = Vec::with_capacity(chunk.runs.len());
-        // A chunk that keeps no row leaves the tail waiting for the next one.
-        if let Some((exch_ts, kind)) = chunk.head
-            && let Some((mut row, symbol)) = self.tail.take()
-        {
-            let first = chunk.runs.first().map(|run| run.entry.symbol);
-            let same_symbol = first == Some(self.table.rows[symbol as usize].entry.symbol);
-            if is_intermediate_fill(&row, same_symbol, exch_ts, kind) {
-                row.kind = BookKind::IntermediateTrade;
-            }
-            self.write_tail(&row);
-        }
         let mut start = self.books.len();
         for (run, bytes) in chunk.runs.iter().zip(&chunk.run_bytes) {
             let (symbol, new) = self.table.intern(run.entry);
@@ -198,10 +175,6 @@ impl<'a> Join<'a> {
             symbol: runs[joined.symbol as usize].0,
             ..*joined
         }));
-        if let Some(row) = chunk.tail {
-            let symbol = runs.last().expect("the tail has a run").0;
-            self.tail = Some((row, symbol));
-        }
         self.seqs.push(BookSeqs {
             runs,
             packed: chunk.seqs,
@@ -209,11 +182,8 @@ impl<'a> Join<'a> {
         Ok(())
     }
 
-    /// Ends `books`, whose last row has no row after it, and starts `trades`.
+    /// Ends `books` and starts `trades`.
     fn end_books(&mut self) -> Result<(), MdError> {
-        if let Some((row, _)) = self.tail.take() {
-            self.write_tail(&row);
-        }
         self.books.shrink_to_fit();
         self.trades_file.check(trade_columns())?;
         self.previous = None;
@@ -550,13 +520,6 @@ impl Iterator for Messages<'_> {
         };
         let body = match (book, trade) {
             (None, Some(trade)) => MessageBody::IntermediateTrade(trade),
-            (
-                Some(Decoded {
-                    kind: BookKind::IntermediateTrade,
-                    ..
-                }),
-                trade,
-            ) => MessageBody::IntermediateTrade(trade.expect("rows were validated while loading")),
             (Some(row), trade) => match row.kind {
                 BookKind::Disclosure { .. } => MessageBody::Disclosure {
                     book: full_book(&cursor.frame),
@@ -572,7 +535,6 @@ impl Iterator for Messages<'_> {
                     delay_close: row.delay_close,
                 },
                 BookKind::Delay(direction) => MessageBody::Delay(direction),
-                BookKind::IntermediateTrade => unreachable!("matched above"),
             },
             (None, None) => unreachable!("an entry has a book row or a trade row"),
         };

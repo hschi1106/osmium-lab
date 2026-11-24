@@ -9,7 +9,7 @@ use std::time::Instant;
 use osmium_md::{
     DEFAULT_MD_ROOT, DayInstruments, DayManifest, FeedDay, MdError, MdRoot, MissingLotSize,
 };
-use osmium_types::{Date, Feed, Message, MessageBody, Symbol};
+use osmium_types::{Date, Feed, Message, MessageBody, Symbol, Venue};
 
 fn root() -> MdRoot {
     MdRoot::new(std::env::var("OSMIUM_MD_ROOT").unwrap_or_else(|_| DEFAULT_MD_ROOT.to_owned()))
@@ -87,15 +87,15 @@ fn check(day: &FeedDay) -> Composition {
     let identity = day.identity();
     let rows = |rows: i64| usize::try_from(rows).unwrap();
     // Every trades row is one fill. Every message has a books row, except an intermediate
-    // fill on days whose source marks them, which is in trades alone.
+    // fill, which is in trades alone.
     assert_eq!(
         composition.fill + composition.intermediate,
         rows(identity.trades.rows)
     );
     let in_books = composition.book + composition.fill + composition.indicative + composition.delay;
-    assert!(
-        rows(identity.books.rows) == in_books
-            || rows(identity.books.rows) == in_books + composition.intermediate,
+    assert_eq!(
+        rows(identity.books.rows),
+        in_books,
         "{composition:?} against {} books rows",
         identity.books.rows
     );
@@ -106,7 +106,7 @@ fn check(day: &FeedDay) -> Composition {
 #[ignore = "needs a marketdata tree"]
 fn feed_days_decode_into_the_documented_message_kinds() {
     // An exchange-instruments day for every stock feed but the largest, and a day converted
-    // from the source that marks neither intermediate fills nor market-order levels.
+    // from the older source, whose instruments marketdata derives.
     for (date, feed) in [
         ("2026-10-08", Feed::TwseF6),
         ("2026-10-08", Feed::TpexF6),
@@ -116,7 +116,7 @@ fn feed_days_decode_into_the_documented_message_kinds() {
         ("2022-06-15", Feed::TwseF6),
     ] {
         let started = Instant::now();
-        let day = load(date, feed, None, MissingLotSize::Assume(1_000)).unwrap();
+        let day = load(date, feed, None, MissingLotSize::Reject).unwrap();
         let loaded = started.elapsed();
         let composition = check(&day);
         println!(
@@ -143,14 +143,8 @@ fn the_composition_of_a_known_day_is_stable() {
     assert_eq!(composition.intermediate, 16_943);
     assert_eq!(composition.fill, 1_225_819);
 
-    // Before 2024-04 the source writes intermediate fills to `books`.
-    let older = load(
-        "2022-06-15",
-        Feed::TwseF6,
-        None,
-        MissingLotSize::Assume(1_000),
-    )
-    .unwrap();
+    // A day converted from the older source.
+    let older = load("2022-06-15", Feed::TwseF6, None, MissingLotSize::Reject).unwrap();
     assert_eq!(older.len(), 6_948_054);
     let composition = check(&older);
     assert_eq!(composition.intermediate, 10_510);
@@ -184,30 +178,17 @@ fn a_selection_reads_the_same_messages_as_the_whole_feed() {
 
 #[test]
 #[ignore = "needs a marketdata tree"]
-fn a_day_without_exchange_instruments_needs_a_lot_size_assumption() {
-    let symbol = Symbol::new("2330").unwrap();
-    match load(
-        "2022-06-15",
-        Feed::TwseF6,
-        Some(&["2330"]),
-        MissingLotSize::Reject,
-    ) {
-        Err(MdError::MissingLotSize {
-            feed,
-            symbol: missing,
-            ..
-        }) => {
-            assert_eq!((feed, missing), (Feed::TwseF6, symbol));
-        }
-        other => panic!("{other:?}"),
-    }
-    let assumed = load(
-        "2022-06-15",
-        Feed::TwseF6,
-        Some(&["2330"]),
-        MissingLotSize::Assume(1_000),
-    )
-    .unwrap();
-    assert_eq!(assumed.assumed_lot_sizes().collect::<Vec<_>>(), [symbol]);
-    assert!(check_messages(&assumed).fill > 0);
+fn derived_instruments_have_lot_sizes() {
+    // marketdata derives instruments where the exchange's are missing, lot sizes included:
+    // a few foreign-currency ETFs trade in lots of 100 shares.
+    let day = load("2022-06-15", Feed::TwseF6, None, MissingLotSize::Reject).unwrap();
+    assert_eq!(day.assumed_lot_sizes().count(), 0);
+    let manifest = DayManifest::load(&root(), "2022-06-15".parse().unwrap()).unwrap();
+    let instruments = DayInstruments::load(&root(), &manifest, Venue::Twse).unwrap();
+    let lot = |code: &str| {
+        let instrument = instruments.get(Symbol::new(code).unwrap()).unwrap();
+        assert!(instrument.derived, "{code}");
+        instrument.shares_per_lot
+    };
+    assert_eq!((lot("2330"), lot("00636K")), (Some(1_000), Some(100)));
 }
