@@ -123,7 +123,7 @@ Key、預設值與意義見[帳務規格](accounting.md)第 15 節的表；這�
 | `symbol`、`ex_date`、`action` | 是 | 指定 `corp_actions` 的一列；`action` 是 marketdata 的值（`"dividend"`、`"rights"`、`"split"`、`"reverse_split"`、`"par_change"`、`"reduction_cash"`、`"reduction_loss"` 等）|
 | `cash_date`、`stock_date` | 否 | 現金發放日、股票配發日；不得早於 `ex_date` |
 | `share_ratio` | 否 | `[新股數, 舊股數]`，兩個正整數 |
-| `refund_per_share`、`cash_dividend`、`stock_dividend`、`par_value` | 否 | 每股金額（元），小數最多 10 位；`par_value` 必須為正 |
+| `refund_per_share`、`cash_dividend`、`stock_dividend`、`par_value` | 否 | 每股金額（元），小數最多 10 位；`par_value` 必須為正。`stock_dividend` 以面額計（[帳務規格](accounting.md) 13.1） |
 | `fraction_price` | 否 | 畸零股折算現金的價格 |
 
 同一個 `(symbol, ex_date, action)` 只能出現一次。各欄位何時需要見帳務規格第 13.1 節。

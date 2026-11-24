@@ -24,7 +24,7 @@ osmium 依賴 marketdata schema 版本 `1`（`osmium_md::SCHEMA_VERSION`）：
 | `trades` | `symbol` string、`exch_ts` timestamp[µs, UTC]、`seq` int64、`sub_seq` int16、`price` float64、`qty` int64、`cum_qty` int64、`phase` string |
 | `instruments` | `symbol` string、`instrument_type` string、`shares_per_lot` int32、`ref_price`／`limit_up`／`limit_down` float64、`match_interval_s` int32、`currency` string、`derived` bool、`daytrade` string、`f1_non10_par` bool |
 | `qc/calendar` | `trade_date` date32、`twse_open`／`tpex_open` bool |
-| `corp_actions` | `symbol` string、`ex_date` date32、`action` string、`before_price`／`ref_price`／`cash_dividend`／`stock_dividend`／`value` float64 |
+| `corp_actions` | `symbol` string、`ex_date` date32、`action` string、`before_price`／`ref_price`／`after_price`／`cash_dividend`／`value` float64、`pay_date` date32、`stock_per_1000`／`shares_old`／`shares_new`／`refund_per_share` decimal(18,8) |
 | `events` | `symbol` string、`event` string、`start_date`／`end_date` date32 |
 | `daily` | `trade_date` date32、`symbol` string、`ref_price`／`limit_down`／`close`／`close_bid_px`／`close_ask_px` float64 |
 | `daily_ext` | `trade_date` date32、`symbol` string、`margin_limit`／`short_limit` int64 |
@@ -166,7 +166,7 @@ FeedDay::load(root, &manifest, feed, &instruments, selection, missing_lot_size)
 | 讀取 | 檔案 | 內容與規則 |
 | --- | --- | --- |
 | `TradingCalendar::load(root)` | `qc/calendar.parquet` | 每個日曆日一列，依日期遞增（否則錯誤）。`trading_days(venue)` 是該市場開市的日子 |
-| `CorporateActions::load(root, from)` | `corp_actions.parquet` | `ex_date ≥ from` 的列；更早的列不轉換，所以舊資料無法表示時不影響 run。`action` 必須是 `dividend`、`rights`、`split`、`par_change`、`reverse_split`、`reduction_loss`、`reduction_cash`。`before_price`、`ref_price` 必填（1e-4 元）；`cash_dividend`、`stock_dividend`、`value` 是 1e-10 元（`PerShare`），範圍 0 至 100,000；`value` 不是正數時讀成 `None`（認購權的理論價值可以是負的） |
+| `CorporateActions::load(root, from)` | `corp_actions.parquet` | `ex_date ≥ from` 的列；更早的列不轉換，所以舊資料無法表示時不影響 run。`action` 必須是 `dividend`、`rights`、`split`、`par_change`、`reverse_split`、`reduction_loss`、`reduction_cash`。`before_price`、`ref_price` 必填，`after_price` 可為 null（1e-4 元）；`cash_dividend`、`value` 是 1e-10 元（`PerShare`），範圍 0 至 100,000；`value` 不是正數時讀成 `None`（認購權的理論價值可以是負的）。decimal 欄位以 1e-8 為單位讀成整數（`Decimal8`）：`stock_per_1000`、`shares_old`、`shares_new` 必須是正數，`refund_per_share` 不得為負（轉成 `PerShare`），都不得超過 100,000；`shares_old`、`shares_new` 必須同時有或同時沒有 |
 | `MarketEvents::load(root, from)` | `events.parquet` | `event` 必須是 `disposition`、`halt`、`short_suspended`、`daytrade_suspended`。保留 `end_date ≥ from` 的列，以及 `end_date` 為 null、`start_date` 在 `from` 之前 366 天以內的列。`end_date < start_date` 是錯誤 |
 | `DailyQuotes::load(root, date)` | `daily/{YYYY}.parquet` | 一個交易日的官方盤後價格。以 `trade_date` 的 row-group statistics 剪枝（一個交易日一個 row group）。價格 null 或 0 → `None`。同一天的 `symbol` 必須嚴格遞增 |
 | `CreditQuotas::load(root, date)` | `daily_ext/{YYYY}.parquet` | 一個交易日的融資、融券限額（股）；負數是錯誤 |
@@ -176,14 +176,12 @@ FeedDay::load(root, &manifest, feed, &instruments, selection, missing_lot_size)
 - `qc/calendar`：1,250 列，2022-01-03 → 2026-10-16，1,160 個交易日；每一列 `twse_open` 都等於
   `tpex_open`。日曆沒有未來的日子，最後幾個交易日的交割日必須由使用者補上
   （[帳務規格](accounting.md) 7.1）。
-- `corp_actions`（2022-01-03 起 11,900 列）全部可以精確轉換。`dividend` 11,247 列、`rights` 437、
-  `reduction_loss` 107、`reduction_cash` 77、`par_change` 21、`reverse_split` 6、`split` 5。
-- `dividend` 有 324 列沒有 `cash_dividend` 也沒有 `stock_dividend`，只有 `value`：來源
-  `TaiwanStockDividend` 沒有對應的公告（ETF、REIT、特別股、TDR 為主）。其中 16 列的
-  `ref_price` 等於 `before_price`（同一天普通股現金增資、特別股本身沒有除權息）。
-- 只有現金股利的列，`value` 與 `cash_dividend` 相差超過 1e-6 的有 23 列：21 列是 1e-6 的捨入差，
-  2 列是 `00774C`（2022-04-22、2022-10-21），股利金額與價格不是同一種幣別。
-- 減資的列沒有減資比例與退還金額；`par_change` 有 1 列不是整數倍（6548，2.5 倍）。
+- `corp_actions`（2022-01-03 起 11,927 列）全部可以精確轉換。`dividend` 11,254 列、`rights` 455、
+  `reduction_loss` 107、`reduction_cash` 78、`par_change` 21、`reverse_split` 6、`split` 6。
+- 每一列 `dividend` 都有現金股利或 `stock_per_1000`（802 列）；10,906 列有 `pay_date`。
+- `after_price` 與 `ref_price` 不同的只有同一天有現金增資的 55 列 `dividend` 與 454 列 `rights`。
+- 每一列減資、分割、反分割、面額變更都有 `shares_old`／`shares_new`，減資都有 `refund_per_share`。
+  `par_change` 有 1 列不是整數倍（6548，1 股換 2.5 股）。
 - `events`：自 2022-01-03 起生效的列 45,290；`short_suspended` 有 1,211 列 `end_date` 為 null。
 - `daily`、`daily_ext` 全部可以精確轉換。
 

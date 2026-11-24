@@ -1,6 +1,6 @@
 //! Corporate actions (`docs/reference/accounting.md` section 13).
 
-use osmium_types::{CorporateAction, CorporateActionKind, Date, Money, PerShare, Price};
+use osmium_types::{CorporateAction, CorporateActionKind, Date, Decimal8, Money, PerShare, Price};
 
 use crate::{
     ActionOverride, Entry, Item, LedgerError, MissingTerms, Realized, RealizedKind, SecurityFacts,
@@ -23,6 +23,21 @@ const NHI_RATE: Rate = Rate::new(211, 10_000);
 struct Ratio {
     new: i64,
     old: i64,
+}
+
+impl Ratio {
+    /// The ratio of one corporate action: the override's, else marketdata's.
+    fn stated(terms: Option<&ActionOverride>, action: &CorporateAction) -> Option<Self> {
+        terms
+            .and_then(|terms| terms.share_ratio)
+            .map(|(new, old)| Self { new, old })
+            .or_else(|| {
+                action.share_ratio.map(|(new, old)| Self {
+                    new: new.units(),
+                    old: old.units(),
+                })
+            })
+    }
 }
 
 /// The whole-number ratio a split or a reverse split shows in its prices, or `None`
@@ -98,7 +113,7 @@ impl Context<'_> {
 
     /// Whether the day cash is paid is an approximation.
     fn cash_date_approx(&self) -> bool {
-        self.terms.is_none_or(|terms| terms.cash_date.is_none())
+        self.terms.is_none_or(|terms| terms.cash_date.is_none()) && self.action.pay_date.is_none()
     }
 }
 
@@ -120,7 +135,7 @@ impl Ledger {
             .holdings
             .get(&symbol)
             .is_some_and(|holding| !holding.is_empty());
-        if action.kind == CorporateActionKind::Rights || !(held || awaited) {
+        if !(held || awaited) {
             return Ok(());
         }
         let config = self.config.corporate_actions.clone();
@@ -132,14 +147,13 @@ impl Ledger {
             terms,
             cash_date: terms
                 .and_then(|terms| terms.cash_date)
+                .or(action.pay_date)
                 .unwrap_or_else(|| add_days(action.ex_date, config.cash_pay_lag_days)),
             stock_date: terms
                 .and_then(|terms| terms.stock_date)
                 .unwrap_or_else(|| add_days(action.ex_date, config.stock_credit_lag_days)),
         };
-        let given = terms
-            .and_then(|terms| terms.share_ratio)
-            .map(|(new, old)| Ratio { new, old });
+        let given = Ratio::stated(terms, action);
         let approximate = config.missing_terms == MissingTerms::Approximate;
         let (before, reference) = (action.before_price.units(), action.ref_price.units());
         match action.kind {
@@ -169,7 +183,9 @@ impl Ledger {
                 self.rescale(&context, ratio, given.is_none(), open)?;
             }
             CorporateActionKind::ReductionCash => {
-                let refund = terms.and_then(|terms| terms.refund_per_share);
+                let refund = terms
+                    .and_then(|terms| terms.refund_per_share)
+                    .or(action.refund_per_share);
                 let inferable = approximate && TEN_YUAN <= before && before < reference;
                 let (ratio, refund, approx) = match (given, refund) {
                     (Some(ratio), Some(refund)) => (ratio, Refund::PerShare(refund), false),
@@ -194,7 +210,8 @@ impl Ledger {
             }
         }
         if held {
-            self.valuation.insert(symbol, action.ref_price);
+            self.valuation
+                .insert(symbol, action.after_price.unwrap_or(action.ref_price));
         }
         Ok(())
     }
@@ -227,10 +244,15 @@ impl Ledger {
             context.terms.and_then(|terms| terms.cash_dividend),
             action.cash_dividend,
         );
-        let stock_dividend = stated(
-            context.terms.and_then(|terms| terms.stock_dividend),
-            action.stock_dividend,
-        );
+        // The override is stated in yuan of par value per share, marketdata in shares
+        // per 1,000; an override of zero cancels marketdata's.
+        let stock_dividend = match context.terms.and_then(|terms| terms.stock_dividend) {
+            Some(per_share) => (per_share.units() > 0).then_some(StockDividend::AtPar(per_share)),
+            None => action
+                .stock_per_1000
+                .filter(|per_1000| per_1000.units() > 0)
+                .map(StockDividend::Per1000),
+        };
         // marketdata has the amounts of a dividend only for the issuers its source
         // lists; for the others it has what the ex-date takes off the price.
         let mut unstated = false;
@@ -277,24 +299,31 @@ impl Ledger {
             }
         }
 
-        if let Some(per_share) = stock_dividend {
+        if let Some(dividend) = stock_dividend {
             self.short_across(action)?;
-            let par = match (
-                context.terms.and_then(|terms| terms.par_value),
-                facts.and_then(|facts| facts.non_10_par),
-            ) {
-                (Some(par), _) => i128::from(par.units()),
-                (None, Some(true)) => return Err(context.missing("par_value")),
-                (None, _) => PAR_UNITS,
+            let par = context.terms.and_then(|terms| terms.par_value).map_or_else(
+                || match facts.and_then(|facts| facts.non_10_par) {
+                    Some(true) => None,
+                    _ => Some(PAR_UNITS),
+                },
+                |par| Some(i128::from(par.units())),
+            );
+            // New shares as `numerator / denominator`.
+            let (numerator, denominator) = match dividend {
+                StockDividend::AtPar(per_share) => (
+                    i128::from(shares) * i128::from(per_share.units()),
+                    par.filter(|&par| par > 0)
+                        .ok_or_else(|| context.missing("par_value"))?,
+                ),
+                StockDividend::Per1000(per_1000) => (
+                    i128::from(shares) * i128::from(per_1000.units()),
+                    1_000 * i128::from(Decimal8::UNITS_PER_ONE),
+                ),
             };
-            if par <= 0 {
-                return Err(context.missing("par_value"));
-            }
-            let total = i128::from(shares) * i128::from(per_share.units());
-            let new_shares = divide(total, par, Rounding::Floor);
-            let fraction = total % par;
-            // Ten yuan of dividend at par is one share whatever the par value is.
-            payment += Money::new(divide(total * 10, par, Rounding::Floor));
+            let new_shares = divide(numerator, denominator, Rounding::Floor);
+            let fraction = numerator % denominator;
+            // A new share counts as ten yuan of dividend whatever the par value is.
+            payment += Money::new(divide(numerator * 10, denominator, Rounding::Floor));
             if new_shares > 0 {
                 self.deliveries.push(Delivery {
                     not_before: context.stock_date,
@@ -302,19 +331,25 @@ impl Ledger {
                     shares: new_shares,
                 });
             }
-            let price = context.terms.and_then(|terms| terms.fraction_price);
-            let cash = match price {
-                // At par.
-                None => divide(
-                    fraction,
-                    i128::from(PerShare::UNITS_PER_YUAN),
-                    Rounding::Floor,
-                ),
-                Some(price) => divide(
-                    fraction * i128::from(price.units()),
-                    par * i128::from(Price::UNITS_PER_YUAN),
-                    Rounding::Floor,
-                ),
+            let cash = if fraction == 0 {
+                0
+            } else {
+                match context.terms.and_then(|terms| terms.fraction_price) {
+                    Some(price) => divide(
+                        fraction * i128::from(price.units()),
+                        denominator * i128::from(Price::UNITS_PER_YUAN),
+                        Rounding::Floor,
+                    ),
+                    // At par.
+                    None => {
+                        let par = par.ok_or_else(|| context.missing("par_value"))?;
+                        divide(
+                            fraction * par,
+                            denominator * i128::from(PerShare::UNITS_PER_YUAN),
+                            Rounding::Floor,
+                        )
+                    }
+                }
             };
             if cash > 0 {
                 let approx = context.terms.is_none_or(|terms| terms.stock_date.is_none());
@@ -515,6 +550,15 @@ impl Ledger {
         }
         Ok(())
     }
+}
+
+/// A stock dividend as the override or marketdata states it.
+#[derive(Debug, Clone, Copy)]
+enum StockDividend {
+    /// Yuan of par value per share.
+    AtPar(PerShare),
+    /// Shares per 1,000 shares.
+    Per1000(Decimal8),
 }
 
 /// How much a capital reduction returns.

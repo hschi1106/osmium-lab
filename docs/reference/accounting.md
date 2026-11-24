@@ -401,19 +401,22 @@
 
 | `action` | 處理 |
 | --- | --- |
-| `dividend`，有現金股利 | 應收現金股利 = `floor(股數 × 每股股利)`；發放日入帳。借入的股數（融券部位、未回補的先賣後買）付出 `ceil(股數 × 每股股利)` 的補償，標記 `approx` |
-| `dividend`，有股票股利 | 配發股數 = `floor(股數 × stock_dividend ÷ 面額)`；不足一股的部分按面額折現：`floor(畸零 × 面額)` 元（補充資料有 `fraction_price` 時改用該價格）。新股是成本為 0 的新批次，交付日入帳（畸零的折現也在這一天），交付前不可賣出、但計入權益。面額預設 10 元；`f1_non10_par` 為 true 的股票需要補充資料 `par_value` |
+| `dividend`，有現金股利 | 應收現金股利 = `floor(股數 × 每股股利)`；發放日（`pay_date`）入帳。借入的股數（融券部位、未回補的先賣後買）付出 `ceil(股數 × 每股股利)` 的補償，標記 `approx` |
+| `dividend`，有股票股利 | 配發股數 = `floor(股數 × stock_per_1000 ÷ 1000)`；不足一股的部分按面額折現：`floor(畸零 × 面額)` 元（補充資料有 `fraction_price` 時改用該價格）。新股是成本為 0 的新批次，交付日入帳（畸零的折現也在這一天），交付前不可賣出、但計入權益。面額預設 10 元；`f1_non10_par` 為 true 的股票有畸零時需要補充資料 `par_value` |
 | `dividend`，現金股利與股票股利都沒有 | `ref_price = before_price` 的列不處理（交易所沒有調整價格）。其餘的列需要補充資料 `cash_dividend`；`missing_terms = "approximate"` 時把 `value`（除權息當天從股價扣掉的價值）當成現金股利，標記 `approx` |
 | `rights` | 不產生分錄（不模擬認購） |
-| `split`、`par_change`、`reverse_split` | 股數乘以 `新 ÷ 舊`。比例取補充資料 `share_ratio`；沒有時由價格推定整數倍 `n`（`n ≥ 2`；`split` 的參考價必須比前收低、`reverse_split` 必須比前收高），並標記 `approx`。總成本不變 |
-| `reduction_loss` | 需要補充資料 `share_ratio`；股數依比例減少，總成本不變 |
-| `reduction_cash` | 需要補充資料 `share_ratio` 與 `refund_per_share`；退還股款沖減成本，股數依比例減少 |
+| `split`、`par_change`、`reverse_split` | 股數乘以 `shares_new ÷ shares_old`，總成本不變。資料沒有比例時由價格推定整數倍 `n`（`n ≥ 2`；`split` 的參考價必須比前收低、`reverse_split` 必須比前收高），並標記 `approx` |
+| `reduction_loss` | 股數乘以 `shares_new ÷ shares_old`，總成本不變 |
+| `reduction_cash` | 每股退還 `refund_per_share` 元，沖減成本；股數乘以 `shares_new ÷ shares_old` |
 
-`n` 與價格比的相對誤差超過 1% 時視為無法判定，需要補充資料（實際資料中只有 2022 年以來的 1 筆：
-6548 的面額變更是 1 股換 2.5 股）。
+推定的 `n` 與價格比的相對誤差超過 1% 時視為無法判定，需要補充資料。2022-01-03 起每一列減資、分割、
+反分割、面額變更都有 `shares_old`／`shares_new`，減資都有 `refund_per_share`（彌補虧損是 0），所以
+推定與近似只在資料缺值時用到。
 
-每股金額（`cash_dividend`、`stock_dividend`、`value`）由 float64 轉成 1e-10 元的整數，轉換不是精確
-往返時讀取失敗（發行公司公告的股票股利是每千股到小數 8 位，換成每股是 10 位）。
+每股金額（`cash_dividend`、`value`）由 float64 轉成 1e-10 元的整數，轉換不是精確往返時讀取失敗。
+`stock_per_1000`、`shares_old`、`shares_new`、`refund_per_share` 是 marketdata 的 decimal(18,8)，
+直接以整數讀取。marketdata 的 `stock_dividend`（每股以面額計的元數，來自 FinMind）不讀：2022 年
+以來有 265 列與交易所公告的 `stock_per_1000` 不一致。
 
 換股數的細節：
 
@@ -427,26 +430,29 @@
 - 尚未交付的配股依同樣的比例調整。
 - 借入的股數（融券部位、未回補的先賣後買）遇到股票股利、分割、面額變更、反分割或減資時 run
   失敗（`ShortAcrossExDate`）：這些情況的補償方式由券商決定，沒有可以依據的規則。
-- 除權息日當天，部位的評價價格改為 `ref_price`，直到當天有收盤價。
+- 除權息日當天，部位的評價價格改為 `after_price`（交易所公告的事件後參考價，含同一天現金增資的
+  認購權價值；沒有時用 `ref_price`），直到當天有收盤價。只有現金增資的 `rights` 列也一樣。
 
 ### 13.1 marketdata 沒有的事實
 
 | 事實 | 預設 | 設定 |
 | --- | --- | --- |
-| 現金股利發放日 | 除息日後第 `corporate_actions.cash_pay_lag_days`（預設 30）個日曆日之後的第一個交割日，標記 `approx` | 補充資料可指定確切日期 |
-| 股票股利交付日 | 同上，使用 `corporate_actions.stock_credit_lag_days`（預設 30） | 同上 |
-| 減資比例、退還金額 | 無 | 補充資料；或 `corporate_actions.missing_terms = "approximate"` |
-| 減資退款日、換股數的畸零折現入帳日 | 同現金股利發放日的規則 | 補充資料 `cash_date` |
-| 分割、面額變更、反分割的比例 | 由價格推定整數倍，標記 `approx` | 補充資料 `share_ratio` |
+| 現金股利發放日 | `pay_date`；沒有時（2022 年以來 145 列，多是尚未公告發放日的未來除息）為除息日後第 `corporate_actions.cash_pay_lag_days`（預設 30）個日曆日之後的第一個交割日，標記 `approx` | 補充資料可指定確切日期 |
+| 股票股利交付日 | 除權日後第 `corporate_actions.stock_credit_lag_days`（預設 30）個日曆日之後的第一個交割日，標記 `approx` | 同上 |
+| 減資比例、退還金額 | `shares_old`／`shares_new`、`refund_per_share`；缺值時無 | 補充資料；或 `corporate_actions.missing_terms = "approximate"` |
+| 減資退款日、換股數的畸零折現入帳日 | 同現金股利沒有 `pay_date` 時的規則 | 補充資料 `cash_date` |
+| 分割、面額變更、反分割的比例 | `shares_old`／`shares_new`；缺值時由價格推定整數倍，標記 `approx` | 補充資料 `share_ratio` |
 | 畸零的折現價格 | 股票股利按面額；換股數以 `ref_price`，標記 `approx` | 補充資料 `fraction_price` |
-| 非 10 元面額股票的面額 | 無（只影響股票股利） | 補充資料 `par_value` |
-| 沒有股利金額的 `dividend` 列 | 無 | 補充資料 `cash_dividend`／`stock_dividend`；或 `missing_terms = "approximate"` |
+| 非 10 元面額股票的面額 | 無（只影響股票股利的畸零） | 補充資料 `par_value` |
+| 沒有股利金額的 `dividend` 列 | 無（2022 年以來沒有這種列） | 補充資料 `cash_dividend`／`stock_dividend`；或 `missing_terms = "approximate"` |
 | 合併、股份轉換、下市 | 無；部位保留並記錄 `stale_position` | 不支援 |
 
 - **補充資料**（`corporate_actions.overrides`）：以 `(symbol, ex_date, action)` 為鍵，欄位是
   `cash_date`、`stock_date`、`share_ratio`（`[新, 舊]`）、`refund_per_share`、`par_value`、
   `fraction_price`、`cash_dividend`、`stock_dividend`。有給的欄位取代預設值、近似值，也取代
-  marketdata 的值（資料有誤時可以更正）；用到補充資料的部分不標記 `approx`。
+  marketdata 的值（資料有誤時可以更正）；用到補充資料的部分不標記 `approx`。`stock_dividend` 是
+  每股以面額計的元數（發行公司公告的形式），配發股數 = `floor(股數 × stock_dividend ÷ 面額)`，
+  所以非 10 元面額的股票要同時給 `par_value`；給 0 表示沒有股票股利。
 - **持有部位而缺少必要事實時，run 失敗**，錯誤訊息列出商品、日期與缺少的欄位。沒有部位時事件
   直接略過。
 - `missing_terms = "approximate"` 時，減資比例由價格反推（面額 10 元）：彌補虧損
@@ -533,8 +539,8 @@
 | 信用交易資格與個股成數 | 沒有交易所的每日名單，只能近似（9.1） |
 | 平盤下放空豁免名單 | marketdata 沒有輸出；以「前一日收盤跌停」的規則重算（10.2） |
 | 當沖資格 | 沒有 Format 1 的日子取自 FinMind 的清單，與交易所的旗標偶有不同；沒有清單時只能近似（8.1） |
-| 現金股利發放日、股票股利交付日、減資條件、合併與下市 | marketdata 沒有，需要補充資料或近似（13.1） |
-| 沒有股利金額的除權息列 | 2022 年以來 324 列（ETF、REIT、特別股、TDR 為主），需要補充資料或近似（第 13 節） |
+| 股票股利交付日、減資退款日、合併與下市 | marketdata 沒有，需要補充資料或近似（13.1） |
+| 參考價與減資條件不一致的列 | 2323（2022-10-24、2026-10-12）、3356（2024-11-11）依資料的比例與退款換算後，部位價值與前收相差 1.5–4.7 % |
 | 外幣計價的商品 | 不支援（撮合拒絕委託）；例如 00774C 的股利金額與價格不是同一種幣別 |
 | 融券部位跨過除權息日 | 現金股利以近似補償；股票股利、分割、減資則 run 失敗（第 13 節） |
 | 信用部位的零股 | 強制委託把不足一張的部分送到 `ODD`，實務上由券商另行處理（12.4） |

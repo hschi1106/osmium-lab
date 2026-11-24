@@ -35,7 +35,7 @@ osmium 只讀取 `md_root`，不會修改它。
 | 訊息 | 原因與做法 |
 | --- | --- |
 | `accounting on <date>: the calendar has no settlement day far enough after ...` | run 跑到資料的最後兩個交易日，交割日不在日曆裡。在 `calendar.extra_settlement_days` 補上之後的交易日（[執行](running.md#5-公司行動與日曆)）|
-| `accounting on <date>: <symbol> <action> on <ex_date>: marketdata does not have ...` | 持有的商品在那一天除權息或減資，而 marketdata 沒有需要的事實（發放日、換股比例、退還股款、股利金額等）。以 `[[corporate_actions.overrides]]` 補上，或設 `corporate_actions.missing_terms = "approximate"` |
+| `accounting on <date>: <symbol> <action> on <ex_date>: marketdata does not have ...` | 持有的商品在那一天除權息或減資，而 marketdata 沒有需要的事實（例如非 10 元面額股票配股畸零的面額）。以 `[[corporate_actions.overrides]]` 補上，或設 `corporate_actions.missing_terms = "approximate"` |
 | `... shares of <symbol> sold without inventory were not bought back` | 策略以 `CashSellFirst` 賣出、當天沒有買回。修正策略，或設 `daytrade.uncovered = "force_cover"` 讓帳務隔天強制買回 |
 | `cash is ... after settlement on <date>` | `account.cash_check = "at_settlement"` 而交割日的現金不夠。增加期初現金或改回 `"at_order"` |
 | `a forced order for ... shares of <symbol> could not be filled` | 被追繳、到期或未回補的部位需要賣出／回補，但那檔商品沒有被回放（不在 `data.symbols`、所選 feed）或連續數日沒有成交。把持有的商品都列進 `data.symbols` |

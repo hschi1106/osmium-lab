@@ -14,8 +14,8 @@ use std::{
 };
 
 use arrow_array::{
-    ArrayRef, BooleanArray, Date32Array, Float64Array, Int8Array, Int16Array, Int32Array,
-    Int64Array, RecordBatch, StringArray, TimestampMicrosecondArray,
+    ArrayRef, BooleanArray, Date32Array, Decimal128Array, Float64Array, Int8Array, Int16Array,
+    Int32Array, Int64Array, RecordBatch, StringArray, TimestampMicrosecondArray,
 };
 use osmium_types::{Date, Feed, Venue};
 use parquet::{arrow::ArrowWriter, file::metadata::KeyValue, file::properties::WriterProperties};
@@ -316,6 +316,15 @@ fn dates<'a>(values: impl IntoIterator<Item = &'a str>) -> ArrayRef {
     ))
 }
 
+/// marketdata's `decimal(18,8)`, in units of 1e-8.
+fn decimals(values: impl IntoIterator<Item = Option<i128>>) -> ArrayRef {
+    Arc::new(
+        Decimal128Array::from_iter(values)
+            .with_precision_and_scale(18, 8)
+            .expect("a valid precision"),
+    )
+}
+
 fn floats(values: impl IntoIterator<Item = Option<f64>>) -> ArrayRef {
     Arc::new(Float64Array::from_iter(values))
 }
@@ -341,9 +350,15 @@ pub struct ActionRow {
     pub action: &'static str,
     pub before: Option<f64>,
     pub reference: Option<f64>,
+    pub after: Option<f64>,
     pub cash: Option<f64>,
-    pub stock: Option<f64>,
+    pub pay_date: Option<&'static str>,
+    /// Decimals in units of 1e-8.
+    pub stock_per_1000: Option<i128>,
     pub value: Option<f64>,
+    pub shares_old: Option<i128>,
+    pub shares_new: Option<i128>,
+    pub refund: Option<i128>,
 }
 
 /// One row of `daily`.
@@ -578,9 +593,32 @@ impl Tree {
                 ("action", strings(rows.iter().map(|row| row.action))),
                 ("before_price", floats(rows.iter().map(|row| row.before))),
                 ("ref_price", floats(rows.iter().map(|row| row.reference))),
+                ("after_price", floats(rows.iter().map(|row| row.after))),
                 ("cash_dividend", floats(rows.iter().map(|row| row.cash))),
-                ("stock_dividend", floats(rows.iter().map(|row| row.stock))),
+                (
+                    "pay_date",
+                    Arc::new(Date32Array::from_iter(
+                        rows.iter()
+                            .map(|row| row.pay_date.map(|text| date(text).epoch_days())),
+                    )),
+                ),
+                (
+                    "stock_per_1000",
+                    decimals(rows.iter().map(|row| row.stock_per_1000)),
+                ),
                 ("value", floats(rows.iter().map(|row| row.value))),
+                (
+                    "shares_old",
+                    decimals(rows.iter().map(|row| row.shares_old)),
+                ),
+                (
+                    "shares_new",
+                    decimals(rows.iter().map(|row| row.shares_new)),
+                ),
+                (
+                    "refund_per_share",
+                    decimals(rows.iter().map(|row| row.refund)),
+                ),
             ],
         );
     }

@@ -8,13 +8,16 @@
 use std::{fs, path::PathBuf, sync::Arc};
 
 use arrow_array::{
-    ArrayRef, BooleanArray, Date32Array, Float64Array, Int64Array, RecordBatch, StringArray,
+    ArrayRef, BooleanArray, Date32Array, Decimal128Array, Float64Array, Int64Array, RecordBatch,
+    StringArray,
 };
 use osmium_md::{
     CorporateActions, CreditQuotas, DEFAULT_MD_ROOT, DailyQuotes, MarketEvents, MdError, MdRoot,
     TradingCalendar,
 };
-use osmium_types::{CorporateActionKind, Date, MarketEventKind, PerShare, Price, Symbol, Venue};
+use osmium_types::{
+    CorporateActionKind, Date, Decimal8, MarketEventKind, PerShare, Price, Symbol, Venue,
+};
 use parquet::{arrow::ArrowWriter, file::metadata::KeyValue, file::properties::WriterProperties};
 
 type Columns = Vec<(&'static str, ArrayRef)>;
@@ -181,9 +184,15 @@ struct ActionRow {
     action: &'static str,
     before: Option<f64>,
     reference: Option<f64>,
+    after: Option<f64>,
     cash: Option<f64>,
-    stock: Option<f64>,
+    pay_date: Option<&'static str>,
+    /// Decimals in units of 1e-8.
+    stock_per_1000: Option<i128>,
     value: Option<f64>,
+    shares_old: Option<i128>,
+    shares_new: Option<i128>,
+    refund: Option<i128>,
 }
 
 fn dividend(symbol: &'static str, ex_date: &'static str) -> ActionRow {
@@ -193,10 +202,23 @@ fn dividend(symbol: &'static str, ex_date: &'static str) -> ActionRow {
         action: "dividend",
         before: Some(100.0),
         reference: Some(97.25),
+        after: Some(97.25),
         cash: Some(2.75),
-        stock: None,
+        pay_date: Some("2024-07-26"),
+        stock_per_1000: None,
         value: Some(2.75),
+        shares_old: None,
+        shares_new: None,
+        refund: None,
     }
+}
+
+fn decimals(values: impl IntoIterator<Item = Option<i128>>) -> ArrayRef {
+    Arc::new(
+        Decimal128Array::from_iter(values)
+            .with_precision_and_scale(18, 8)
+            .unwrap(),
+    )
 }
 
 fn action_columns(rows: &[ActionRow]) -> Columns {
@@ -206,9 +228,26 @@ fn action_columns(rows: &[ActionRow]) -> Columns {
         ("action", strings(rows.iter().map(|row| row.action))),
         ("before_price", floats(rows.iter().map(|row| row.before))),
         ("ref_price", floats(rows.iter().map(|row| row.reference))),
+        ("after_price", floats(rows.iter().map(|row| row.after))),
         ("cash_dividend", floats(rows.iter().map(|row| row.cash))),
-        ("stock_dividend", floats(rows.iter().map(|row| row.stock))),
+        ("pay_date", dates(rows.iter().map(|row| row.pay_date))),
+        (
+            "stock_per_1000",
+            decimals(rows.iter().map(|row| row.stock_per_1000)),
+        ),
         ("value", floats(rows.iter().map(|row| row.value))),
+        (
+            "shares_old",
+            decimals(rows.iter().map(|row| row.shares_old)),
+        ),
+        (
+            "shares_new",
+            decimals(rows.iter().map(|row| row.shares_new)),
+        ),
+        (
+            "refund_per_share",
+            decimals(rows.iter().map(|row| row.refund)),
+        ),
     ]
 }
 
@@ -224,17 +263,22 @@ fn corporate_actions_are_exact_decimals() {
                 ..dividend("1101", "2019-07-01")
             },
             ActionRow {
-                stock: Some(0.200_130_263_8),
+                after: Some(96.8),
+                stock_per_1000: Some(2_001_302_638),
                 ..dividend("1101", "2024-07-01")
             },
             ActionRow {
-                action: "split",
-                before: Some(188.65),
-                reference: Some(47.16),
+                action: "reduction_cash",
+                before: Some(27.7),
+                reference: Some(39.71),
+                after: None,
                 cash: None,
-                stock: None,
+                pay_date: None,
                 value: None,
-                ..dividend("0050", "2025-06-18")
+                shares_old: Some(100_000_000_000),
+                shares_new: Some(59_568_140_000),
+                refund: Some(404_318_600),
+                ..dividend("4930", "2025-06-18")
             },
             // The value of a subscription right that is worth less than nothing.
             ActionRow {
@@ -255,17 +299,35 @@ fn corporate_actions_are_exact_decimals() {
     assert_eq!(first.kind, CorporateActionKind::Dividend);
     assert_eq!(first.before_price, price("100"));
     assert_eq!(first.ref_price, price("97.25"));
+    assert_eq!(first.after_price, Some(price("96.8")));
     assert_eq!(
         first.cash_dividend,
         Some(PerShare::from_units(27_500_000_000))
     );
+    assert_eq!(first.pay_date, Some(day("2024-07-26")));
     assert_eq!(
-        first.stock_dividend,
-        Some(PerShare::from_units(2_001_302_638))
+        first.stock_per_1000,
+        Some(Decimal8::from_units(2_001_302_638))
     );
     assert_eq!(first.value, Some(PerShare::from_units(27_500_000_000)));
-    assert_eq!(second.kind, CorporateActionKind::Split);
-    assert_eq!((second.cash_dividend, second.stock_dividend), (None, None));
+    assert_eq!((first.share_ratio, first.refund_per_share), (None, None));
+    assert_eq!(second.kind, CorporateActionKind::ReductionCash);
+    assert_eq!(
+        (second.after_price, second.cash_dividend, second.pay_date),
+        (None, None, None)
+    );
+    assert_eq!(
+        second.share_ratio,
+        Some((
+            Decimal8::from_units(59_568_140_000),
+            Decimal8::from_units(100_000_000_000)
+        ))
+    );
+    // 4.043186 yuan.
+    assert_eq!(
+        second.refund_per_share,
+        Some(PerShare::from_units(40_431_860_000))
+    );
     assert_eq!((second.value, third.value), (None, None));
 
     for (name, row) in [
@@ -287,6 +349,28 @@ fn corporate_actions_are_exact_decimals() {
             "price",
             ActionRow {
                 reference: None,
+                ..dividend("1101", "2024-07-01")
+            },
+        ),
+        (
+            "half-ratio",
+            ActionRow {
+                shares_new: Some(80_000_000_000),
+                ..dividend("1101", "2024-07-01")
+            },
+        ),
+        (
+            "zero-ratio",
+            ActionRow {
+                shares_old: Some(100_000_000_000),
+                shares_new: Some(0),
+                ..dividend("1101", "2024-07-01")
+            },
+        ),
+        (
+            "negative-refund",
+            ActionRow {
+                refund: Some(-1),
                 ..dividend("1101", "2024-07-01")
             },
         ),

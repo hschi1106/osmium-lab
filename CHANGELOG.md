@@ -48,6 +48,11 @@
 - `DECODER_VERSION` 3、`osmium_ledger::RULES_VERSION` 2：當沖資格改讀 marketdata 的 `daytrade`
   （`BOTH`、`BUY_FIRST`、`NONE`），沒有 `F1` 的日子也採用它，不再近似；只有 null 時才用近似
   （[帳務規格](docs/reference/accounting.md) 8.1）。
+- `DECODER_VERSION` 4、`osmium_ledger::RULES_VERSION` 3：公司行動改讀 marketdata 的 `after_price`、
+  `pay_date`、`stock_per_1000`、`shares_old`／`shares_new`、`refund_per_share`，不再讀 FinMind 的
+  `stock_dividend`。現金股利在 `pay_date` 入帳；配股股數 = `floor(股數 × stock_per_1000 ÷ 1000)`，
+  面額只影響畸零；減資、分割、反分割、面額變更的比例與退款取自資料，不再需要補充資料或近似；
+  除權息日與現金增資日的評價價格改用 `after_price`（[帳務規格](docs/reference/accounting.md)第 13 節）。
 - 新增使用手冊（`docs/guide/`）：安裝與第一個回測、寫策略、執行、讀結果、疑難排解；以及完整的
   自訂策略範例程式 `crates/osmium-cli/examples/breakout.rs`。
 - 新增 agent skill `osmium-backtest`：使用系統跑回測的流程。

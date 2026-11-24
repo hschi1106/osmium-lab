@@ -29,8 +29,8 @@ pub use order::{
 };
 pub use price::{ParsePriceError, Price};
 pub use reference::{
-    CorporateAction, CorporateActionKind, CreditQuota, DailyQuote, MarketEvent, MarketEventKind,
-    PerShare,
+    CorporateAction, CorporateActionKind, CreditQuota, DailyQuote, Decimal8, MarketEvent,
+    MarketEventKind, PerShare,
 };
 pub use shares::Shares;
 pub use symbol::{Symbol, SymbolError};

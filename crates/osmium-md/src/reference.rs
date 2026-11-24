@@ -8,9 +8,9 @@
 
 use std::path::Path;
 
-use arrow_array::types::{Date32Type, Float64Type, Int64Type};
+use arrow_array::types::{Date32Type, Decimal128Type, Float64Type, Int64Type};
 use osmium_types::{
-    CorporateAction, CorporateActionKind, CreditQuota, DailyQuote, Date, MarketEvent,
+    CorporateAction, CorporateActionKind, CreditQuota, DailyQuote, Date, Decimal8, MarketEvent,
     MarketEventKind, PerShare, Price, Symbol, Venue,
 };
 
@@ -108,6 +108,9 @@ fn per_share_units(value: f64) -> Option<i64> {
     exact.then_some(units as i64)
 }
 
+/// The largest amount per share a decimal column may state, in yuan.
+const MAX_PER_SHARE: i64 = 100_000;
+
 /// One row of marketdata `qc/calendar`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CalendarDay {
@@ -202,9 +205,14 @@ impl CorporateActions {
             ("action", ColumnType::String),
             ("before_price", ColumnType::Float64),
             ("ref_price", ColumnType::Float64),
+            ("after_price", ColumnType::Float64),
             ("cash_dividend", ColumnType::Float64),
-            ("stock_dividend", ColumnType::Float64),
+            ("pay_date", ColumnType::Date32),
+            ("stock_per_1000", ColumnType::Decimal18x8),
             ("value", ColumnType::Float64),
+            ("shares_old", ColumnType::Decimal18x8),
+            ("shares_new", ColumnType::Decimal18x8),
+            ("refund_per_share", ColumnType::Decimal18x8),
         ];
         let (file, identity) = open(root, Self::PATH)?;
         let mut rows: Vec<CorporateAction> = Vec::new();
@@ -214,9 +222,14 @@ impl CorporateActions {
             let action = strings(path, batch, "action")?;
             let before = primitive::<Float64Type>(path, batch, "before_price")?;
             let reference = primitive::<Float64Type>(path, batch, "ref_price")?;
+            let after = primitive::<Float64Type>(path, batch, "after_price")?;
             let cash = primitive::<Float64Type>(path, batch, "cash_dividend")?;
-            let stock = primitive::<Float64Type>(path, batch, "stock_dividend")?;
+            let pay_date = primitive::<Date32Type>(path, batch, "pay_date")?;
+            let stock = primitive::<Decimal128Type>(path, batch, "stock_per_1000")?;
             let value = primitive::<Float64Type>(path, batch, "value")?;
+            let shares_old = primitive::<Decimal128Type>(path, batch, "shares_old")?;
+            let shares_new = primitive::<Decimal128Type>(path, batch, "shares_new")?;
+            let refund = primitive::<Decimal128Type>(path, batch, "refund_per_share")?;
             for row in 0..batch.num_rows() {
                 let ex_date = date(path, optional(ex_date, row), "ex_date")?;
                 if ex_date < from {
@@ -242,6 +255,33 @@ impl CorporateActions {
                         })
                         .transpose()
                 };
+                // A positive decimal of at most `MAX_PER_SHARE`, or zero when `zero` is
+                // allowed.
+                let decimal = |name: &str, value: Option<i128>, zero: bool| {
+                    value
+                        .map(|units| {
+                            i64::try_from(units)
+                                .ok()
+                                .filter(|&units| {
+                                    (if zero { 0 } else { 1 }) <= units
+                                        && units <= MAX_PER_SHARE * Decimal8::UNITS_PER_ONE
+                                })
+                                .map(Decimal8::from_units)
+                                .ok_or_else(|| {
+                                    invalid(format!("{name} {units}e-8 is out of range"))
+                                })
+                        })
+                        .transpose()
+                };
+                let share_ratio = match (
+                    decimal("shares_new", optional(shares_new, row), false)?,
+                    decimal("shares_old", optional(shares_old, row), false)?,
+                ) {
+                    (Some(new), Some(old)) => Some((new, old)),
+                    (None, None) => None,
+                    _ => return Err(invalid("only one of shares_old and shares_new".to_owned())),
+                };
+                let refund = decimal("refund_per_share", optional(refund, row), true)?;
                 rows.push(CorporateAction {
                     symbol,
                     ex_date,
@@ -249,10 +289,16 @@ impl CorporateActions {
                         .ok_or_else(|| invalid(format!("unknown action {action}")))?,
                     before_price: price("before_price", optional(before, row))?,
                     ref_price: price("ref_price", optional(reference, row))?,
+                    after_price: optional_price(path, symbol, "after_price", optional(after, row))?,
                     cash_dividend: per_share("cash_dividend", optional(cash, row))?,
-                    stock_dividend: per_share("stock_dividend", optional(stock, row))?,
+                    pay_date: optional_date(path, optional(pay_date, row), "pay_date")?,
+                    stock_per_1000: decimal("stock_per_1000", optional(stock, row), false)?,
                     // Subscription rights can be worth less than nothing.
                     value: per_share("value", optional(value, row).filter(|value| *value > 0.0))?,
+                    share_ratio,
+                    // 1e-8 yuan is 100 units of 1e-10.
+                    refund_per_share: refund
+                        .map(|refund| PerShare::from_units(refund.units() * 100)),
                 });
             }
             Ok(())

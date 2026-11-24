@@ -88,6 +88,25 @@ impl PerShare {
     }
 }
 
+/// A decimal with eight places in units of 1e-8, as marketdata's `decimal(18,8)`
+/// columns state share counts and ratios.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Decimal8(i64);
+
+impl Decimal8 {
+    pub const UNITS_PER_ONE: i64 = 100_000_000;
+
+    #[must_use]
+    pub const fn from_units(units: i64) -> Self {
+        Self(units)
+    }
+
+    #[must_use]
+    pub const fn units(self) -> i64 {
+        self.0
+    }
+}
+
 /// The marketdata `corp_actions.action` values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CorporateActionKind {
@@ -138,16 +157,27 @@ pub struct CorporateAction {
     pub kind: CorporateActionKind,
     /// The close before the ex-date.
     pub before_price: Price,
-    /// The reference price on the ex-date.
+    /// The reference price on the ex-date: for a dividend, the price less the
+    /// dividends but not the rights of a cash offering on the same day.
     pub ref_price: Price,
+    /// The exchange's price after the event, rights included. `None` when marketdata
+    /// has none.
+    pub after_price: Option<Price>,
     /// Cash dividend per share.
     pub cash_dividend: Option<PerShare>,
-    /// Stock dividend in yuan of par value per share (1 means 100 new shares per
-    /// 1,000 held at a par value of 10).
-    pub stock_dividend: Option<PerShare>,
+    /// The day the cash dividend is paid.
+    pub pay_date: Option<Date>,
+    /// Shares of a stock dividend per 1,000 shares held.
+    pub stock_per_1000: Option<Decimal8>,
     /// What the ex-date takes off the price of one share, for a dividend or rights
     /// row. `None` when marketdata has no value or the value is not positive.
     pub value: Option<PerShare>,
+    /// `(new, old)`: `old` shares become `new` shares, for a capital reduction, a
+    /// split, a reverse split or a change of par value.
+    pub share_ratio: Option<(Decimal8, Decimal8)>,
+    /// Cash a capital reduction returns per old share; zero for a reduction that
+    /// covers losses.
+    pub refund_per_share: Option<PerShare>,
 }
 
 #[cfg(test)]

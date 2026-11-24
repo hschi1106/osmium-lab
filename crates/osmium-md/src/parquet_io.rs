@@ -29,6 +29,8 @@ pub(crate) enum ColumnType {
     Float64,
     /// `date32[day]`.
     Date32,
+    /// `decimal128(18, 8)`.
+    Decimal18x8,
     /// `timestamp[us, UTC]`.
     TimestampMicrosUtc,
 }
@@ -43,7 +45,8 @@ impl ColumnType {
             | (Self::Int32, DataType::Int32)
             | (Self::Int64, DataType::Int64)
             | (Self::Float64, DataType::Float64)
-            | (Self::Date32, DataType::Date32) => true,
+            | (Self::Date32, DataType::Date32)
+            | (Self::Decimal18x8, DataType::Decimal128(18, 8)) => true,
             (Self::TimestampMicrosUtc, DataType::Timestamp(TimeUnit::Microsecond, Some(zone))) => {
                 zone.as_ref() == "UTC"
             }

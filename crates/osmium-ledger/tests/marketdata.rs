@@ -168,10 +168,10 @@ fn real_corporate_actions_keep_the_value_of_a_position() {
         }
         // The reference price is what makes the position worth the same on both sides
         // of the ex-date, so the accounting must leave the value where it was. The
-        // rows that do not are known: stock dividends of shares whose par value is
-        // not 10 yuan (this test does not read the instruments, a run stops on them
-        // for want of `par_value`), a dividend stated in another currency than the
-        // price (00774C), and values that disagree with the reference price.
+        // rows that do not are known: capital reductions whose reference price
+        // disagrees with their ratio and refund (2323 on 2022-10-24 and 2026-10-12,
+        // 3356 on 2024-11-11), and a dividend stated in another currency than the
+        // price (00774C).
         assert!(outliers.len() * 1_000 <= total, "{name}");
     }
 }

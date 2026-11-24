@@ -8,8 +8,8 @@ use osmium_ledger::{
     SecurityFacts, Uncovered,
 };
 use osmium_types::{
-    Board, CancelReason, CorporateAction, CorporateActionKind, DailyQuote, Date, Fill, FillBasis,
-    Money, NewOrder, OrderEvent, OrderEventKind, OrderId, OrderPrice, PerShare, Price,
+    Board, CancelReason, CorporateAction, CorporateActionKind, DailyQuote, Date, Decimal8, Fill,
+    FillBasis, Money, NewOrder, OrderEvent, OrderEventKind, OrderId, OrderPrice, PerShare, Price,
     RejectReason, Shares, Side, Symbol, TimeInForce, Timestamp, TradeKind,
 };
 
@@ -947,10 +947,19 @@ fn action(kind: CorporateActionKind, before: &str, reference: &str) -> Corporate
         kind,
         before_price: price(before),
         ref_price: price(reference),
+        after_price: None,
         cash_dividend: None,
-        stock_dividend: None,
+        pay_date: None,
+        stock_per_1000: None,
         value: None,
+        share_ratio: None,
+        refund_per_share: None,
     }
+}
+
+fn decimal(text: &str) -> Decimal8 {
+    // Exact for the few decimals the tests use.
+    Decimal8::from_units(price(text).units() * (Decimal8::UNITS_PER_ONE / Price::UNITS_PER_YUAN))
 }
 
 fn yuan_per_share(text: &str) -> PerShare {
@@ -1022,6 +1031,53 @@ fn a_cash_dividend_is_paid_after_the_lag() {
 }
 
 #[test]
+fn a_cash_dividend_is_paid_on_the_day_marketdata_states() {
+    let dividend = CorporateAction {
+        cash_dividend: Some(yuan_per_share("2.75")),
+        pay_date: Some(day("2024-03-08")),
+        ..action(CorporateActionKind::Dividend, "100", "97.25")
+    };
+    let (mut account, open) = hold_through(Config::new(Money::new(1_000_000)), dividend);
+    open.unwrap();
+    account.end("97.25");
+    account.idle("2024-03-07", "97.25");
+    let open = account.begin("2024-03-08", stock("97.25"));
+    let [entry] = open.entries[..] else {
+        panic!("one payment");
+    };
+    assert_eq!(
+        (entry.item, entry.amount, entry.settles, entry.approx),
+        (
+            Item::CashDividend,
+            Money::new(4_125),
+            day("2024-03-08"),
+            false
+        )
+    );
+}
+
+#[test]
+fn the_ex_date_values_a_position_at_the_price_after_the_event() {
+    // A cash offering on the same day takes more off the price than the dividend.
+    let dividend = CorporateAction {
+        cash_dividend: Some(yuan_per_share("2")),
+        after_price: Some(price("96.5")),
+        ..action(CorporateActionKind::Dividend, "100", "98")
+    };
+    let (account, open) = hold_through(Config::new(Money::new(1_000_000)), dividend);
+    open.unwrap();
+    assert_eq!(account.ledger.valuation(tsmc()), Some(price("96.5")));
+
+    let rights = CorporateAction {
+        after_price: Some(price("97")),
+        ..action(CorporateActionKind::Rights, "100", "100")
+    };
+    let (account, open) = hold_through(Config::new(Money::new(1_000_000)), rights);
+    assert_eq!(open.unwrap(), DayOpen::default());
+    assert_eq!(account.ledger.valuation(tsmc()), Some(price("97")));
+}
+
+#[test]
 fn a_dividend_without_amounts_needs_them_or_uses_the_value_of_the_ex_date() {
     // marketdata has no amounts for this row, only what the ex-date takes off the price.
     let dividend = CorporateAction {
@@ -1078,10 +1134,9 @@ fn a_dividend_without_amounts_needs_them_or_uses_the_value_of_the_ex_date() {
 
 #[test]
 fn a_stock_dividend_delivers_free_shares_and_cash_for_the_fraction() {
-    // 0.75 yuan at a par value of 10: 75 new shares per 1,000.
     let dividend = CorporateAction {
         cash_dividend: Some(yuan_per_share("20")),
-        stock_dividend: Some(yuan_per_share("0.75")),
+        stock_per_1000: Some(decimal("75")),
         ..action(CorporateActionKind::Dividend, "100", "74.4")
     };
     let mut config = Config::new(Money::new(1_000_000));
@@ -1126,48 +1181,50 @@ fn a_stock_dividend_delivers_free_shares_and_cash_for_the_fraction() {
 }
 
 #[test]
-fn a_stock_dividend_of_a_share_with_another_par_value_needs_the_par_value() {
-    let dividend = CorporateAction {
-        stock_dividend: Some(yuan_per_share("0.5")),
-        ..action(CorporateActionKind::Dividend, "100", "90.9")
-    };
-    let mut account = Account::with_cash(1_000_000);
-    account.begin("2024-03-04", stock("100"));
-    account.trade(Side::Buy, TradeKind::Cash, "100", 1_000);
-    account.end("100");
-    account.idle("2024-03-05", "100");
+fn a_share_with_another_par_value_needs_it_only_for_a_fraction_or_an_amount_at_par() {
     let odd_par = SecurityFacts {
         non_10_par: Some(true),
         ..stock("90.9")
     };
-    assert_eq!(
-        account.begin_with("2024-03-06", &[(tsmc(), odd_par)], &[dividend]),
-        Err(LedgerError::MissingActionTerms {
-            symbol: tsmc(),
-            ex_date: day("2024-03-06"),
-            action: CorporateActionKind::Dividend,
-            missing: "par_value"
-        })
-    );
+    // Holds 1,000 shares and opens the ex-date; returns the shares a day later.
+    let receive = |config: Config, dividend: CorporateAction| {
+        let mut account = Account::new(config);
+        account.begin("2024-03-04", stock("100"));
+        account.trade(Side::Buy, TradeKind::Cash, "100", 1_000);
+        account.end("100");
+        account.idle("2024-03-05", "100");
+        account.begin_with("2024-03-06", &[(tsmc(), odd_par)], &[dividend])?;
+        account.end("90.9");
+        account.begin("2024-03-07", stock("90.9"));
+        Ok::<_, LedgerError>(account.ledger.position(tsmc()).cash)
+    };
+    let mut on_the_7th = Config::new(Money::new(1_000_000));
+    on_the_7th.corporate_actions.stock_credit_lag_days = 1;
+    let per_1000 = |text: &str| CorporateAction {
+        stock_per_1000: Some(decimal(text)),
+        ..action(CorporateActionKind::Dividend, "100", "90.9")
+    };
+    // Whole shares need no par value.
+    assert_eq!(receive(on_the_7th.clone(), per_1000("100")), Ok(1_100));
+    // Half a share is paid at par.
+    let missing = Err(LedgerError::MissingActionTerms {
+        symbol: tsmc(),
+        ex_date: day("2024-03-06"),
+        action: CorporateActionKind::Dividend,
+        missing: "par_value",
+    });
+    assert_eq!(receive(on_the_7th.clone(), per_1000("100.5")), missing);
 
-    // With a par value of 5 yuan, 0.5 yuan is a tenth of a share.
-    let mut config = Config::new(Money::new(1_000_000));
+    // An amount in yuan at par needs the par value: at 5 yuan, 0.5 yuan is a tenth of
+    // a share.
+    let mut config = on_the_7th.clone();
     config.corporate_actions.overrides.push(ActionOverride {
-        par_value: Some(yuan_per_share("5")),
-        stock_date: Some(day("2024-03-07")),
+        stock_dividend: Some(yuan_per_share("0.5")),
         ..ActionOverride::new(tsmc(), day("2024-03-06"), CorporateActionKind::Dividend)
     });
-    let mut account = Account::new(config);
-    account.begin("2024-03-04", stock("100"));
-    account.trade(Side::Buy, TradeKind::Cash, "100", 1_000);
-    account.end("100");
-    account.idle("2024-03-05", "100");
-    account
-        .begin_with("2024-03-06", &[(tsmc(), odd_par)], &[dividend])
-        .unwrap();
-    account.end("90.9");
-    account.begin("2024-03-07", stock("90.9"));
-    assert_eq!(account.ledger.position(tsmc()).cash, 1_100);
+    assert_eq!(receive(config.clone(), per_1000("100")), missing);
+    config.corporate_actions.overrides[0].par_value = Some(yuan_per_share("5"));
+    assert_eq!(receive(config, per_1000("100")), Ok(1_100));
 }
 
 #[test]
@@ -1211,6 +1268,41 @@ fn a_reverse_split_pays_cash_for_what_is_not_a_whole_share() {
     assert_eq!(
         close.equity,
         Money::new(1_000_000 - 150_213 + 214 * 700 + 200)
+    );
+}
+
+#[test]
+fn marketdata_states_the_ratio_and_the_refund() {
+    // 1 share becomes 2.5 at a change of par value.
+    let change = CorporateAction {
+        share_ratio: Some((decimal("2.5"), decimal("1"))),
+        ..action(CorporateActionKind::ParChange, "250", "100")
+    };
+    let (account, open) = hold_through(Config::new(Money::new(1_000_000)), change);
+    open.unwrap();
+    assert_eq!(account.ledger.position(tsmc()).cash, 3_750);
+
+    // 1,000 shares become 800 and 2 yuan per share is returned.
+    let reduction = CorporateAction {
+        share_ratio: Some((decimal("800"), decimal("1000"))),
+        refund_per_share: Some(yuan_per_share("2")),
+        ..action(CorporateActionKind::ReductionCash, "100", "122.5")
+    };
+    let mut config = Config::new(Money::new(1_000_000));
+    config.corporate_actions.cash_pay_lag_days = 2;
+    let (mut account, open) = hold_through(config, reduction);
+    open.unwrap();
+    assert_eq!(account.ledger.position(tsmc()).cash, 1_200);
+    account.end("122.5");
+    account.idle("2024-03-07", "122.5");
+    let open = account.begin("2024-03-08", stock("122.5"));
+    let [entry] = open.entries[..] else {
+        panic!("one refund");
+    };
+    // Only the day of the refund is not known.
+    assert_eq!(
+        (entry.item, entry.amount, entry.approx),
+        (Item::CapitalRefund, Money::new(3_000), true)
     );
 }
 
@@ -1338,7 +1430,7 @@ fn borrowed_shares_pay_the_cash_dividend_and_stop_other_actions() {
 }
 
 #[test]
-fn actions_without_a_position_and_rights_issues_do_nothing() {
+fn actions_without_a_position_and_rights_issues_book_nothing() {
     let mut account = Account::with_cash(1_000);
     let open = account
         .begin_with(
