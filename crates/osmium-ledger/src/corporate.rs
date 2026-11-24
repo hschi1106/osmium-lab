@@ -180,6 +180,9 @@ impl Ledger {
                 let ratio = given
                     .or(inferred)
                     .ok_or_else(|| context.missing("share_ratio"))?;
+                if held {
+                    self.reduction_dividend(&context);
+                }
                 self.rescale(&context, ratio, given.is_none(), open)?;
             }
             CorporateActionKind::ReductionCash => {
@@ -205,6 +208,7 @@ impl Ledger {
                 };
                 if held {
                     self.refund(&context, refund, approx, open)?;
+                    self.reduction_dividend(&context);
                 }
                 self.rescale(&context, ratio, approx, open)?;
             }
@@ -275,28 +279,7 @@ impl Ledger {
 
         if let Some(per_share) = cash_dividend {
             premium_date = context.cash_date;
-            let approx = unstated || context.cash_date_approx();
-            let received = per_share_amount(shares, per_share, Rounding::Floor);
-            if received != Money::ZERO {
-                payment += received;
-                self.receivables.push(context.receivable(
-                    context.cash_date,
-                    Item::CashDividend,
-                    received,
-                    approx,
-                ));
-            }
-            // Whoever has borrowed shares over the ex-date pays the dividend to the
-            // lender.
-            let paid = per_share_amount(borrowed, per_share, Rounding::Ceil);
-            if paid != Money::ZERO {
-                self.receivables.push(context.receivable(
-                    context.cash_date,
-                    Item::CashDividend,
-                    -paid,
-                    true,
-                ));
-            }
+            payment += self.cash_dividend(context, shares, borrowed, per_share, unstated);
         }
 
         if let Some(dividend) = stock_dividend {
@@ -362,16 +345,77 @@ impl Ledger {
             }
         }
 
-        if self.config.account.nhi_enabled && payment.get() >= NHI_FLOOR {
-            let premium = NHI_RATE.of(Money::new(payment.get().min(NHI_CAP)), Rounding::HalfUp);
+        self.nhi_premium(
+            context,
+            payment,
+            premium_date,
+            unstated || context.cash_date_approx(),
+        );
+        Ok(())
+    }
+
+    /// The cash dividend paid with a capital reduction, on the shares held before the
+    /// reduction. A reduction leaves no borrowed shares (`short_across`).
+    fn reduction_dividend(&mut self, context: &Context<'_>) {
+        let action = context.action;
+        let Some(per_share) = context
+            .terms
+            .and_then(|terms| terms.cash_dividend)
+            .or(action.cash_dividend)
+            .filter(|amount| amount.units() > 0)
+        else {
+            return;
+        };
+        let holding = &self.holdings[&action.symbol];
+        let shares = holding.cash_shares() + holding.margin_shares();
+        let payment = self.cash_dividend(context, shares, 0, per_share, false);
+        self.nhi_premium(
+            context,
+            payment,
+            context.cash_date,
+            context.cash_date_approx(),
+        );
+    }
+
+    /// Books the cash dividend on `shares` held and the compensation for `borrowed`
+    /// shares, and returns what the holder receives.
+    fn cash_dividend(
+        &mut self,
+        context: &Context<'_>,
+        shares: i64,
+        borrowed: i64,
+        per_share: PerShare,
+        unstated: bool,
+    ) -> Money {
+        let received = per_share_amount(shares, per_share, Rounding::Floor);
+        if received != Money::ZERO {
             self.receivables.push(context.receivable(
-                premium_date,
-                Item::NhiPremium,
-                -premium,
+                context.cash_date,
+                Item::CashDividend,
+                received,
                 unstated || context.cash_date_approx(),
             ));
         }
-        Ok(())
+        // Whoever has borrowed shares over the ex-date pays the dividend to the lender.
+        let paid = per_share_amount(borrowed, per_share, Rounding::Ceil);
+        if paid != Money::ZERO {
+            self.receivables.push(context.receivable(
+                context.cash_date,
+                Item::CashDividend,
+                -paid,
+                true,
+            ));
+        }
+        received
+    }
+
+    /// The supplementary premium on one payment of dividends (section 13.2).
+    fn nhi_premium(&mut self, context: &Context<'_>, payment: Money, date: Date, approx: bool) {
+        if self.config.account.nhi_enabled && payment.get() >= NHI_FLOOR {
+            let premium = NHI_RATE.of(Money::new(payment.get().min(NHI_CAP)), Rounding::HalfUp);
+            self.receivables
+                .push(context.receivable(date, Item::NhiPremium, -premium, approx));
+        }
     }
 
     /// Cash returned by a capital reduction: it lowers the cost of the lots, and what

@@ -63,6 +63,9 @@
 - `OUTPUT_VERSION` 2：參考表以 marketdata `fm/_build` 的列識別。讀取前核對列數與 `md.git_commit`、
   讀取後確認那一列沒有改變，run 第一次讀到一個檔案時比對 `file_sha256`；`run.json` 的 `reference`
   多了 `content_hash`、`file_sha256`（[marketdata 介面](docs/reference/marketdata.md)第 9 節）。
+- `osmium_ledger::RULES_VERSION` 5：減資列的 `cash_dividend`（減資期間同時發放的現金股利）以減資前的
+  股數入帳，並計入二代健保補充保費的給付。2323（2022-10-24、2026-10-12）、3356（2024-11-11）的部位
+  價值因此與前收一致（[帳務規格](docs/reference/accounting.md)第 13 節）。
 - 新增使用手冊（`docs/guide/`）：安裝與第一個回測、寫策略、執行、讀結果、疑難排解；以及完整的
   自訂策略範例程式 `crates/osmium-cli/examples/breakout.rs`。
 - 新增 agent skill `osmium-backtest`：使用系統跑回測的流程。

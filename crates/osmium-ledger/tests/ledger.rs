@@ -1309,6 +1309,44 @@ fn marketdata_states_the_ratio_and_the_refund() {
 }
 
 #[test]
+fn a_reduction_pays_the_cash_dividend_it_states() {
+    // 1,000 shares become 800, 2 yuan per share is returned and 3 yuan per share is
+    // paid as a dividend: the reference price is (100 - 2 - 3) / 0.8 = 118.75.
+    let reduction = CorporateAction {
+        share_ratio: Some((decimal("800"), decimal("1000"))),
+        refund_per_share: Some(yuan_per_share("2")),
+        cash_dividend: Some(yuan_per_share("3")),
+        ..action(CorporateActionKind::ReductionCash, "100", "118.75")
+    };
+    let mut config = Config::new(Money::new(1_000_000));
+    config.corporate_actions.cash_pay_lag_days = 2;
+    let (mut account, open) = hold_through(config, reduction);
+    open.unwrap();
+    assert_eq!(account.ledger.position(tsmc()).cash, 1_200);
+    let close = account.end("118.75");
+    // The position keeps its value of 150,000 across the ex-date.
+    assert_eq!(close.receivable, Money::new(3_000 + 4_500));
+    assert_eq!(
+        close.equity,
+        Money::new(1_000_000 - 150_213 + 1_200 * 11_875 / 100 + 7_500)
+    );
+    account.idle("2024-03-07", "118.75");
+    let open = account.begin("2024-03-08", stock("118.75"));
+    let entries: Vec<(Item, Money)> = open
+        .entries
+        .iter()
+        .map(|entry| (entry.item, entry.amount))
+        .collect();
+    assert_eq!(
+        entries,
+        [
+            (Item::CapitalRefund, Money::new(3_000)),
+            (Item::CashDividend, Money::new(4_500))
+        ]
+    );
+}
+
+#[test]
 fn a_ratio_that_the_prices_do_not_show_must_be_given() {
     let change = action(CorporateActionKind::ParChange, "250", "100");
     let (_, open) = hold_through(Config::new(Money::new(1_000_000)), change);

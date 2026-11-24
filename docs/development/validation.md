@@ -98,19 +98,12 @@ cargo run --release -p osmium-cli -- run run.toml --out /path/outside/the/reposi
 （`crates/osmium-ledger/tests/marketdata.rs`）對 2022 年以來 `corp_actions` 的每一列：在除權息日
 前一個交易日以 `before_price` 買進 10,000 股，除權息日以 `ref_price` 評價，比較兩天的權益。參考價
 的定義就是讓持有人在除權息前後的價值相同，所以帳務處理正確時權益不變。`missing_terms` 的兩種
-設定各跑一次，價值變動超過 1 % 的列不得超過千分之一。
+設定各跑一次，不得有價值變動超過 1 % 的列。
 
-實測（2026-11）：
-
-| `missing_terms` | 套用 | 缺少事實而停止 | 變動超過 1 % |
-| --- | --- | --- | --- |
-| `"error"` | 11,164 | `dividend` 缺 `cash_dividend` 232、`reduction_loss` 98、`reduction_cash` 72、`par_change` 1 | 5 |
-| `"approximate"` | 11,563 | `reduction_cash` 3、`par_change` 1 | 7 |
-
-超過 1 % 的列都有已知的原因：面額不是 10 元的股票配發股票股利（5314、8932；這個測試不讀
-`instruments`，實際的 run 會因為缺少 `par_value` 而停止）、股利金額與價格的幣別不同（00774C）、
-`value` 與參考價不一致的特別股（8112A、9941A，只在近似時）。分割、反分割、面額變更與近似的減資，
-價值變動都在萬分之八以內。
+實測（2026-11-24 的 `/srv/md/v1`，2022-01-04 起）：兩種設定都套用 11,792 列（`dividend` 11,121、
+`rights` 453、`reduction_loss` 107、`reduction_cash` 78、`par_change` 21、`split` 6、`reverse_split`
+6），沒有缺少事實的列，也沒有變動超過 1 % 的列。變動最大的是 `dividend` 萬分之 27（911608
+2025-05-20），其餘種類都在萬分之八以內。
 
 ### 效能修改
 

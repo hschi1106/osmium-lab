@@ -408,6 +408,7 @@
 | `split`、`par_change`、`reverse_split` | 股數乘以 `shares_new ÷ shares_old`，總成本不變。資料沒有比例時由價格推定整數倍 `n`（`n ≥ 2`；`split` 的參考價必須比前收低、`reverse_split` 必須比前收高），並標記 `approx` |
 | `reduction_loss` | 股數乘以 `shares_new ÷ shares_old`，總成本不變 |
 | `reduction_cash` | 每股退還 `refund_per_share` 元，沖減成本；股數乘以 `shares_new ÷ shares_old` |
+| `reduction_loss`、`reduction_cash`，有 `cash_dividend` | 減資期間同時發放的現金股利（TWSE 的減資明細才有，2022 年以來 3 列）。以減資前的股數依 `dividend` 的現金股利規則入帳，並計入 13.2 的給付；參考價 = (`before_price` − `refund_per_share` − `cash_dividend`) ÷ (`shares_new` ÷ `shares_old`) |
 
 推定的 `n` 與價格比的相對誤差超過 1% 時視為無法判定，需要補充資料。2022-01-03 起每一列減資、分割、
 反分割、面額變更都有 `shares_old`／`shares_new`，減資都有 `refund_per_share`（彌補虧損是 0），所以
@@ -540,7 +541,6 @@
 | 平盤下放空豁免名單 | marketdata 沒有輸出；以「前一日收盤跌停」的規則重算（10.2） |
 | 當沖資格 | 沒有 Format 1 的日子取自 FinMind 的清單，與交易所的旗標偶有不同；沒有清單時只能近似（8.1） |
 | 股票股利交付日、減資退款日、合併與下市的對價 | marketdata 沒有，需要補充資料或近似（13.1） |
-| 參考價與減資條件不一致的列 | 2323（2022-10-24、2026-10-12）、3356（2024-11-11）依資料的比例與退款換算後，部位價值與前收相差 1.5–4.7 % |
 | 外幣計價的商品 | 不支援（撮合拒絕委託）；例如 00774C 的股利金額與價格不是同一種幣別 |
 | 融券部位跨過除權息日 | 現金股利以近似補償；股票股利、分割、減資則 run 失敗（第 13 節） |
 | 信用部位的零股 | 強制委託把不足一張的部分送到 `ODD`，實務上由券商另行處理（12.4） |
