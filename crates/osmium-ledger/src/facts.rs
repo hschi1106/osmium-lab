@@ -122,6 +122,9 @@ pub struct SecurityFacts {
     pub day_trade: DayTrade,
     /// In a disposition period.
     pub disposition: bool,
+    /// In a second or later disposition, or one whose count is not known: margin
+    /// buying stops and short sales need more margin (section 9.1).
+    pub repeated_disposition: bool,
     pub margin_eligible: bool,
     pub short_eligible: bool,
     /// Short selling is suspended today.
@@ -165,6 +168,11 @@ impl SecurityFacts {
                 .any(|event| event.kind == kind && in_force(event, date))
         };
         let disposition = active(MarketEventKind::Disposition);
+        let repeated_disposition = events.iter().any(|event| {
+            event.kind == MarketEventKind::Disposition
+                && in_force(event, date)
+                && event.nth.is_none_or(|nth| nth >= 2)
+        });
         let short_suspended = active(MarketEventKind::ShortSuspended);
 
         let day_trade = match instrument.day_trade {
@@ -186,7 +194,7 @@ impl SecurityFacts {
         let quota = |limit: fn(&PreviousDay) -> Option<i64>| {
             listed && previous.and_then(limit).is_some_and(|limit| limit > 0)
         };
-        let margin_eligible = quota(|day| day.margin_limit) && !disposition;
+        let margin_eligible = quota(|day| day.margin_limit) && !repeated_disposition;
         let short_eligible = quota(|day| day.short_limit);
 
         Some(Self {
@@ -196,6 +204,7 @@ impl SecurityFacts {
             limit_down: instrument.limit_down,
             day_trade,
             disposition,
+            repeated_disposition,
             margin_eligible,
             short_eligible,
             short_suspended,
@@ -364,6 +373,7 @@ mod tests {
             kind,
             start: day(start),
             end: end.map(day),
+            nth: None,
         }
     }
 
@@ -496,12 +506,35 @@ mod tests {
             Some("2026-10-19"),
         )];
         let during = facts("2026-10-08", &stock(), Some(&listed()), &disposition);
-        assert!(during.disposition);
+        assert!(during.disposition && during.repeated_disposition);
         assert_eq!(during.day_trade, DayTrade::default());
         assert!(!during.margin_eligible);
         assert!(during.short_eligible);
         let after = facts("2026-10-20", &stock(), Some(&listed()), &disposition);
         assert!(!after.disposition && after.margin_eligible && after.day_trade.buy_first);
+    }
+
+    #[test]
+    fn only_a_repeated_disposition_restricts_credit() {
+        let first = MarketEvent {
+            nth: Some(1),
+            ..event(
+                MarketEventKind::Disposition,
+                "2026-10-06",
+                Some("2026-10-19"),
+            )
+        };
+        let during = facts("2026-10-08", &stock(), Some(&listed()), &[first]);
+        assert!(during.disposition && !during.repeated_disposition);
+        assert_eq!(during.day_trade, DayTrade::default());
+        assert!(during.margin_eligible);
+        let second = MarketEvent {
+            nth: Some(2),
+            start: day("2026-10-08"),
+            ..first
+        };
+        let during = facts("2026-10-08", &stock(), Some(&listed()), &[first, second]);
+        assert!(during.repeated_disposition && !during.margin_eligible);
     }
 
     #[test]

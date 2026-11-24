@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use arrow_array::types::{Date32Type, Decimal128Type, Float64Type, Int64Type};
+use arrow_array::types::{Date32Type, Decimal128Type, Float64Type, Int8Type, Int64Type};
 use osmium_types::{
     CorporateAction, CorporateActionKind, CreditQuota, DailyQuote, Date, Decimal8, MarketEvent,
     MarketEventKind, PerShare, Price, Symbol, Venue,
@@ -339,6 +339,7 @@ impl MarketEvents {
             ("event", ColumnType::String),
             ("start_date", ColumnType::Date32),
             ("end_date", ColumnType::Date32),
+            ("disp_nth", ColumnType::Int8),
         ];
         let (file, identity) = open(root, Self::PATH)?;
         let earliest_open_ended = from.epoch_days().saturating_sub(366);
@@ -348,6 +349,7 @@ impl MarketEvents {
             let event = strings(path, batch, "event")?;
             let start = primitive::<Date32Type>(path, batch, "start_date")?;
             let end = primitive::<Date32Type>(path, batch, "end_date")?;
+            let nth = primitive::<Int8Type>(path, batch, "disp_nth")?;
             for row in 0..batch.num_rows() {
                 let start = date(path, optional(start, row), "start_date")?;
                 let end = optional_date(path, optional(end, row), "end_date")?;
@@ -366,12 +368,21 @@ impl MarketEvents {
                 if end.is_some_and(|end| end < start) {
                     return Err(invalid("end_date is before start_date".to_owned()));
                 }
+                let kind = MarketEventKind::from_marketdata(event)
+                    .ok_or_else(|| invalid(format!("unknown event {event}")))?;
+                let nth = match optional(nth, row) {
+                    None => None,
+                    Some(nth @ 1..) if kind == MarketEventKind::Disposition => {
+                        Some(nth.unsigned_abs())
+                    }
+                    Some(nth) => return Err(invalid(format!("disp_nth {nth} on a {event} event"))),
+                };
                 rows.push(MarketEvent {
                     symbol,
-                    kind: MarketEventKind::from_marketdata(event)
-                        .ok_or_else(|| invalid(format!("unknown event {event}")))?,
+                    kind,
                     start,
                     end,
+                    nth,
                 });
             }
             Ok(())

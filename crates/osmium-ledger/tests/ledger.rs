@@ -54,6 +54,7 @@ fn stock(reference: &str) -> SecurityFacts {
             approx: false,
         },
         disposition: false,
+        repeated_disposition: false,
         margin_eligible: true,
         short_eligible: true,
         short_suspended: false,
@@ -481,6 +482,7 @@ fn a_disposition_needs_settled_cash_and_settled_shares() {
 
     let disposed = SecurityFacts {
         disposition: true,
+        repeated_disposition: true,
         day_trade: DayTrade::default(),
         margin_eligible: false,
         ..stock("100")

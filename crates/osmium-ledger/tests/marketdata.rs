@@ -28,6 +28,7 @@ fn facts(reference: Price) -> SecurityFacts {
         limit_down: None,
         day_trade: DayTrade::default(),
         disposition: false,
+        repeated_disposition: false,
         margin_eligible: false,
         short_eligible: false,
         short_suspended: false,

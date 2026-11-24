@@ -67,6 +67,9 @@ pub struct MarketEvent {
     pub start: Date,
     /// `None` when the source does not say when the restriction ended.
     pub end: Option<Date>,
+    /// For a disposition, which one it is (1 or 2, marketdata `disp_nth`); `None` when
+    /// the source does not say.
+    pub nth: Option<u8>,
 }
 
 /// An amount per share in units of 1e-10 yuan: issuers state stock dividends to eight

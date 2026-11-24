@@ -25,7 +25,7 @@ osmium 依賴 marketdata schema 版本 `1`（`osmium_md::SCHEMA_VERSION`）：
 | `instruments` | `symbol` string、`instrument_type` string、`shares_per_lot` int32、`ref_price`／`limit_up`／`limit_down` float64、`match_interval_s` int32、`currency` string、`derived` bool、`daytrade` string、`f1_non10_par` bool |
 | `qc/calendar` | `trade_date` date32、`twse_open`／`tpex_open` bool |
 | `corp_actions` | `symbol` string、`ex_date` date32、`action` string、`before_price`／`ref_price`／`after_price`／`cash_dividend`／`value` float64、`pay_date` date32、`stock_per_1000`／`shares_old`／`shares_new`／`refund_per_share` decimal(18,8) |
-| `events` | `symbol` string、`event` string、`start_date`／`end_date` date32 |
+| `events` | `symbol` string、`event` string、`start_date`／`end_date` date32、`disp_nth` int8 |
 | `daily` | `trade_date` date32、`symbol` string、`ref_price`／`limit_down`／`close`／`close_bid_px`／`close_ask_px` float64 |
 | `daily_ext` | `trade_date` date32、`symbol` string、`margin_limit`／`short_limit` int64 |
 | `manifest` | `job`、`table`、`part`、`path`、`schema_version`、`git_commit`、`code_hash`、`inputs_hash` string；`rows`、`seq_gaps`、`seq_dup` int64；`partial` bool |
@@ -167,7 +167,7 @@ FeedDay::load(root, &manifest, feed, &instruments, selection, missing_lot_size)
 | --- | --- | --- |
 | `TradingCalendar::load(root)` | `qc/calendar.parquet` | 每個日曆日一列，依日期遞增（否則錯誤）。`trading_days(venue)` 是該市場開市的日子 |
 | `CorporateActions::load(root, from)` | `corp_actions.parquet` | `ex_date ≥ from` 的列；更早的列不轉換，所以舊資料無法表示時不影響 run。`action` 必須是 `dividend`、`rights`、`split`、`par_change`、`reverse_split`、`reduction_loss`、`reduction_cash`。`before_price`、`ref_price` 必填，`after_price` 可為 null（1e-4 元）；`cash_dividend`、`value` 是 1e-10 元（`PerShare`），範圍 0 至 100,000；`value` 不是正數時讀成 `None`（認購權的理論價值可以是負的）。decimal 欄位以 1e-8 為單位讀成整數（`Decimal8`）：`stock_per_1000`、`shares_old`、`shares_new` 必須是正數，`refund_per_share` 不得為負（轉成 `PerShare`），都不得超過 100,000；`shares_old`、`shares_new` 必須同時有或同時沒有 |
-| `MarketEvents::load(root, from)` | `events.parquet` | `event` 必須是 `disposition`、`halt`、`short_suspended`、`daytrade_suspended`。保留 `end_date ≥ from` 的列，以及 `end_date` 為 null、`start_date` 在 `from` 之前 366 天以內的列。`end_date < start_date` 是錯誤 |
+| `MarketEvents::load(root, from)` | `events.parquet` | `event` 必須是 `disposition`、`halt`、`short_suspended`、`daytrade_suspended`。保留 `end_date ≥ from` 的列，以及 `end_date` 為 null、`start_date` 在 `from` 之前 366 天以內的列。`end_date < start_date` 是錯誤。`disp_nth` 只能出現在 `disposition` 列且 ≥ 1（1 = 第一次，2 = 第二次以上），null 表示資料沒有次數 |
 | `DailyQuotes::load(root, date)` | `daily/{YYYY}.parquet` | 一個交易日的官方盤後價格。以 `trade_date` 的 row-group statistics 剪枝（一個交易日一個 row group）。價格 null 或 0 → `None`。同一天的 `symbol` 必須嚴格遞增 |
 | `CreditQuotas::load(root, date)` | `daily_ext/{YYYY}.parquet` | 一個交易日的融資、融券限額（股）；負數是錯誤 |
 

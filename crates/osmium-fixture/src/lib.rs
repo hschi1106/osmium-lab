@@ -403,6 +403,7 @@ pub struct EventRow {
     pub event: &'static str,
     pub start_date: &'static str,
     pub end_date: Option<&'static str>,
+    pub disp_nth: Option<i8>,
 }
 
 /// A marketdata tree in the temporary directory, removed when dropped.
@@ -637,6 +638,10 @@ impl Tree {
                         rows.iter()
                             .map(|row| row.end_date.map(|text| date(text).epoch_days())),
                     )),
+                ),
+                (
+                    "disp_nth",
+                    Arc::new(Int8Array::from_iter(rows.iter().map(|row| row.disp_nth))),
                 ),
             ],
         );

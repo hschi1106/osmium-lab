@@ -68,6 +68,7 @@ fn facts(index: usize, reference: i64) -> SecurityFacts {
             approx: false,
         },
         disposition: false,
+        repeated_disposition: false,
         margin_eligible: true,
         short_eligible: true,
         short_suspended: false,

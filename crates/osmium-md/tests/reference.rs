@@ -8,8 +8,8 @@
 use std::{fs, path::PathBuf, sync::Arc};
 
 use arrow_array::{
-    ArrayRef, BooleanArray, Date32Array, Decimal128Array, Float64Array, Int64Array, RecordBatch,
-    StringArray,
+    ArrayRef, BooleanArray, Date32Array, Decimal128Array, Float64Array, Int8Array, Int64Array,
+    RecordBatch, StringArray,
 };
 use osmium_md::{
     CorporateActions, CreditQuotas, DEFAULT_MD_ROOT, DailyQuotes, MarketEvents, MdError, MdRoot,
@@ -387,19 +387,24 @@ fn corporate_actions_are_exact_decimals() {
     }
 }
 
-fn event_columns(
-    rows: &[(
-        &'static str,
-        &'static str,
-        &'static str,
-        Option<&'static str>,
-    )],
-) -> Columns {
+type EventRow = (
+    &'static str,
+    &'static str,
+    &'static str,
+    Option<&'static str>,
+    Option<i8>,
+);
+
+fn event_columns(rows: &[EventRow]) -> Columns {
     vec![
         ("symbol", strings(rows.iter().map(|row| row.0))),
         ("event", strings(rows.iter().map(|row| row.1))),
         ("start_date", dates(rows.iter().map(|row| Some(row.2)))),
         ("end_date", dates(rows.iter().map(|row| row.3))),
+        (
+            "disp_nth",
+            Arc::new(Int8Array::from_iter(rows.iter().map(|row| row.4))),
+        ),
     ]
 }
 
@@ -409,23 +414,36 @@ fn events_that_can_still_be_in_force_are_read() {
     tree.write(
         MarketEvents::PATH,
         event_columns(&[
-            ("1101", "disposition", "2023-12-20", Some("2024-01-05")),
-            ("1101", "disposition", "2023-11-01", Some("2023-11-14")),
-            ("1102", "short_suspended", "2023-12-28", None),
-            ("1102", "halt", "2020-03-02", None),
+            (
+                "1101",
+                "disposition",
+                "2023-12-20",
+                Some("2024-01-05"),
+                Some(2),
+            ),
+            (
+                "1101",
+                "disposition",
+                "2023-11-01",
+                Some("2023-11-14"),
+                Some(1),
+            ),
+            ("1102", "short_suspended", "2023-12-28", None, None),
+            ("1102", "halt", "2020-03-02", None, None),
             (
                 "1103",
                 "daytrade_suspended",
                 "2024-03-01",
                 Some("2024-03-01"),
+                None,
             ),
         ]),
     );
     let events = MarketEvents::load(&tree.root(), day("2024-01-02")).unwrap();
-    let kinds: Vec<(Symbol, MarketEventKind, Date, Option<Date>)> = events
+    let kinds: Vec<_> = events
         .rows()
         .iter()
-        .map(|event| (event.symbol, event.kind, event.start, event.end))
+        .map(|event| (event.symbol, event.kind, event.start, event.end, event.nth))
         .collect();
     assert_eq!(
         kinds,
@@ -434,26 +452,34 @@ fn events_that_can_still_be_in_force_are_read() {
                 symbol("1101"),
                 MarketEventKind::Disposition,
                 day("2023-12-20"),
-                Some(day("2024-01-05"))
+                Some(day("2024-01-05")),
+                Some(2)
             ),
             (
                 symbol("1102"),
                 MarketEventKind::ShortSuspended,
                 day("2023-12-28"),
+                None,
                 None
             ),
             (
                 symbol("1103"),
                 MarketEventKind::DayTradeSuspended,
                 day("2024-03-01"),
-                Some(day("2024-03-01"))
+                Some(day("2024-03-01")),
+                None
             ),
         ]
     );
 
     for (name, row) in [
-        ("kind", ("1101", "delisted", "2024-03-01", None)),
-        ("order", ("1101", "halt", "2024-03-05", Some("2024-03-01"))),
+        ("kind", ("1101", "delisted", "2024-03-01", None, None)),
+        (
+            "order",
+            ("1101", "halt", "2024-03-05", Some("2024-03-01"), None),
+        ),
+        ("nth", ("1101", "disposition", "2024-03-01", None, Some(0))),
+        ("nth-kind", ("1101", "halt", "2024-03-01", None, Some(1))),
     ] {
         let tree = Tree::new(&format!("events-{name}"));
         tree.write(MarketEvents::PATH, event_columns(&[row]));

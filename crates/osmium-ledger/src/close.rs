@@ -780,7 +780,7 @@ pub(crate) fn short_margin_rate(config: &Config, facts: &SecurityFacts, date: Da
         .credit
         .short_margin_ratio
         .unwrap_or_else(|| short_margin_ratio(date));
-    if facts.disposition {
+    if facts.repeated_disposition {
         ratio.plus(Rate::new(10, 100)).at_least(Rate::ONE)
     } else {
         ratio
